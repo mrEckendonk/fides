@@ -20,7 +20,7 @@ loguru>=0.5,<0.6
 Jinja2==3.1.2
 multidimensional_urlencode==0.0.4
 openpyxl==3.0.9
-pandas==1.4.3
+pandas==1.5.1
 passlib[bcrypt]==1.7.4
 plotly==5.4
 psycopg2-binary==2.9.3
