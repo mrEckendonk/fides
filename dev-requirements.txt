@@ -14,7 +14,7 @@ pytest==7.1.2
 requests-mock==1.9.3
 setuptools>=64.0.2
 sqlalchemy-stubs
-types-PyYAML==6.0.11
+types-PyYAML==6.0.12.3
 types-redis==4.3.4
 types-requests
 types-toml==0.10.8
