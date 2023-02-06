@@ -28,7 +28,7 @@ jobs:
           images: ethyca/fides-privacy-center
 
       - name: Build and publish
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v4
         with:
           context: ./clients/ops/privacy-center
           push: true
