@@ -5,6 +5,7 @@ import {
   IndeterminateCheckboxCell,
   RelativeTimestampCell,
 } from "~/features/common/table/v2/cells";
+import ResultStatusBadgeCell from "~/features/data-discovery-and-detection/tables/ResultStatusBadgeCell";
 import { DiscoveryMonitorItem } from "~/features/data-discovery-and-detection/types/DiscoveryMonitorItem";
 import { ResourceChangeType } from "~/features/data-discovery-and-detection/types/ResourceChangeType";
 import { StagedResourceType } from "~/features/data-discovery-and-detection/types/StagedResourceType";
@@ -43,6 +44,11 @@ const useDiscoveryResultColumns = ({
           <DefaultCell value={findProjectFromUrn(props.getValue())} />
         ),
         header: (props) => <DefaultHeaderCell value="Project" {...props} />,
+      }),
+      columnHelper.display({
+        id: "status",
+        cell: (props) => <ResultStatusBadgeCell result={props.row.original} />,
+        header: (props) => <DefaultHeaderCell value="Status" {...props} />,
       }),
       columnHelper.accessor((resource) => findActivityType(resource), {
         id: "type",
@@ -100,6 +106,11 @@ const useDiscoveryResultColumns = ({
         header: (props) => <DefaultHeaderCell value="Table name" {...props} />,
       }),
       columnHelper.display({
+        id: "status",
+        cell: (props) => <ResultStatusBadgeCell result={props.row.original} />,
+        header: (props) => <DefaultHeaderCell value="Status" {...props} />,
+      }),
+      columnHelper.display({
         id: "type",
         cell: () => <DefaultCell value="Table" />,
         header: "Type",
@@ -126,24 +137,19 @@ const useDiscoveryResultColumns = ({
         header: (props) => <DefaultHeaderCell value="Field name" {...props} />,
       }),
       columnHelper.display({
+        id: "status",
+        cell: (props) => <ResultStatusBadgeCell result={props.row.original} />,
+        header: (props) => <DefaultHeaderCell value="Status" {...props} />,
+      }),
+      columnHelper.display({
         id: "type",
         cell: () => <DefaultCell value="Field" />,
         header: "Type",
       }),
-      columnHelper.accessor((row) => row.classifications, {
+      columnHelper.display({
         id: "classifications",
-        cell: (props) => {
-          const bestTaxonomyMatch = props.getValue()?.length
-            ? props.getValue()![0]
-            : null;
-
-          return (
-            <TaxonomyDisplayAndEdit
-              fidesLangKey={bestTaxonomyMatch?.label}
-              isEditable
-              resource={props.row.original}
-            />
-          );
+        cell: ({ row }) => {
+          return <TaxonomyDisplayAndEdit resource={row.original} />;
         },
         meta: { overflow: "visible" },
         header: "Data category",

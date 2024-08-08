@@ -18,6 +18,10 @@ from fides.api.schemas.base_class import FidesSchema
 from fides.api.schemas.limiter.rate_limit_config import RateLimitConfig
 from fides.api.schemas.policy import ActionType
 from fides.api.schemas.saas.shared_schemas import HTTPMethod
+from fides.api.service.saas_request.saas_request_override_factory import (
+    SaaSRequestOverrideFactory,
+    SaaSRequestType,
+)
 
 
 class ParamValue(BaseModel):
@@ -195,7 +199,7 @@ class SaaSRequest(BaseModel):
         return values
 
     @root_validator
-    def validate_override(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_request(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """Validate that configs related to request overrides are set properly"""
         if not values.get("request_override"):
             if not values.get("path"):
@@ -223,10 +227,47 @@ class SaaSRequest(BaseModel):
         return values
 
 
+class ReadSaaSRequest(SaaSRequest):
+    """
+    An extension of the base SaaSRequest that allows the inclusion of an output template
+    that is used to format each collection result.
+    """
+
+    output: Optional[str]
+
+    @root_validator
+    def validate_request(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate that configs related to read requests are set properly"""
+        if not values.get("request_override"):
+            if not (values.get("path") or values.get("output")):
+                raise ValueError(
+                    "A read request must specify either a path or an output if no request_override is provided"
+                )
+            if values.get("path") and not values.get("method"):
+                raise ValueError(
+                    "A read request must specify a method if a path is provided and no request_override is specified"
+                )
+        else:
+            allowed_fields = {
+                "request_override",
+                "param_values",
+                "grouped_inputs",
+            }
+            invalid = [
+                k for k in values.keys() if values.get(k) and k not in allowed_fields
+            ]
+            if invalid:
+                invalid_joined = ", ".join(invalid)
+                raise ValueError(
+                    f"Invalid properties [{invalid_joined}] on a read request with request_override specified"
+                )
+        return values
+
+
 class SaaSRequestMap(BaseModel):
     """A map of actions to SaaS requests"""
 
-    read: Union[SaaSRequest, List[SaaSRequest]] = []
+    read: Union[ReadSaaSRequest, List[ReadSaaSRequest]] = []
     update: Optional[SaaSRequest]
     delete: Optional[SaaSRequest]
 
@@ -396,7 +437,7 @@ class SaaSConfig(SaaSConfigBase):
         for endpoint in self.endpoints:
             fields: List[Field] = []
 
-            read_requests: List[SaaSRequest] = []
+            read_requests: List[ReadSaaSRequest] = []
             if endpoint.requests.read:
                 read_requests = (
                     endpoint.requests.read
@@ -518,8 +559,16 @@ class SaaSConfig(SaaSConfigBase):
         ):
             supported_actions.append(ActionType.erasure)
 
-        # check for consent
-        if self.consent_requests:
+        # consent is supported if the SaaSConfig has consent_requests defined
+        # or if the SaaSConfig.type has an UPDATE_CONSENT function
+        # registered in the SaaSRequestOverrideFactory
+        if (
+            self.consent_requests
+            or self.type
+            in SaaSRequestOverrideFactory.registry[
+                SaaSRequestType.UPDATE_CONSENT
+            ].keys()
+        ):
             supported_actions.append(ActionType.consent)
 
         return supported_actions

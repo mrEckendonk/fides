@@ -63,6 +63,7 @@
   --fides-overlay-font-size-title: var(--16px);
   --fides-overlay-font-size-buttons: var(--14px);
   --fides-overlay-padding: 24px;
+  --fides-overlay-padding-tcf: 40px;
   --fides-overlay-button-border-radius: 6px;
   --fides-overlay-button-padding: 8px 16px;
   --fides-overlay-link-v-padding: 4px;
@@ -74,6 +75,16 @@
   --fides-overlay-component-border-radius: 4px;
   --fides-overlay-banner-offset: 48px;
   --fides-banner-font-size-title: var(--16px);
+  --fides-overlay-language-loading-indicator-speed: 5s;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /*
@@ -117,7 +128,9 @@ div#fides-banner-container:not(.fides-embedded) {
   z-index: 1;
   width: 100%;
   transform: translateY(0%);
-  transition: transform 1s, visibility 1s;
+  transition:
+    transform 1s,
+    visibility 1s;
   display: flex;
   justify-content: center;
   visibility: visible;
@@ -234,6 +247,10 @@ div#fides-banner-description {
   flex: 1;
 }
 
+div#fides-banner-notices {
+  margin-top: 16px;
+}
+
 div#fides-button-group {
   margin-top: 8px;
   margin-bottom: var(--fides-overlay-padding);
@@ -243,21 +260,9 @@ div#fides-button-group {
   z-index: 5;
 }
 
-div.fides-acknowledge-button-container {
-  margin-inline: var(--fides-overlay-padding);
-  margin-bottom: var(--fides-overlay-padding);
-  display: flex;
-  justify-content: end;
-}
-
-div.fides-banner-acknowledge .fides-banner-button {
-  max-width: 168px;
-}
-
 button.fides-banner-button {
   font-size: var(--fides-overlay-font-size-buttons);
   display: inline-block;
-  flex: auto;
   cursor: pointer;
   text-align: center;
   margin: 0;
@@ -307,6 +312,10 @@ button.fides-banner-button.fides-banner-button-tertiary {
   font-weight: 500;
   font-size: var(--fides-overlay-font-size-body);
   line-height: 1.25em;
+}
+
+button.fides-banner-button.fides-acknowledge-button {
+  min-width: 160px;
 }
 
 /** Modal */
@@ -443,6 +452,10 @@ div#fides-consent-content .fides-modal-description {
   margin-inline: var(--fides-overlay-padding);
 }
 
+.fides-modal-primary-actions .fides-banner-button {
+  flex: 1;
+}
+
 .fides-banner-secondary-actions {
   justify-content: space-between;
 }
@@ -467,7 +480,7 @@ div#fides-consent-content .fides-modal-description {
 }
 
 /* Responsive overlay */
-@media (max-width: 48em) {
+@media (max-width: 768px) {
   div.fides-modal-content,
   div#fides-consent-content {
     width: 100% !important;
@@ -528,7 +541,7 @@ div#fides-banner-inner .fides-privacy-policy {
 }
 
 div#fides-banner-inner .fides-privacy-policy,
-button.fides-banner-button.fides-manage-preferences-button,
+button.fides-banner-button.fides-banner-button-tertiary,
 div.fides-i18n-pseudo-button {
   margin: 0;
   line-height: 1;
@@ -687,7 +700,7 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
 
 .fides-notice-toggle .fides-notice-toggle-trigger:before {
   display: inline-block;
-  width: 8px;
+  min-width: 8px;
   height: 8px;
   margin-right: calc(0.5rem + 2px);
   content: "";
@@ -771,6 +784,7 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
   font-size: var(--fides-overlay-font-size-body);
   white-space: nowrap;
   padding: 0 8px;
+  display: inline-flex;
 }
 
 .fides-gpc-badge {
@@ -778,6 +792,8 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
   padding: 0 4px;
   font-weight: 700;
   border-radius: var(--fides-overlay-badge-border-radius);
+  display: inline-flex;
+  margin-left: 4px;
 }
 
 .fides-gpc-badge-applied,
@@ -836,6 +852,7 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
   align-items: center;
   height: 18px;
   margin-right: 8px;
+  margin-left: 4px;
   text-transform: uppercase;
   padding: 0 4px;
   font-weight: 600;
@@ -1082,6 +1099,21 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
     .fides-banner-button-group {
     padding-left: 0;
   }
+  .fides-banner-secondary-actions {
+    gap: 12px;
+  }
+
+  /* ordering needs to be specific for mobile to work well and
+  varies from the desktop ordering beyond simple `column-reverse` */
+  .fides-banner-secondary-actions .fides-manage-preferences-button {
+    order: 0;
+  }
+  .fides-banner-secondary-actions #fides-privacy-policy-link {
+    order: 1;
+  }
+  .fides-banner-secondary-actions .fides-i18n-menu {
+    order: 2;
+  }
 }
 /* TCF should always be full width and not floating */
 .fides-tcf-banner-container {
@@ -1091,10 +1123,16 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
   width: 100%;
   border-radius: 0;
   border-width: 1px 0 0 0;
-  padding: 24px 40px 40px 40px;
+  padding: var(--fides-overlay-padding) var(--fides-overlay-padding-tcf)
+    var(--fides-overlay-padding-tcf) var(--fides-overlay-padding-tcf);
 }
 .fides-tcf-banner-container #fides-privacy-policy-link {
   margin: auto;
+}
+@media screen and (max-width: 768px) {
+  .fides-tcf-banner-container #fides-banner {
+    padding: var(--fides-overlay-padding);
+  }
 }
 
 /* Paging */
@@ -1137,6 +1175,7 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
 .fides-modal-container .fides-i18n-menu {
   position: absolute;
   left: var(--fides-overlay-padding);
+  bottom: var(--fides-overlay-padding);
 }
 
 .fides-modal-container .fides-button-group-i18n {
@@ -1144,6 +1183,17 @@ div#fides-overlay-wrapper .fides-toggle .fides-toggle-display {
     var(--fides-overlay-font-size-body) +
       (var(--fides-overlay-link-v-padding) * 2)
   );
+}
+
+@media screen and (max-width: 768px) {
+  .fides-banner-button-group.fides-button-group-i18n {
+    min-height: 68px;
+  }
+  .fides-i18n-menu {
+    position: absolute;
+    left: var(--fides-overlay-padding);
+    bottom: var(--fides-overlay-padding);
+  }
 }
 
 div.fides-i18n-pseudo-button {
@@ -1156,6 +1206,13 @@ div.fides-i18n-pseudo-button {
   align-items: center;
   gap: 2px;
   white-space: nowrap;
+}
+
+#fides-i18n-icon {
+  animation-duration: var(--fides-overlay-language-loading-indicator-speed);
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  transform-origin: 50% 50%;
 }
 
 div#fides-overlay-wrapper .fides-i18n-pseudo-button {
@@ -1173,12 +1230,6 @@ div#fides-overlay-wrapper .fides-i18n-pseudo-button {
   gap: 1px;
   max-height: 7rem;
   transition: height 0.5s;
-}
-@media screen and (max-width: 768px) {
-  .fides-i18n-popover {
-    bottom: auto;
-    top: 100%;
-  }
 }
 
 .fides-i18n-menu:hover .fides-i18n-pseudo-button {

@@ -49,8 +49,8 @@ const useNewPasswordModal = (id: string) => {
     } else {
       toast(
         successToastParams(
-          "Successfully reset user's password. Please inform the user of their new password."
-        )
+          "Successfully reset user's password. Please inform the user of their new password.",
+        ),
       );
       modal.onClose();
     }
@@ -119,7 +119,7 @@ const NewPasswordModal = ({ id }: Props) => {
                     </Button>
                     <Button
                       colorScheme="primary"
-                      disabled={!dirty || !isValid}
+                      isDisabled={!dirty || !isValid}
                       isLoading={isSubmitting}
                       type="submit"
                       width="50%"

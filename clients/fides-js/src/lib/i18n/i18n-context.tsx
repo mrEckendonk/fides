@@ -1,9 +1,15 @@
-import { createContext, h, FunctionComponent } from "preact";
-import { useContext, useState, useMemo, StateUpdater } from "preact/hooks";
+import { createContext, FunctionComponent, h } from "preact";
+import {
+  Dispatch,
+  StateUpdater,
+  useContext,
+  useMemo,
+  useState,
+} from "preact/hooks";
 
 interface I18nContextProps {
   currentLocale: string | undefined;
-  setCurrentLocale: StateUpdater<string | undefined>;
+  setCurrentLocale: Dispatch<StateUpdater<string | undefined>>;
 }
 
 const I18nContext = createContext<I18nContextProps>({} as I18nContextProps);
@@ -13,7 +19,7 @@ export const I18nProvider: FunctionComponent = ({ children }) => {
 
   const value: I18nContextProps = useMemo(
     () => ({ currentLocale, setCurrentLocale }),
-    [currentLocale]
+    [currentLocale],
   );
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 };

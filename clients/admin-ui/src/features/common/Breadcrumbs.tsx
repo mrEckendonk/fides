@@ -1,5 +1,5 @@
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink } from "fidesui";
-import Link from "next/link";
+import NextLink from "next/link";
 
 export interface BreadcrumbsProps {
   breadcrumbs: {
@@ -19,7 +19,7 @@ export interface BreadcrumbsProps {
  * @param breadcrumbs.onClick - (optional) function to call when the breadcrumb is clicked
  * @param breadcrumbs.isOpaque - (optional) if true, the breadcrumb will be black, otherwise gray
  */
-const Breadcrumbs: React.FC<BreadcrumbsProps> = ({ breadcrumbs }) => (
+const Breadcrumbs = ({ breadcrumbs }: BreadcrumbsProps) => (
   <Breadcrumb
     separator="->"
     fontSize="2xl"
@@ -36,7 +36,7 @@ const Breadcrumbs: React.FC<BreadcrumbsProps> = ({ breadcrumbs }) => (
         >
           {hasLink ? (
             <BreadcrumbLink
-              as={Link}
+              as={NextLink}
               href={breadcumbItem.link}
               isCurrentPage={isLast}
             >

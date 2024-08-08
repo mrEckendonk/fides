@@ -24,8 +24,8 @@ from utils_nox import install_requirements
 @nox.session()
 def static_checks(session: nox.Session) -> None:
     """Run the static checks only."""
-    session.notify("black")
-    session.notify("isort")
+    session.notify("black(fix)")
+    session.notify("isort(fix)")
     session.notify("xenon")
     session.notify("mypy")
     session.notify("pylint")
@@ -35,14 +35,16 @@ def static_checks(session: nox.Session) -> None:
 @nox.parametrize(
     "mode",
     [
-        nox.param("fix", id="fix"),
         nox.param("check", id="check"),
+        nox.param("fix", id="fix"),
     ],
 )
 def black(session: nox.Session, mode: str) -> None:
     """Run the 'black' style linter."""
     install_requirements(session)
     command = ("black", "src", "tests", "noxfiles", "scripts", "noxfile.py")
+    if session.posargs:
+        command = ("black", *session.posargs)
     if mode == "check":
         command = (*command, "--check")
     session.run(*command)
@@ -52,14 +54,16 @@ def black(session: nox.Session, mode: str) -> None:
 @nox.parametrize(
     "mode",
     [
-        nox.param("fix", id="fix"),
         nox.param("check", id="check"),
+        nox.param("fix", id="fix"),
     ],
 )
 def isort(session: nox.Session, mode: str) -> None:
     """Run the 'isort' import linter."""
     install_requirements(session)
     command = ("isort", "src", "tests", "noxfiles", "scripts", "noxfile.py")
+    if session.posargs:
+        command = ("isort", *session.posargs)
     if mode == "check":
         command = (*command, "--check")
     session.run(*command)
@@ -78,6 +82,8 @@ def pylint(session: nox.Session) -> None:
     """Run the 'pylint' code linter."""
     install_requirements(session)
     command = ("pylint", "src", "noxfiles", "noxfile.py", "--jobs", "0")
+    if session.posargs:
+        command = ("pylint", *session.posargs)
     session.run(*command)
 
 
@@ -272,6 +278,8 @@ TEST_GROUPS = [
     nox.param("ctl-integration", id="ctl-integration"),
     nox.param("ctl-external", id="ctl-external"),
     nox.param("ops-unit", id="ops-unit"),
+    nox.param("ops-unit-api", id="ops-unit-api"),
+    nox.param("ops-unit-non-api", id="ops-unit-non-api"),
     nox.param("ops-integration", id="ops-integration"),
     nox.param("ops-external-datastores", id="ops-external-datastores"),
     nox.param("ops-saas", id="ops-saas"),
@@ -285,6 +293,8 @@ TEST_MATRIX: Dict[str, Callable] = {
     "ctl-integration": partial(pytest_ctl, mark="integration"),
     "ctl-external": partial(pytest_ctl, mark="external"),
     "ops-unit": partial(pytest_ops, mark="unit"),
+    "ops-unit-api": partial(pytest_ops, mark="unit", subset_dir="api"),
+    "ops-unit-non-api": partial(pytest_ops, mark="unit", subset_dir="non-api"),
     "ops-integration": partial(pytest_ops, mark="integration"),
     "ops-external-datastores": partial(pytest_ops, mark="external_datastores"),
     "ops-saas": partial(pytest_ops, mark="saas"),

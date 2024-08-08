@@ -21,14 +21,16 @@ import {
 import { useGetMonitorResultsQuery } from "~/features/data-discovery-and-detection/discovery-detection.slice";
 import useDiscoveryResultColumns from "~/features/data-discovery-and-detection/hooks/useDiscoveryResultColumns";
 import useDiscoveryRoutes from "~/features/data-discovery-and-detection/hooks/useDiscoveryRoutes";
+import IconLegendTooltip from "~/features/data-discovery-and-detection/IndicatorLegend";
 import DiscoveryFieldBulkActions from "~/features/data-discovery-and-detection/tables/DiscoveryFieldBulkActions";
 import DiscoveryTableBulkActions from "~/features/data-discovery-and-detection/tables/DiscoveryTableBulkActions";
 import { DiscoveryMonitorItem } from "~/features/data-discovery-and-detection/types/DiscoveryMonitorItem";
 import { StagedResourceType } from "~/features/data-discovery-and-detection/types/StagedResourceType";
 import { findResourceType } from "~/features/data-discovery-and-detection/utils/findResourceType";
+import getResourceRowName from "~/features/data-discovery-and-detection/utils/getResourceRowName";
 import { DiffStatus, StagedResource } from "~/types/api";
 
-import SearchInput from "../SearchInput";
+import { SearchInput } from "../SearchInput";
 
 const EMPTY_RESPONSE = {
   items: [],
@@ -104,7 +106,7 @@ const DiscoveryResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
   });
 
   const resourceType = findResourceType(
-    resources?.items[0] as DiscoveryMonitorItem
+    resources?.items[0] as DiscoveryMonitorItem,
   );
 
   const isField = resourceType === StagedResourceType.FIELD;
@@ -123,7 +125,7 @@ const DiscoveryResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
 
   const resourceColumns: ColumnDef<StagedResource, any>[] = useMemo(
     () => columns,
-    [columns]
+    [columns],
   );
 
   const { navigateToDiscoveryResults } = useDiscoveryRoutes();
@@ -143,7 +145,7 @@ const DiscoveryResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
     state: {
       rowSelection,
     },
-    getRowId: (row) => row.urn,
+    getRowId: getResourceRowName,
     data,
   });
 
@@ -156,10 +158,11 @@ const DiscoveryResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
   return (
     <>
       <TableActionBar>
-        <Flex gap={6}>
+        <Flex gap={6} align="center">
           <Box w={400} flexShrink={0}>
             <SearchInput value={searchQuery} onChange={setSearchQuery} />
           </Box>
+          <IconLegendTooltip />
           {!!selectedUrns.length && (
             <Flex align="center">
               {resourceType === StagedResourceType.TABLE && (

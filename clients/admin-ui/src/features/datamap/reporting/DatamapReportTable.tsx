@@ -102,13 +102,13 @@ enum COLUMN_IDS {
   DESCRIPTION = "description",
   DOES_INTERNATIONAL_TRANSFERS = "does_international_transfers",
   DPA_LOCATION = "dpa_location",
-  EGRESS = "egress",
+  DESTINATIONS = "egress",
   EXEMPT_FROM_PRIVACY_REGULATIONS = "exempt_from_privacy_regulations",
   FEATURES = "features",
   FIDES_KEY = "fides_key",
   FLEXIBLE_LEGAL_BASIS_FOR_PROCESSING = "flexible_legal_basis_for_processing",
   IMPACT_ASSESSMENT_LOCATION = "impact_assessment_location",
-  INGRESS = "ingress",
+  SOURCES = "ingress",
   JOINT_CONTROLLER_INFO = "joint_controller_info",
   LEGAL_BASIS_FOR_PROFILING = "legal_basis_for_profiling",
   LEGAL_BASIS_FOR_TRANSFERS = "legal_basis_for_transfers",
@@ -124,6 +124,7 @@ enum COLUMN_IDS {
   SYSTEM_DEPENDENCIES = "system_dependencies",
   THIRD_COUNTRY_SAFEGUARDS = "third_country_safeguards",
   THIRD_PARTIES = "third_parties",
+  COOKIES = "cookies",
   USES_COOKIES = "uses_cookies",
   USES_NON_COOKIE_ACCESS = "uses_non_cookie_access",
   USES_PROFILING = "uses_profiling",
@@ -182,14 +183,14 @@ const getPrefixColumns = (groupBy: DATAMAP_GROUPING) => {
 export const DatamapReportTable = () => {
   const [tableState, setTableState] = useLocalStorage<TableState | undefined>(
     "datamap-report-table-state",
-    undefined
+    undefined,
   );
   const storedTableState = useMemo(
     // snag the stored table state from local storage if it exists and use it to initialize the tableInstance.
     // memoize this so we don't get stuck in a loop as the tableState gets updated during the session.
     () => tableState,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [],
   );
   const { isLoading: isLoadingHealthCheck } = useGetHealthQuery();
   const {
@@ -237,17 +238,17 @@ export const DatamapReportTable = () => {
 
   const [groupBy, setGroupBy] = useLocalStorage<DATAMAP_GROUPING>(
     DATAMAP_LOCAL_STORAGE_KEYS.GROUP_BY,
-    DATAMAP_GROUPING.SYSTEM_DATA_USE
+    DATAMAP_GROUPING.SYSTEM_DATA_USE,
   );
 
   const [columnOrder, setColumnOrder] = useLocalStorage<string[]>(
     DATAMAP_LOCAL_STORAGE_KEYS.COLUMN_ORDER,
-    getColumnOrder(groupBy)
+    getColumnOrder(groupBy),
   );
 
   const [grouping, setGrouping] = useLocalStorage<string[]>(
     DATAMAP_LOCAL_STORAGE_KEYS.TABLE_GROUPING,
-    getGrouping(groupBy)
+    getGrouping(groupBy),
   );
 
   const onGroupChange = (group: DATAMAP_GROUPING) => {
@@ -319,7 +320,7 @@ export const DatamapReportTable = () => {
       .filter(
         (k) =>
           k.startsWith(CUSTOM_FIELD_DATA_USE_PREFIX) ||
-          k.startsWith(CUSTOM_FIELD_SYSTEM_PREFIX)
+          k.startsWith(CUSTOM_FIELD_SYSTEM_PREFIX),
       );
 
     // Create column objects for each custom field key
@@ -327,11 +328,11 @@ export const DatamapReportTable = () => {
       // We need to figure out the original custom field object in order to see
       // if the value is a string[], which would want `showHeaderMenu=true`
       const customField = customFields.find((cf) =>
-        key.includes(_.snakeCase(cf.name))
+        key.includes(_.snakeCase(cf.name)),
       );
       const keyWithoutPrefix = key.replace(
         /^(system_|privacy_declaration_)/,
-        ""
+        "",
       );
       const displayText = _.upperFirst(keyWithoutPrefix.replaceAll("_", " "));
       return columnHelper.accessor((row) => row[key], {
@@ -594,17 +595,19 @@ export const DatamapReportTable = () => {
         },
       }),
       columnHelper.accessor((row) => row.egress, {
-        id: COLUMN_IDS.EGRESS,
+        id: COLUMN_IDS.DESTINATIONS,
         cell: (props) => (
           <GroupCountBadgeCell
-            suffix="egress"
+            suffix="destinations"
             value={props.getValue()}
             {...props}
           />
         ),
-        header: (props) => <DefaultHeaderCell value="Egress" {...props} />,
+        header: (props) => (
+          <DefaultHeaderCell value="Destinations" {...props} />
+        ),
         meta: {
-          displayText: "Egress",
+          displayText: "Destinations",
           showHeaderMenu: true,
         },
       }),
@@ -668,17 +671,17 @@ export const DatamapReportTable = () => {
         },
       }),
       columnHelper.accessor((row) => row.ingress, {
-        id: COLUMN_IDS.INGRESS,
+        id: COLUMN_IDS.SOURCES,
         cell: (props) => (
           <GroupCountBadgeCell
-            suffix="ingress"
+            suffix="sources"
             value={props.getValue()}
             {...props}
           />
         ),
-        header: (props) => <DefaultHeaderCell value="Ingress" {...props} />,
+        header: (props) => <DefaultHeaderCell value="Sources" {...props} />,
         meta: {
-          displayText: "Ingress",
+          displayText: "Sources",
           showHeaderMenu: true,
         },
       }),
@@ -929,6 +932,21 @@ export const DatamapReportTable = () => {
           showHeaderMenu: true,
         },
       }),
+      columnHelper.accessor((row) => row.cookies, {
+        id: COLUMN_IDS.COOKIES,
+        cell: (props) => (
+          <GroupCountBadgeCell
+            suffix="cookies"
+            value={props.getValue()}
+            {...props}
+          />
+        ),
+        header: (props) => <DefaultHeaderCell value="Cookies" {...props} />,
+        meta: {
+          displayText: "Cookies",
+          showHeaderMenu: true,
+        },
+      }),
       columnHelper.accessor((row) => row.uses_cookies, {
         id: COLUMN_IDS.USES_COOKIES,
         cell: (props) => <DefaultCell value={props.getValue()} />,
@@ -967,7 +985,7 @@ export const DatamapReportTable = () => {
       getDataUseDisplayName,
       getDataSubjectDisplayName,
       getDataCategoryDisplayName,
-    ]
+    ],
   );
 
   const {
@@ -1049,13 +1067,13 @@ export const DatamapReportTable = () => {
 
   const handleFilterChange = (newFilters: DatamapReportFilterSelections) => {
     setSelectedDataUseFilters(
-      getQueryParamsFromArray(newFilters.dataUses, "data_uses")
+      getQueryParamsFromArray(newFilters.dataUses, "data_uses"),
     );
     setSelectedDataCategoriesFilters(
-      getQueryParamsFromArray(newFilters.dataCategories, "data_categories")
+      getQueryParamsFromArray(newFilters.dataCategories, "data_categories"),
     );
     setSelectedDataSubjectFilters(
-      getQueryParamsFromArray(newFilters.dataSubjects, "data_subjects")
+      getQueryParamsFromArray(newFilters.dataSubjects, "data_subjects"),
     );
   };
 

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Type
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String, event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import Session, relationship
+from sqlalchemy.orm import RelationshipProperty, Session, relationship
 from sqlalchemy_utils.types.encrypted.encrypted_type import (
     AesGcmEngine,
     StringEncryptedType,
@@ -15,6 +15,7 @@ from sqlalchemy_utils.types.encrypted.encrypted_type import (
 
 from fides.api.common_exceptions import KeyOrNameAlreadyExists
 from fides.api.db.base_class import Base, FidesBase, JSONTypeOverride
+from fides.api.models.consent_automation import ConsentAutomation
 from fides.api.models.sql_models import System  # type: ignore[attr-defined]
 from fides.api.schemas.policy import ActionType
 from fides.api.schemas.saas.saas_config import SaaSConfig
@@ -41,6 +42,7 @@ class ConnectionType(enum.Enum):
     generic_consent_email = "generic_consent_email"  # Run after the traversal
     generic_erasure_email = "generic_erasure_email"  # Run after the traversal
     google_cloud_sql_mysql = "google_cloud_sql_mysql"
+    google_cloud_sql_postgres = "google_cloud_sql_postgres"
     https = "https"
     manual = "manual"  # Deprecated - use manual_webhook instead
     manual_webhook = "manual_webhook"  # Runs upfront before the traversal
@@ -70,6 +72,7 @@ class ConnectionType(enum.Enum):
             ConnectionType.generic_consent_email.value: "Generic Consent Email",
             ConnectionType.generic_erasure_email.value: "Generic Erasure Email",
             ConnectionType.google_cloud_sql_mysql.value: "Google Cloud SQL for MySQL",
+            ConnectionType.google_cloud_sql_postgres.value: "Google Cloud SQL for Postgres",
             ConnectionType.https.value: "Policy Webhook",
             ConnectionType.manual_webhook.value: "Manual Process",
             ConnectionType.manual.value: "Manual Connector",
@@ -161,6 +164,10 @@ class ConnectionConfig(Base):
     )
 
     system = relationship(System, back_populates="connection_configs", uselist=False)
+
+    consent_automation: RelationshipProperty[Optional[ConsentAutomation]] = (
+        relationship(ConsentAutomation, cascade="all, delete-orphan")
+    )
 
     # Identifies the privacy actions needed from this connection by the associated system.
     enabled_actions = Column(

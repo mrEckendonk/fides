@@ -1,3 +1,4 @@
+import { patchUserPreference } from "../services/api";
 import {
   ConsentMethod,
   ConsentOptionCreate,
@@ -11,7 +12,6 @@ import {
 import { debugLog } from "./consent-utils";
 import { removeCookiesFromBrowser, saveFidesCookie } from "./cookie";
 import { dispatchFidesEvent } from "./events";
-import { patchUserPreference } from "../services/api";
 import { TcfSavePreferences } from "./tcf/types";
 
 /**
@@ -26,7 +26,8 @@ async function savePreferencesApi(
   consentPreferencesToSave?: Array<SaveConsentPreference>,
   tcf?: TcfSavePreferences,
   userLocationString?: string,
-  servedNoticeHistoryId?: string
+  servedNoticeHistoryId?: string,
+  propertyId?: string,
 ) {
   debugLog(options.debug, "Saving preferences to Fides API");
   // Derive the Fides user preferences array from consent preferences
@@ -44,6 +45,7 @@ async function savePreferencesApi(
     user_geography: userLocationString,
     method: consentMethod,
     served_notice_history_id: servedNoticeHistoryId,
+    property_id: propertyId,
     ...(tcf ?? []),
   };
   await patchUserPreference(
@@ -51,7 +53,7 @@ async function savePreferencesApi(
     privacyPreferenceCreate,
     options,
     cookie,
-    experience
+    experience,
   );
 }
 
@@ -76,6 +78,7 @@ export const updateConsentPreferences = async ({
   servedNoticeHistoryId,
   tcf,
   updateCookie,
+  propertyId,
 }: {
   consentPreferencesToSave?: Array<SaveConsentPreference>;
   privacyExperienceConfigHistoryId?: string;
@@ -88,6 +91,7 @@ export const updateConsentPreferences = async ({
   servedNoticeHistoryId?: string;
   tcf?: TcfSavePreferences;
   updateCookie: (oldCookie: FidesCookie) => Promise<FidesCookie>;
+  propertyId?: string;
 }) => {
   // 1. Update the cookie object based on new preferences & extra details
   const updatedCookie = await updateCookie(cookie);
@@ -120,13 +124,14 @@ export const updateConsentPreferences = async ({
         consentPreferencesToSave,
         tcf,
         userLocationString,
-        servedNoticeHistoryId
+        servedNoticeHistoryId,
+        propertyId,
       );
     } catch (e) {
       debugLog(
         options.debug,
         "Error saving updated preferences to API, continuing. Error: ",
-        e
+        e,
       );
     }
   }
@@ -136,7 +141,7 @@ export const updateConsentPreferences = async ({
     consentPreferencesToSave
       .filter(
         (preference) =>
-          preference.consentPreference === UserConsentPreference.OPT_OUT
+          preference.consentPreference === UserConsentPreference.OPT_OUT,
       )
       .forEach((preference) => {
         removeCookiesFromBrowser(preference.notice.cookies);

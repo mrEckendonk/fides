@@ -66,18 +66,18 @@ const fidesScriptPlugins = ({ name, gzipWarnSizeKb, gzipErrorSizeKb }) => [
           console.error(
             `❌ ERROR: ${fileName} build failed! Gzipped size (${gzipSize}) exceeded maximum size (${gzipErrorSizeKb} KB)!`,
             `If you must, update GZIP_SIZE_* constants in clients/fides-js/rollup.config.mjs.`,
-            `Open bundle-size-stats/${name}-stats.html to visualize the (non-gzipped) bundle size.`
+            `Open bundle-size-stats/${name}-stats.html to visualize the (non-gzipped) bundle size.`,
           );
           process.exit(1);
         } else if (gzipSizeKb > gzipWarnSizeKb && !IS_DEV) {
           console.warn(
             `️🚨 WARN: ${fileName} build is getting large! Gzipped size (${gzipSize}) exceeded warning size (${gzipWarnSizeKb} KB)!`,
             `If you must, update GZIP_SIZE_* constants in clients/fides-js/rollup.config.mjs.`,
-            `Open bundle-size-stats/${name}-stats.html to visualize the (non-gzipped) bundle size.`
+            `Open bundle-size-stats/${name}-stats.html to visualize the (non-gzipped) bundle size.`,
           );
         } else {
           console.log(
-            `✅ ${fileName} gzipped size passed maximum size checks (${gzipSize} < ${gzipErrorSizeKb} KB)`
+            `✅ ${fileName} gzipped size passed maximum size checks (${gzipSize} < ${gzipErrorSizeKb} KB)`,
           );
         }
       },
@@ -129,7 +129,7 @@ SCRIPTS.forEach(({ name, gzipErrorSizeKb, gzipWarnSizeKb, isExtension }) => {
         file: `dist/${name}.js`,
         name: isExtension ? undefined : "Fides",
         format: isExtension ? undefined : "umd",
-        sourcemap: IS_DEV,
+        sourcemap: IS_DEV ? "inline" : false,
       },
     ],
   };

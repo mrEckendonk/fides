@@ -1,9 +1,12 @@
 import { ContainerNode, render } from "preact";
 
+import { OverlayProps } from "../components/types";
+import { fetchGvlTranslations } from "../services/api";
 import { ComponentType } from "./consent-types";
 import { debugLog } from "./consent-utils";
-
-import { OverlayProps } from "../components/types";
+import { DEFAULT_LOCALE } from "./i18n";
+import { loadMessagesFromGVLTranslations } from "./i18n/i18n-utils";
+import { LOCALE_LANGUAGE_MAP } from "./i18n/locales";
 import { ColorFormat, generateLighterColor } from "./style-utils";
 
 const FIDES_EMBED_CONTAINER_ID = "fides-embed-container";
@@ -29,16 +32,45 @@ export const initOverlay = async ({
   cookie,
   savedConsent,
   renderOverlay,
+  propertyId,
 }: OverlayProps & {
   renderOverlay: (props: OverlayProps, parent: ContainerNode) => void;
 }): Promise<void> => {
   debugLog(options.debug, "Initializing Fides consent overlays...");
 
+  if (experience.experience_config?.component === ComponentType.TCF_OVERLAY) {
+    let gvlTranslations = await fetchGvlTranslations(
+      options.fidesApiUrl,
+      [i18n.locale],
+      options.debug,
+    );
+    if (
+      (!gvlTranslations || Object.keys(gvlTranslations).length === 0) &&
+      experience.gvl
+    ) {
+      // if translations API fails or is empty, use the GVL object directly
+      // as a fallback, since it already contains the english version of strings
+      gvlTranslations = {};
+      gvlTranslations[DEFAULT_LOCALE] = experience.gvl;
+      // eslint-disable-next-line no-param-reassign
+      experience.available_locales = [DEFAULT_LOCALE];
+      i18n.setAvailableLanguages(
+        LOCALE_LANGUAGE_MAP.filter((lang) => lang.locale === DEFAULT_LOCALE),
+      );
+      i18n.activate(DEFAULT_LOCALE);
+    }
+    loadMessagesFromGVLTranslations(
+      i18n,
+      gvlTranslations,
+      experience.available_locales || [DEFAULT_LOCALE],
+    );
+  }
+
   async function renderFidesOverlay(): Promise<void> {
     try {
       debugLog(
         options.debug,
-        "Rendering Fides overlay CSS & HTML into the DOM..."
+        "Rendering Fides overlay CSS & HTML into the DOM...",
       );
 
       // If this function is called multiple times (e.g. due to calling
@@ -47,7 +79,7 @@ export const initOverlay = async ({
       if (renderedParentElem) {
         debugLog(
           options.debug,
-          "Detected that Fides overlay was previously rendered! Unmounting previous instance from the DOM."
+          "Detected that Fides overlay was previously rendered! Unmounting previous instance from the DOM.",
         );
 
         /**
@@ -69,16 +101,16 @@ export const initOverlay = async ({
       if (options.fidesPrimaryColor) {
         document.documentElement.style.setProperty(
           "--fides-overlay-primary-color",
-          options.fidesPrimaryColor
+          options.fidesPrimaryColor,
         );
         const lighterPrimaryColor: string = generateLighterColor(
           options.fidesPrimaryColor,
           ColorFormat.HEX,
-          1
+          1,
         );
         document.documentElement.style.setProperty(
           "--fides-overlay-primary-button-background-hover-color",
-          lighterPrimaryColor
+          lighterPrimaryColor,
         );
       }
 
@@ -90,7 +122,7 @@ export const initOverlay = async ({
           // wait until the hosting page's container element is available before proceeding in this script and attempting to render the embedded overlay. This is useful for dynamic (SPA) pages and pages that load the modal link element after the Fides script has loaded.
           debugLog(
             options.debug,
-            `Embed container not found (#${FIDES_EMBED_CONTAINER_ID}), waiting for it to be added to the DOM...`
+            `Embed container not found (#${FIDES_EMBED_CONTAINER_ID}), waiting for it to be added to the DOM...`,
           );
           const checkEmbedContainer = async () =>
             new Promise<void>((resolve) => {
@@ -120,7 +152,7 @@ export const initOverlay = async ({
         if (!parentElem) {
           debugLog(
             options.debug,
-            `Parent element not found (#${overlayParentId}), creating and appending to body...`
+            `Parent element not found (#${overlayParentId}), creating and appending to body...`,
           );
           // Create our own parent element and prepend to body
           parentElem = document.createElement("div");
@@ -132,7 +164,7 @@ export const initOverlay = async ({
 
       if (!parentElem) {
         return await Promise.reject(
-          new Error("There was a problem rendering the Fides overlay.")
+          new Error("There was a problem rendering the Fides overlay."),
         );
       }
 
@@ -151,8 +183,9 @@ export const initOverlay = async ({
             fidesRegionString,
             cookie,
             savedConsent,
+            propertyId,
           },
-          parentElem
+          parentElem,
         );
         debugLog(options.debug, "Fides overlay is now in the DOM!");
         renderedParentElem = parentElem;
@@ -169,7 +202,7 @@ export const initOverlay = async ({
   if (document?.readyState === "loading") {
     debugLog(
       options.debug,
-      "document readyState is not yet 'interactive', adding 'readystatechange' event listener and waiting..."
+      "document readyState is not yet 'interactive', adding 'readystatechange' event listener and waiting...",
     );
     document.addEventListener("readystatechange", async () => {
       if (document.readyState === "interactive") {

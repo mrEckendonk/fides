@@ -30,9 +30,19 @@ interface MonitorResultQueryParams {
   search?: string;
 }
 
-interface DatabaseQueryParams {
+interface DatabaseByMonitorQueryParams {
   page: number;
   size: number;
+  monitor_config_id: string;
+}
+
+interface DatabaseByConnectionQueryParams {
+  page: number;
+  size: number;
+  connection_config_key: string;
+}
+
+interface MonitorActionQueryParams {
   monitor_config_id: string;
 }
 
@@ -63,15 +73,49 @@ const discoveryDetectionApi = baseApi.injectEndpoints({
       query: (body) => ({
         method: "PUT",
         url: `/plus/discovery-monitor`,
-        body,
+        body: {
+          ...body,
+          // last_monitored is read-only and shouldn't be sent to the server
+          last_monitored: undefined,
+        },
       }),
       invalidatesTags: ["Discovery Monitor Configs"],
     }),
-    getDatabasesByMonitor: build.query<Page_str_, DatabaseQueryParams>({
+    getDatabasesByMonitor: build.query<Page_str_, DatabaseByMonitorQueryParams>(
+      {
+        query: (params) => ({
+          method: "GET",
+          url: `/plus/discovery-monitor/${params.monitor_config_id}/databases`,
+        }),
+      },
+    ),
+    getDatabasesByConnection: build.query<
+      Page_str_,
+      DatabaseByConnectionQueryParams
+    >({
       query: (params) => ({
-        method: "GET",
-        url: `/plus/discovery-monitor/${params.monitor_config_id}/databases`,
+        method: "POST",
+        url: `/plus/discovery-monitor/databases`,
+        body: {
+          name: "new-monitor",
+          connection_config_key: params.connection_config_key,
+          classify_params: {},
+        },
       }),
+    }),
+    executeDiscoveryMonitor: build.mutation<any, MonitorActionQueryParams>({
+      query: ({ monitor_config_id }) => ({
+        method: "POST",
+        url: `/plus/discovery-monitor/${monitor_config_id}/execute`,
+      }),
+      invalidatesTags: ["Discovery Monitor Configs"],
+    }),
+    deleteDiscoveryMonitor: build.mutation<any, MonitorActionQueryParams>({
+      query: ({ monitor_config_id }) => ({
+        method: "DELETE",
+        url: `/plus/discovery-monitor/${monitor_config_id}`,
+      }),
+      invalidatesTags: ["Discovery Monitor Configs"],
     }),
     getMonitorResults: build.query<
       Page_StagedResource_,
@@ -101,7 +145,7 @@ const discoveryDetectionApi = baseApi.injectEndpoints({
         method: "POST",
         url: `/plus/discovery-monitor/mute?${queryString.stringify(
           { staged_resource_urns: [staged_resource_urn] },
-          { arrayFormat: "none" }
+          { arrayFormat: "none" },
         )}`,
       }),
       invalidatesTags: ["Discovery Monitor Results"],
@@ -112,7 +156,7 @@ const discoveryDetectionApi = baseApi.injectEndpoints({
         method: "POST",
         url: `/plus/discovery-monitor/un-mute?${queryString.stringify(
           { staged_resource_urns: [params.staged_resource_urn] },
-          { arrayFormat: "none" }
+          { arrayFormat: "none" },
         )}`,
       }),
       invalidatesTags: ["Discovery Monitor Results"],
@@ -124,7 +168,7 @@ const discoveryDetectionApi = baseApi.injectEndpoints({
           { staged_resource_urns: [params.staged_resource_urn] },
           {
             arrayFormat: "none",
-          }
+          },
         )}`,
       }),
       invalidatesTags: ["Discovery Monitor Results"],
@@ -134,7 +178,7 @@ const discoveryDetectionApi = baseApi.injectEndpoints({
         method: "POST",
         url: `/plus/discovery-monitor/mute?${queryString.stringify(
           { staged_resource_urns },
-          { arrayFormat: "none" }
+          { arrayFormat: "none" },
         )}`,
       }),
       invalidatesTags: ["Discovery Monitor Results"],
@@ -144,7 +188,7 @@ const discoveryDetectionApi = baseApi.injectEndpoints({
         method: "POST",
         url: `/plus/discovery-monitor/promote?${queryString.stringify(
           { staged_resource_urns },
-          { arrayFormat: "none" }
+          { arrayFormat: "none" },
         )}`,
       }),
       invalidatesTags: ["Discovery Monitor Results"],
@@ -173,6 +217,10 @@ export const {
   useGetMonitorsByIntegrationQuery,
   usePutDiscoveryMonitorMutation,
   useGetDatabasesByMonitorQuery,
+  useGetDatabasesByConnectionQuery,
+  useLazyGetDatabasesByConnectionQuery,
+  useExecuteDiscoveryMonitorMutation,
+  useDeleteDiscoveryMonitorMutation,
   useGetMonitorResultsQuery,
   usePromoteResourceMutation,
   usePromoteResourcesMutation,
@@ -196,10 +244,10 @@ const selectDiscoveryDetectionState = (state: RootState) =>
 
 export const selectPage = createSelector(
   selectDiscoveryDetectionState,
-  (state) => state.page
+  (state) => state.page,
 );
 
 export const selectPageSize = createSelector(
   selectDiscoveryDetectionState,
-  (state) => state.pageSize
+  (state) => state.pageSize,
 );

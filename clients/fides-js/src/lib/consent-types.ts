@@ -1,10 +1,13 @@
 import type { Fides, FidesOptions } from "../docs";
+import type { gtm } from "../integrations/gtm";
+import type { meta } from "../integrations/meta";
+import type { shopify } from "../integrations/shopify";
 import type { GPPFieldMapping, GPPSettings } from "./gpp/types";
 import type {
   GVLJson,
-  GVLTranslations,
   TCFFeatureRecord,
   TCFFeatureSave,
+  TcfOtherConsent,
   TCFPurposeConsentRecord,
   TCFPurposeLegitimateInterestsRecord,
   TCFPurposeSave,
@@ -17,10 +20,6 @@ import type {
   TCFVendorRelationships,
   TCFVendorSave,
 } from "./tcf/types";
-import { TcfOtherConsent } from "./tcf/types";
-import type { gtm } from "../integrations/gtm";
-import type { meta } from "../integrations/meta";
-import type { shopify } from "../integrations/shopify";
 
 export type EmptyExperience = Record<PropertyKey, never>;
 
@@ -33,6 +32,8 @@ export interface FidesConfig {
   experience?: PrivacyExperience | EmptyExperience;
   // Set the geolocation for this Fides.js instance. If *not* set, Fides.js will fetch its own geolocation.
   geolocation?: UserGeolocation;
+  // Set the property id for this Fides.js instance. If *not* set, property id will not be saved in the consent preferences or notices served.
+  propertyId?: string;
   // Global options for this Fides.js instance
   options: FidesInitOptions;
 }
@@ -71,9 +72,6 @@ export interface FidesInitOptions {
 
   // URL for the Fides API, used to fetch and save consent preferences. Required.
   fidesApiUrl: string;
-
-  // URL for Server-side Fides API, used to fetch geolocation and consent preference. Optional.
-  serverSideFidesApiUrl: string;
 
   // Whether we should show the TCF modal
   tcfEnabled: boolean;
@@ -220,7 +218,7 @@ export type FidesApiOptions = {
     consentMethod: ConsentMethod,
     consent: NoticeConsent,
     fides_string: string | undefined,
-    experience: PrivacyExperience
+    experience: PrivacyExperience,
   ) => Promise<void>;
   /**
    * Intake a custom function that is used to override users' saved preferences.
@@ -236,7 +234,7 @@ export type FidesApiOptions = {
    */
   getPrivacyExperienceFn?: (
     userLocationString: string,
-    fidesUserDeviceId?: string | null
+    fidesUserDeviceId?: string | null,
   ) => Promise<PrivacyExperience | EmptyExperience>;
   /**
    * Intake a custom function that is used to save notices served for reporting purposes.
@@ -244,7 +242,7 @@ export type FidesApiOptions = {
    * @param {object} request - consent served records to save
    */
   patchNoticesServedFn?: (
-    request: RecordConsentServedRequest
+    request: RecordConsentServedRequest,
   ) => Promise<RecordsServedResponse | null>;
 };
 
@@ -258,7 +256,7 @@ export class SaveConsentPreference {
   constructor(
     notice: PrivacyNotice,
     consentPreference: UserConsentPreference,
-    noticeHistoryId?: string
+    noticeHistoryId?: string,
   ) {
     this.notice = notice;
     this.consentPreference = consentPreference;
@@ -415,8 +413,8 @@ export type PrivacyExperience = {
    */
   experience_config?: ExperienceConfig; // NOTE: uses our client-side ExperienceConfig type
   gvl?: GVLJson; // NOTE: uses our client-side GVLJson type
-  gvl_translations?: GVLTranslations;
   meta?: ExperienceMeta;
+  available_locales?: string[];
 };
 
 /**
@@ -431,6 +429,8 @@ export type ExperienceConfig = {
   name?: string;
   disabled?: boolean;
   dismissable?: boolean;
+  show_layer1_notices?: boolean;
+  layer1_button_options?: Layer1ButtonOption;
   allow_language_selection?: boolean;
   auto_detect_language?: boolean;
   modal_link_label?: string;
@@ -706,6 +706,12 @@ export enum ButtonType {
   TERTIARY = "tertiary",
 }
 
+export enum Layer1ButtonOption {
+  // defines the buttons to show in the layer 1 banner
+  ACKNOWLEDGE = "acknowledge", // show acknowledge button
+  OPT_IN_OPT_OUT = "opt_in_opt_out", // show opt in and opt out buttons
+}
+
 export enum ConsentMethod {
   BUTTON = "button", // deprecated- keeping for backwards-compatibility
   REJECT = "reject",
@@ -714,6 +720,7 @@ export enum ConsentMethod {
   DISMISS = "dismiss",
   GPC = "gpc",
   INDIVIDUAL_NOTICE = "individual_notice",
+  ACKNOWLEDGE = "acknowledge",
 }
 
 export type PrivacyPreferencesRequest = {
@@ -731,6 +738,8 @@ export type PrivacyPreferencesRequest = {
   system_consent_preferences?: Array<TCFVendorSave>;
   system_legitimate_interests_preferences?: Array<TCFVendorSave>;
   policy_key?: string;
+  property_id?: string;
+
   /**
    * @deprecated has no effect; use privacy_experience_config_history_id instead!
    */
@@ -804,6 +813,7 @@ export type RecordConsentServedRequest = {
   user_geography?: string;
   acknowledge_mode?: boolean;
   serving_component: string; // NOTE: uses a generic string instead of an enum
+  property_id?: string;
 };
 
 /**

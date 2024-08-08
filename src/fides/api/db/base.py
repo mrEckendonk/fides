@@ -7,6 +7,7 @@ from fides.api.models.audit_log import AuditLog
 from fides.api.models.authentication_request import AuthenticationRequest
 from fides.api.models.client import ClientDetail
 from fides.api.models.connectionconfig import ConnectionConfig
+from fides.api.models.consent_automation import ConsentAutomation
 from fides.api.models.custom_asset import CustomAsset
 from fides.api.models.custom_connector_template import CustomConnectorTemplate
 from fides.api.models.datasetconfig import DatasetConfig
@@ -14,6 +15,7 @@ from fides.api.models.detection_discovery import StagedResource
 from fides.api.models.experience_notices import ExperienceNotices
 from fides.api.models.fides_cloud import FidesCloud
 from fides.api.models.fides_user import FidesUser
+from fides.api.models.fides_user_invite import FidesUserInvite
 from fides.api.models.fides_user_permissions import FidesUserPermissions
 from fides.api.models.location_regulation_selections import LocationRegulationSelections
 from fides.api.models.manual_webhook import AccessManualWebhook

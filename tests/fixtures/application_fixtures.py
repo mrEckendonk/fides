@@ -159,6 +159,21 @@ integration_secrets = {
             integration_config, "google_cloud_sql_mysql_example.keyfile_creds"
         ),
     },
+    "google_cloud_sql_postgres_example": {
+        "db_iam_user": pydash.get(
+            integration_config, "google_cloud_sql_postgres_example.db_iam_user"
+        ),
+        "instance_connection_name": pydash.get(
+            integration_config,
+            "google_cloud_sql_postgres_example.instance_connection_name",
+        ),
+        "dbname": pydash.get(
+            integration_config, "google_cloud_sql_postgres_example.dbname"
+        ),
+        "keyfile_creds": pydash.get(
+            integration_config, "google_cloud_sql_postgres_example.keyfile_creds"
+        ),
+    },
     "mssql_example": {
         "host": pydash.get(integration_config, "mssql_example.server"),
         "port": pydash.get(integration_config, "mssql_example.port"),
@@ -354,6 +369,7 @@ def property_a(db) -> Generator:
             name="New Property",
             type=PropertyType.website,
             experiences=[],
+            messaging_templates=[],
             paths=["test"],
         ).dict(),
     )
@@ -369,11 +385,33 @@ def property_b(db: Session) -> Generator:
             name="New Property b",
             type=PropertyType.website,
             experiences=[],
+            messaging_templates=[],
             paths=[],
         ).dict(),
     )
     yield prop_b
     prop_b.delete(db=db)
+
+
+@pytest.fixture(scope="function")
+def messaging_template_with_property_disabled(db: Session, property_a) -> Generator:
+    template_type = MessagingActionType.SUBJECT_IDENTITY_VERIFICATION.value
+    content = {
+        "subject": "Here is your code {{code}}",
+        "body": "Use code {{code}} to verify your identity, you have {{minutes}} minutes!",
+    }
+    data = {
+        "content": content,
+        "properties": [{"id": property_a.id, "name": property_a.name}],
+        "is_enabled": False,
+        "type": template_type,
+    }
+    messaging_template = MessagingTemplate.create(
+        db=db,
+        data=data,
+    )
+    yield messaging_template
+    messaging_template.delete(db)
 
 
 @pytest.fixture(scope="function")
@@ -1715,6 +1753,36 @@ def privacy_request_with_custom_fields(db: Session, policy: Policy) -> PrivacyRe
 
 
 @pytest.fixture(scope="function")
+def privacy_request_with_custom_array_fields(
+    db: Session, policy: Policy
+) -> PrivacyRequest:
+    privacy_request = PrivacyRequest.create(
+        db=db,
+        data={
+            "external_id": f"ext-{str(uuid4())}",
+            "started_processing_at": datetime(2021, 10, 1),
+            "finished_processing_at": datetime(2021, 10, 3),
+            "requested_at": datetime(2021, 10, 1),
+            "status": PrivacyRequestStatus.complete,
+            "origin": f"https://example.com/",
+            "policy_id": policy.id,
+            "client_id": policy.client_id,
+        },
+    )
+    privacy_request.persist_custom_privacy_request_fields(
+        db=db,
+        custom_privacy_request_fields={
+            "device_ids": CustomPrivacyRequestField(
+                label="Device Ids", value=["device_1", "device_2", "device_3"]
+            ),
+        },
+    )
+    privacy_request.save(db)
+    yield privacy_request
+    privacy_request.delete(db)
+
+
+@pytest.fixture(scope="function")
 def privacy_request_with_email_identity(db: Session, policy: Policy) -> PrivacyRequest:
     privacy_request = PrivacyRequest.create(
         db=db,
@@ -2358,6 +2426,7 @@ def example_datasets() -> List[Dict]:
         "data/dataset/dynamodb_example_test_dataset.yml",
         "data/dataset/postgres_example_test_extended_dataset.yml",
         "data/dataset/google_cloud_sql_mysql_example_test_dataset.yml",
+        "data/dataset/google_cloud_sql_postgres_example_test_dataset.yml",
     ]
     for filename in example_filenames:
         example_datasets += load_dataset(filename)
@@ -2456,6 +2525,7 @@ def application_user(
         data={
             "username": unique_username,
             "password": "test_password",
+            "email_address": "test.user@ethyca.com",
             "first_name": "Test",
             "last_name": "User",
         },
@@ -2528,6 +2598,7 @@ def system_manager(db: Session, system) -> System:
         data={
             "username": "test_system_manager_user",
             "password": "TESTdcnG@wzJeu0&%3Qe2fGo7",
+            "email_address": "system-manager.user@ethyca.com",
         },
     )
     client = ClientDetail(
@@ -3049,7 +3120,7 @@ def allow_custom_privacy_request_fields_in_request_execution_disabled():
 
 
 @pytest.fixture(scope="function")
-def system_with_no_uses(db: Session) -> System:
+def system_with_no_uses(db: Session) -> Generator[System, None, None]:
     system = System.create(
         db=db,
         data={
@@ -3060,11 +3131,12 @@ def system_with_no_uses(db: Session) -> System:
             "system_type": "Service",
         },
     )
-    return system
+    yield system
+    db.delete(system)
 
 
 @pytest.fixture(scope="function")
-def tcf_system(db: Session) -> System:
+def tcf_system(db: Session) -> Generator[System, None, None]:
     system = System.create(
         db=db,
         data={
@@ -3110,7 +3182,8 @@ def tcf_system(db: Session) -> System:
     )
 
     db.refresh(system)
-    return system
+    yield system
+    db.delete(system)
 
 
 @pytest.fixture(scope="function")

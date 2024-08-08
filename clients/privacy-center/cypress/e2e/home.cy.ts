@@ -1,4 +1,5 @@
 import { Config } from "~/types/config";
+
 import { API_URL } from "../support/constants";
 
 describe("Home", () => {
@@ -28,7 +29,7 @@ describe("Home", () => {
     cy.get("body").should(
       "not.have.css",
       "background-color",
-      "rgb(255, 99, 71)"
+      "rgb(255, 99, 71)",
     );
     const styles = "body { background-color: tomato !important; }";
     cy.dispatch({ type: "styles/loadStyles", payload: styles });
@@ -42,6 +43,8 @@ describe("Home", () => {
       IS_GEOLOCATION_ENABLED: true,
       GEOLOCATION_API_URL: geolocationApiUrl,
     };
+    cy.visit("/");
+    cy.overrideSettings(settings);
     cy.intercept("GET", geolocationApiUrl, {
       fixture: "consent/geolocation.json",
     }).as("getGeolocation");
@@ -49,8 +52,6 @@ describe("Home", () => {
     cy.intercept("GET", `${API_URL}/privacy-experience/*`, {
       body: undefined,
     }).as("getExperience");
-    cy.visit("/");
-    cy.overrideSettings(settings);
 
     cy.getByTestId("card").contains("Manage your consent").click();
     cy.getByTestId("notice-empty-state");

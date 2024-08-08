@@ -79,7 +79,7 @@ type ConnectorParametersFormProps = {
   deleteResult: any;
 };
 
-const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
+export const ConnectorParametersForm = ({
   secretsSchema,
   defaultValues,
   isSubmitting = false,
@@ -94,7 +94,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
   isCreatingConnectionConfig,
   onDelete,
   deleteResult,
-}) => {
+}: ConnectorParametersFormProps) => {
   const [trigger, { isLoading, isFetching }] =
     useLazyGetDatastoreConnectionStatusQuery();
   const { plus: isPlusEnabled } = useFeatures();
@@ -143,7 +143,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
 
   const getFormField = (
     key: string,
-    item: ConnectionTypeSecretSchemaProperty
+    item: ConnectionTypeSecretSchemaProperty,
   ): JSX.Element => (
     <Field
       id={`secrets.${key}`}
@@ -245,9 +245,8 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
         Object.entries(secretsSchema.properties).forEach(([key, schema]) => {
           if (schema.allOf?.[0].$ref === FIDES_DATASET_REFERENCE) {
             const datasetReference = initialValues.secrets[key];
-            initialValues.secrets[
-              key
-            ] = `${datasetReference.dataset}.${datasetReference.field}`;
+            initialValues.secrets[key] =
+              `${datasetReference.dataset}.${datasetReference.field}`;
           }
         });
       }
@@ -257,7 +256,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
 
     if (_.isEmpty(initialValues.enabled_actions)) {
       initialValues.enabled_actions = connectionOption.supported_actions.map(
-        (action) => action.toString()
+        (action) => action.toString(),
       );
     }
 
@@ -271,7 +270,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
    * @returns ConnectionConfigFormValues - The processed values.
    */
   const preprocessValues = (
-    values: ConnectionConfigFormValues
+    values: ConnectionConfigFormValues,
   ): ConnectionConfigFormValues => {
     const updatedValues = _.cloneDeep(values);
     if (secretsSchema) {
@@ -301,7 +300,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
 
   const handleAuthorizeConnectionClick = async (
     values: ConnectionConfigFormValues,
-    props: FormikProps<ConnectionConfigFormValues>
+    props: FormikProps<ConnectionConfigFormValues>,
   ) => {
     const errors = await props.validateForm();
 
@@ -314,7 +313,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
   };
 
   const handleTestConnectionClick = async (
-    props: FormikProps<ConnectionConfigFormValues>
+    props: FormikProps<ConnectionConfigFormValues>,
   ) => {
     const errors = await props.validateForm();
 
@@ -336,7 +335,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
       validateOnBlur={false}
       validateOnChange={false}
     >
-      {(props: FormikProps<ConnectionConfigFormValues>) => {
+      {(props) => {
         const authorized = !props.dirty && connectionConfig?.authorized;
         return (
           <Form noValidate>
@@ -377,7 +376,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
                           size="sm"
                         />
                         <FormErrorMessage>
-                          {props.errors.instance_key}
+                          {props.errors.instance_key as string}
                         </FormErrorMessage>
                       </VStack>
                       <Tooltip
@@ -407,7 +406,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
                         return null;
                       }
                       return getFormField(key, item);
-                    }
+                    },
                   )
                 : null}
               {isPlusEnabled && (
@@ -447,7 +446,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
                               (action) => ({
                                 label: _.upperFirst(action),
                                 value: action,
-                              })
+                              }),
                             )}
                             fieldName={field.name}
                             size="sm"
@@ -458,7 +457,7 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
                           />
                         </Box>
                         <FormErrorMessage>
-                          {props.errors.enabled_actions}
+                          {props.errors.enabled_actions as string}
                         </FormErrorMessage>
                       </VStack>
                       <Tooltip
@@ -542,5 +541,3 @@ const ConnectorParametersForm: React.FC<ConnectorParametersFormProps> = ({
     </Formik>
   );
 };
-
-export default ConnectorParametersForm;

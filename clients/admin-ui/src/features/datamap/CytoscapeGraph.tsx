@@ -16,6 +16,9 @@ const CytoscapeWrapper = dynamic(() => import("react-cytoscapejs"), {
 });
 
 cytoscape.use(klay);
+if (process.env.NODE_ENV !== "development") {
+  cytoscape.warnings(false);
+}
 
 type UseCytoscapeGraphProps = {
   data: SpatialData;
@@ -52,7 +55,7 @@ const useCytoscapeGraph = ({ data }: { data: SpatialData }) => {
         edgeSpacingFactor: 1.3,
       },
     }),
-    []
+    [],
   );
   const backgroundColor = "#f7fafc";
   const styleSheet: cytoscape.Stylesheet[] = useMemo(
@@ -125,7 +128,7 @@ const useCytoscapeGraph = ({ data }: { data: SpatialData }) => {
         },
       },
     ],
-    []
+    [],
   );
 
   return {
@@ -181,7 +184,7 @@ const CytoscapeGraph = ({
        */
       datamapGraphRef.current = undefined;
     },
-    [datamapGraphRef]
+    [datamapGraphRef],
   );
 
   useEffect(() => {
@@ -213,7 +216,7 @@ const CytoscapeGraph = ({
           elements={elements}
           style={{ height: "100%", width: "100%", backgroundColor }}
           stylesheet={styleSheet}
-          // wheelSensitivity={0.085} // removed due to warning about only using this setting in highly controlled environments
+          wheelSensitivity={0.085} // before changing the value, test the behavior on a mouse and a trackpad
           layout={layoutConfig}
         />
       </Box>

@@ -28,12 +28,10 @@ from fides.api.models.messaging import (
     MessagingConfig,
     default_messaging_config_key,
     default_messaging_config_name,
+    get_messaging_method,
     get_schema_for_secrets,
 )
-from fides.api.models.messaging_template import (
-    DEFAULT_MESSAGING_TEMPLATES,
-    MessagingTemplate,
-)
+from fides.api.models.messaging_template import DEFAULT_MESSAGING_TEMPLATES
 from fides.api.oauth.utils import verify_oauth_client
 from fides.api.schemas.api import BulkUpdateFailed
 from fides.api.schemas.messaging.messaging import (
@@ -46,13 +44,12 @@ from fides.api.schemas.messaging.messaging import (
     MessagingConfigResponse,
     MessagingConfigStatus,
     MessagingConfigStatusMessage,
+    MessagingMethod,
     MessagingServiceType,
     MessagingTemplateDefault,
-    MessagingTemplateWithPropertiesBodyParams,
     MessagingTemplateWithPropertiesDetail,
-    MessagingTemplateWithPropertiesPatchBodyParams,
-    MessagingTemplateWithPropertiesSummary,
     TestMessagingStatusMessage,
+    UserEmailInviteStatus,
 )
 from fides.api.schemas.messaging.messaging_secrets_docs_only import (
     possible_messaging_secrets,
@@ -62,17 +59,13 @@ from fides.api.service.messaging.message_dispatch_service import dispatch_messag
 from fides.api.service.messaging.messaging_crud_service import (
     create_or_update_basic_templates,
     create_or_update_messaging_config,
-    create_property_specific_template_by_type,
     delete_messaging_config,
     delete_template_by_id,
     get_all_basic_messaging_templates,
     get_default_template_by_type,
     get_messaging_config_by_key,
     get_template_by_id,
-    patch_property_specific_template,
-    save_defaults_for_all_messaging_template_types,
     update_messaging_config,
-    update_property_specific_template,
 )
 from fides.api.util.api_router import APIRouter
 from fides.api.util.logger import Pii
@@ -90,12 +83,11 @@ from fides.common.api.v1.urn_registry import (
     MESSAGING_DEFAULT,
     MESSAGING_DEFAULT_BY_TYPE,
     MESSAGING_DEFAULT_SECRETS,
+    MESSAGING_EMAIL_INVITE_STATUS,
     MESSAGING_SECRETS,
     MESSAGING_STATUS,
     MESSAGING_TEMPLATE_BY_ID,
     MESSAGING_TEMPLATE_DEFAULT_BY_TEMPLATE_TYPE,
-    MESSAGING_TEMPLATES_BY_TEMPLATE_TYPE,
-    MESSAGING_TEMPLATES_SUMMARY,
     MESSAGING_TEST,
     V1_URL_PREFIX,
 )
@@ -224,7 +216,9 @@ def get_active_default_config(*, db: Session = Depends(deps.get_db)) -> Messagin
     },
 )
 def get_messaging_status(
-    *, db: Session = Depends(deps.get_db)
+    *,
+    db: Session = Depends(deps.get_db),
+    messaging_method: Optional[MessagingMethod] = None,
 ) -> MessagingConfigStatusMessage:
     """
     Determines the status of the active default messaging config
@@ -233,10 +227,19 @@ def get_messaging_status(
 
     # confirm an active default messaging config is present
     messaging_config = MessagingConfig.get_active_default(db)
-    if not messaging_config:
+
+    if not messaging_config or (
+        messaging_method
+        and get_messaging_method(messaging_config.service_type.value)  # type: ignore
+        != messaging_method
+    ):
+        detail = "No active default messaging configuration found"
+        if messaging_method:
+            detail += f" for {messaging_method}"
+
         return MessagingConfigStatusMessage(
             config_status=MessagingConfigStatus.not_configured,
-            detail="No active default messaging configuration found",
+            detail=detail,
         )
 
     try:
@@ -592,29 +595,6 @@ def update_basic_messaging_templates(
 
 
 @router.get(
-    MESSAGING_TEMPLATES_SUMMARY,
-    dependencies=[Security(verify_oauth_client, scopes=[MESSAGING_TEMPLATE_UPDATE])],
-    response_model=Page[MessagingTemplateWithPropertiesSummary],
-)
-def get_property_specific_messaging_templates_summary(
-    *, db: Session = Depends(deps.get_db), params: Params = Depends()
-) -> AbstractPage[MessagingTemplate]:
-    """
-    Returns all messaging templates, automatically saving any missing message template types to the db.
-    """
-    # First save any missing template types to db
-    save_defaults_for_all_messaging_template_types(db)
-    ordered_templates = MessagingTemplate.query(db=db).order_by(
-        MessagingTemplate.created_at.desc()
-    )
-    # Now return all templates
-    return paginate(
-        ordered_templates,
-        params=params,
-    )
-
-
-@router.get(
     MESSAGING_TEMPLATE_DEFAULT_BY_TEMPLATE_TYPE,
     dependencies=[Security(verify_oauth_client, scopes=[MESSAGING_TEMPLATE_UPDATE])],
     response_model=MessagingTemplateDefault,
@@ -630,95 +610,6 @@ def get_default_messaging_template(
     )
     try:
         return get_default_template_by_type(template_type)
-    except MessagingTemplateValidationException as e:
-        raise HTTPException(
-            status_code=HTTP_400_BAD_REQUEST,
-            detail=e.message,
-        )
-
-
-@router.post(
-    MESSAGING_TEMPLATES_BY_TEMPLATE_TYPE,
-    dependencies=[Security(verify_oauth_client, scopes=[MESSAGING_TEMPLATE_UPDATE])],
-    response_model=Optional[MessagingTemplateWithPropertiesDetail],
-)
-def create_property_specific_messaging_template(
-    template_type: MessagingActionType,
-    *,
-    db: Session = Depends(deps.get_db),
-    messaging_template_create_body: MessagingTemplateWithPropertiesBodyParams,
-) -> Optional[MessagingTemplate]:
-    """
-    Creates property-specific messaging template by template type.
-    """
-    logger.info(
-        "Creating new property-specific messaging template of type '{}'", template_type
-    )
-    try:
-        return create_property_specific_template_by_type(
-            db, template_type, messaging_template_create_body
-        )
-    except MessagingTemplateValidationException as e:
-        raise HTTPException(
-            status_code=HTTP_400_BAD_REQUEST,
-            detail=e.message,
-        )
-
-
-@router.put(
-    MESSAGING_TEMPLATE_BY_ID,
-    dependencies=[Security(verify_oauth_client, scopes=[MESSAGING_TEMPLATE_UPDATE])],
-    response_model=Optional[MessagingTemplateWithPropertiesDetail],
-)
-def update_property_specific_messaging_template(
-    template_id: str,
-    *,
-    db: Session = Depends(deps.get_db),
-    messaging_template_update_body: MessagingTemplateWithPropertiesBodyParams,
-) -> Optional[MessagingTemplate]:
-    """
-    Updates property-specific messaging template by template id.
-    """
-    logger.info("Updating property-specific messaging template of id '{}'", template_id)
-    try:
-        return update_property_specific_template(
-            db, template_id, messaging_template_update_body
-        )
-    except EmailTemplateNotFoundException as e:
-        raise HTTPException(
-            status_code=HTTP_404_NOT_FOUND,
-            detail=e.message,
-        )
-    except MessagingTemplateValidationException as e:
-        raise HTTPException(
-            status_code=HTTP_400_BAD_REQUEST,
-            detail=e.message,
-        )
-
-
-@router.patch(
-    MESSAGING_TEMPLATE_BY_ID,
-    dependencies=[Security(verify_oauth_client, scopes=[MESSAGING_TEMPLATE_UPDATE])],
-    response_model=Optional[MessagingTemplateWithPropertiesDetail],
-)
-def patch_property_specific_messaging_template(
-    template_id: str,
-    *,
-    db: Session = Depends(deps.get_db),
-    messaging_template_update_body: MessagingTemplateWithPropertiesPatchBodyParams,
-) -> Optional[MessagingTemplate]:
-    """
-    Updates property-specific messaging template by template id.
-    """
-    logger.info("Patching property-specific messaging template of id '{}'", template_id)
-    try:
-        data = messaging_template_update_body.dict(exclude_none=True)
-        return patch_property_specific_template(db, template_id, data)
-    except EmailTemplateNotFoundException as e:
-        raise HTTPException(
-            status_code=HTTP_404_NOT_FOUND,
-            detail=e.message,
-        )
     except MessagingTemplateValidationException as e:
         raise HTTPException(
             status_code=HTTP_400_BAD_REQUEST,
@@ -781,3 +672,21 @@ def delete_messaging_template_by_id(
         )
     except MessagingTemplateValidationException as e:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail=e.message)
+
+
+@router.get(MESSAGING_EMAIL_INVITE_STATUS)
+def user_email_invite_status(
+    db: Session = Depends(deps.get_db),
+    config_proxy: ConfigProxy = Depends(deps.get_config_proxy),
+) -> UserEmailInviteStatus:
+    """Returns whether or not all the necessary configurations are in place to be able to invite a user via email."""
+
+    messaging_status = get_messaging_status(
+        db=db, messaging_method=MessagingMethod.EMAIL
+    )
+    return UserEmailInviteStatus(
+        enabled=(
+            messaging_status.config_status == MessagingConfigStatus.configured
+            and config_proxy.admin_ui.url is not None
+        )
+    )

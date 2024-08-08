@@ -8,8 +8,10 @@ export const ADD_SYSTEMS_MULTIPLE_ROUTE = "/add-systems/multiple";
 export const DATAMAP_ROUTE = "/datamap";
 export const REPORTING_DATAMAP_ROUTE = "/reporting/datamap";
 export const SYSTEM_ROUTE = "/systems";
+export const EDIT_SYSTEM_ROUTE = "/systems/configure/[id]";
 export const CLASSIFY_SYSTEMS_ROUTE = "/classify-systems";
 export const DATASET_ROUTE = "/dataset";
+export const DATASET_EDIT_ROUTE = "/dataset/[id]";
 
 // Detection and discovery
 export const DETECTION_DISCOVERY_ACTIVITY_ROUTE = "/data-discovery/activity";

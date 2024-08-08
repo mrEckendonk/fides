@@ -21,12 +21,14 @@ import {
 import { useGetMonitorResultsQuery } from "~/features/data-discovery-and-detection/discovery-detection.slice";
 import useDetectionResultColumns from "~/features/data-discovery-and-detection/hooks/useDetectionResultColumns";
 import useDiscoveryRoutes from "~/features/data-discovery-and-detection/hooks/useDiscoveryRoutes";
+import IconLegendTooltip from "~/features/data-discovery-and-detection/IndicatorLegend";
 import { DiscoveryMonitorItem } from "~/features/data-discovery-and-detection/types/DiscoveryMonitorItem";
 import { StagedResourceType } from "~/features/data-discovery-and-detection/types/StagedResourceType";
 import { findResourceType } from "~/features/data-discovery-and-detection/utils/findResourceType";
+import getResourceRowName from "~/features/data-discovery-and-detection/utils/getResourceRowName";
 import { DiffStatus, StagedResource } from "~/types/api";
 
-import SearchInput from "../SearchInput";
+import { SearchInput } from "../SearchInput";
 
 const EMPTY_RESPONSE = {
   items: [],
@@ -65,7 +67,7 @@ const DetectionResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [isShowingFullSchema, setIsShowingFullSchema] = useState<boolean>(
-    router.query?.showFullSchema === "true" || false
+    router.query?.showFullSchema === "true" || false,
   );
 
   const diffStatusFilter: DiffStatus[] = [
@@ -114,7 +116,7 @@ const DetectionResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
   });
 
   const resourceType = findResourceType(
-    resources?.items[0] as DiscoveryMonitorItem
+    resources?.items[0] as DiscoveryMonitorItem,
   );
 
   const { columns } = useDetectionResultColumns({ resourceType });
@@ -131,7 +133,7 @@ const DetectionResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
 
   const resourceColumns: ColumnDef<StagedResource, any>[] = useMemo(
     () => columns,
-    [columns]
+    [columns],
   );
 
   const { navigateToDetectionResults } = useDiscoveryRoutes();
@@ -149,7 +151,7 @@ const DetectionResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
     getCoreRowModel: getCoreRowModel(),
     getGroupedRowModel: getGroupedRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
-    getRowId: (row) => row.name ?? row.urn,
+    getRowId: getResourceRowName,
     columns: resourceColumns,
     manualPagination: true,
     data,
@@ -168,9 +170,12 @@ const DetectionResultTable = ({ resourceUrn }: MonitorResultTableProps) => {
           justifyContent="space-between"
           width="full"
         >
-          <Box w={400} flexShrink={0}>
-            <SearchInput value={searchQuery} onChange={setSearchQuery} />
-          </Box>
+          <Flex gap={6} align="center">
+            <Box w={400} flexShrink={0}>
+              <SearchInput value={searchQuery} onChange={setSearchQuery} />
+            </Box>
+            <IconLegendTooltip />
+          </Flex>
           <Flex direction="row" alignItems="center">
             <Switch
               size="sm"

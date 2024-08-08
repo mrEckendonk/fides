@@ -26,9 +26,7 @@ interface DetectionItemActionProps {
   resource: StagedResource;
 }
 
-const DetectionItemAction: React.FC<DetectionItemActionProps> = ({
-  resource,
-}) => {
+const DetectionItemAction = ({ resource }: DetectionItemActionProps) => {
   const resourceType = findResourceType(resource);
   const [confirmResourceMutation] = useConfirmResourceMutation();
   const [muteResourceMutation] = useMuteResourceMutation();
@@ -77,7 +75,7 @@ const DetectionItemAction: React.FC<DetectionItemActionProps> = ({
             });
             successAlert(
               "Data discovery has started. The results may take some time to appear in the “Data discovery“ tab.",
-              `${resource.name || "The resource"} is now being monitored.`
+              `${resource.name || "The resource"} is now being monitored.`,
             );
             setIsProcessingAction(false);
           }}
@@ -95,7 +93,7 @@ const DetectionItemAction: React.FC<DetectionItemActionProps> = ({
             });
             successAlert(
               "Data discovery has started. The results may take some time to appear in the “Data discovery“ tab.",
-              `${resource.name || "The resource"} is now being monitored.`
+              `${resource.name || "The resource"} is now being monitored.`,
             );
             setIsProcessingAction(false);
           }}
