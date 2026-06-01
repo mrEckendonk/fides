@@ -19,7 +19,7 @@ const DEFAULT_ERROR_MESSAGE = "An unexpected error occurred. Please try again.";
 
 export const getErrorMessage = (
   error: RTKErrorResult["error"],
-  defaultMsg = DEFAULT_ERROR_MESSAGE
+  defaultMsg = DEFAULT_ERROR_MESSAGE,
 ) => {
   if (isAPIError(error)) {
     if (isDetailStringErrorData(error.data)) {
@@ -35,6 +35,21 @@ export const getErrorMessage = (
     if (error.status === 404 && isNotFoundError(error.data)) {
       return `${error.data.detail.error} (${error.data.detail.fides_key})`;
     }
+    // Structured validation error: { detail: { message: string, errors: string[] } }
+    const detail = (error.data as Record<string, unknown>)?.detail;
+    if (
+      detail &&
+      typeof detail === "object" &&
+      "message" in detail &&
+      "errors" in detail &&
+      Array.isArray((detail as { errors: unknown }).errors)
+    ) {
+      const { message, errors } = detail as {
+        message: string;
+        errors: string[];
+      };
+      return errors.length > 0 ? `${message}: ${errors[0]}` : message;
+    }
   }
 
   return defaultMsg;
@@ -44,20 +59,20 @@ export const getErrorMessage = (
  * Type predicate to narrow an unknown error to `FetchBaseQueryError`
  */
 export function isFetchBaseQueryError(
-  error: unknown
+  error: unknown,
 ): error is FetchBaseQueryError {
-  return typeof error === "object" && error != null && "status" in error;
+  return typeof error === "object" && error !== null && "status" in error;
 }
 
 /**
  * Type predicate to narrow an unknown error to an object with a string 'message' property
  */
 export function isErrorWithMessage(
-  error: unknown
+  error: unknown,
 ): error is { message: string } {
   return (
     typeof error === "object" &&
-    error != null &&
+    error !== null &&
     "message" in error &&
     typeof (error as any).message === "string"
   );
@@ -90,19 +105,21 @@ interface ValidationError {
 export function isErrorWithDetail(error: unknown): error is ResponseError {
   return (
     typeof error === "object" &&
-    error != null &&
+    error !== null &&
     "data" in error &&
+    (error as any).data !== null &&
     typeof (error as any).data.detail === "string"
   );
 }
 
 export function isErrorWithDetailArray(
-  error: unknown
+  error: unknown,
 ): error is ValidationError {
   return (
     typeof error === "object" &&
-    error != null &&
+    error !== null &&
     "data" in error &&
+    (error as any).data !== null &&
     Array.isArray((error as any).data.detail)
   );
 }
@@ -117,7 +134,7 @@ export const parseError = (
   defaultError = {
     status: 500,
     message: DEFAULT_ERROR_MESSAGE,
-  }
+  },
 ): ParsedError => {
   if (isParsingError(error)) {
     // This case is known to come up for Internal Server Errors which cannot be parsed as JSON.

@@ -1,34 +1,38 @@
-import { ComponentChildren, VNode, h, Fragment } from "preact";
+import { ComponentChildren, Fragment, VNode } from "preact";
 import type { HTMLAttributes } from "preact/compat";
 
-import { getConsentContext } from "../lib/consent-context";
-import type { I18n } from "../lib/i18n";
-
-import GpcInfo from "./GpcInfo";
+import { getGpcContext } from "../lib/consent-context";
+import { useI18n } from "../lib/i18n/i18n-context";
 import ExperienceDescription from "./ExperienceDescription";
+import GpcInfo from "./GpcInfo";
 
 export interface ConsentContentProps {
   titleProps: HTMLAttributes<HTMLHeadingElement>;
-  i18n: I18n;
   children: ComponentChildren;
   className?: string;
   onVendorPageClick?: () => void;
-  renderModalFooter: () => VNode;
+  renderModalFooter: () => VNode | null;
+  headerContent: {
+    title: string;
+    description: string;
+  };
+  isVendorAssetDisclosureView?: boolean;
 }
 
-const ConsentModal = ({
+const ConsentContent = ({
   titleProps,
   className,
-  i18n,
   renderModalFooter,
   children,
   onVendorPageClick,
+  headerContent,
+  isVendorAssetDisclosureView,
 }: ConsentContentProps) => {
-  const title = i18n.t("exp.title");
-  const description = i18n.t("exp.description");
-  const showGpcInfo = getConsentContext().globalPrivacyControl;
-  const gpcTitle = i18n.t("static.gpc.title");
-  const gpcDescription = i18n.t("static.gpc.description");
+  const { title, description } = headerContent;
+  const { i18n } = useI18n();
+  const gpcEnabled = getGpcContext().globalPrivacyControl;
+  const gpcTitle = i18n.t("exp.gpc_title");
+  const gpcDescription = i18n.t("exp.gpc_description");
 
   return (
     <Fragment>
@@ -40,7 +44,7 @@ const ConsentModal = ({
         <div className="fides-modal-body">
           <div
             data-testid="fides-modal-title"
-            {...titleProps}
+            {...titleProps} // adds role, aria-level, id
             className="fides-modal-title"
           >
             {title}
@@ -55,7 +59,7 @@ const ConsentModal = ({
               allowHTMLDescription={window.Fides?.options?.allowHTMLDescription}
             />
           </p>
-          {showGpcInfo && (
+          {!isVendorAssetDisclosureView && gpcEnabled && (
             <GpcInfo title={gpcTitle} description={gpcDescription} />
           )}
           {children}
@@ -66,4 +70,4 @@ const ConsentModal = ({
   );
 };
 
-export default ConsentModal;
+export default ConsentContent;

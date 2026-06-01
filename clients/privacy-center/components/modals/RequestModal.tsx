@@ -1,16 +1,17 @@
+import {
+  ChakraModal as Modal,
+  ChakraModalContent as ModalContent,
+  ChakraModalOverlay as ModalOverlay,
+} from "fidesui";
 import React from "react";
-import { Modal, ModalContent, ModalOverlay } from "fidesui";
 
 type RequestModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  children?: React.ReactNode;
 };
 
-const RequestModal: React.FC<RequestModalProps> = ({
-  isOpen,
-  onClose,
-  children,
-}) => (
+const RequestModal = ({ isOpen, onClose, children }: RequestModalProps) => (
   <Modal isOpen={isOpen} onClose={onClose} isCentered>
     <ModalOverlay />
     <ModalContent maxWidth="464px" mx={5} my={3}>

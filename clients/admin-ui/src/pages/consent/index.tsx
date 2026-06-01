@@ -1,9 +1,9 @@
-import { Center, Spinner } from "fidesui";
+import { Spin } from "fidesui";
 import { useRouter } from "next/router";
 import { useEffect } from "react";
 
 import Layout from "~/features/common/Layout";
-import { PRIVACY_NOTICES_ROUTE } from "~/features/common/nav/v2/routes";
+import { PRIVACY_NOTICES_ROUTE } from "~/features/common/nav/routes";
 
 const ConsentPage = () => {
   const router = useRouter();
@@ -14,9 +14,7 @@ const ConsentPage = () => {
 
   return (
     <Layout title="Consent">
-      <Center>
-        <Spinner />
-      </Center>
+      <Spin />
     </Layout>
   );
 };

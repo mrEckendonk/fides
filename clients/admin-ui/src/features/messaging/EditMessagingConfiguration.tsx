@@ -1,0 +1,44 @@
+import {
+  ChakraBox as Box,
+  ChakraHeading as Heading,
+  ChakraText as Text,
+  Spin,
+} from "fidesui";
+
+import { messagingProviders } from "./constants";
+import { useGetMessagingConfigurationByKeyQuery } from "./messaging.slice";
+import MessagingConfiguration from "./MessagingConfiguration";
+
+interface EditMessagingConfigurationProps {
+  configKey: string;
+}
+
+export const EditMessagingConfiguration = ({
+  configKey,
+}: EditMessagingConfigurationProps) => {
+  const { data: messagingConfig, isLoading } =
+    useGetMessagingConfigurationByKeyQuery({ key: configKey });
+
+  if (isLoading) {
+    return <Spin />;
+  }
+
+  const serviceType = messagingConfig.service_type;
+
+  return (
+    <Box>
+      <Heading fontSize="2xl" fontWeight="semibold" mb={6}>
+        Edit messaging provider
+      </Heading>
+
+      {Object.values(messagingProviders).includes(serviceType) ? (
+        <MessagingConfiguration
+          configKey={configKey}
+          initialProviderType={serviceType}
+        />
+      ) : (
+        <Text color="red.500">Unsupported service type: {serviceType}</Text>
+      )}
+    </Box>
+  );
+};

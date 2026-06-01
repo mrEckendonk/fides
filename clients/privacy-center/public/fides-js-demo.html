@@ -1,9 +1,10 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
   <head>
     <title>fides-js script demo page</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
+    <!-- <script src="/fides-stub.js"></script> -->
     <!--
       Pass along any params to the fides.js script. For example, visiting
       http://localhost:3001/fides-js-demo.html?geolocation=fr-id
@@ -17,24 +18,41 @@
         window.render_delay = 0; // increment the delay to test/mimic a slow loading or dynamic page
         const params = new URLSearchParams(window.location.search);
         const geolocation = params.get("geolocation");
+        const gpp = params.get("gpp");
         const src = `/fides.js${!!params.size ? `?${params.toString()}` : ""}`;
-
+        if (gpp === "debug") {
+          document.write('<script src="/fides-ext-gpp.js"><\/script>');
+        }
         document.write('<script src="' + src + '"><\/script>');
-        document.write("<script>Fides.gtm();<\/script>");
+        document.write(
+          "<script>Fides.gtm(!!window.fides_overrides && window.fides_overrides.gtmOptions);<\/script>",
+        );
       })();
       var deleteCookie = function () {
         document.cookie =
-          "fides_consent=;expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+          "fides_consent=;Path=/;expires='Thu, 01 Jan 1970 00:00:01 GMT';";
         location.reload();
       };
     </script>
+    <script src="./scripts/jsonview.js"></script>
     <style>
       body {
-        margin: 16px;
+        margin: 16px 16px 64px 16px;
+        background-color: #fafafa;
+        font-family: "Inter", Arial, Helvetica, sans-serif;
+      }
+      h2 {
+        font-size: 1.1rem;
+        margin-bottom: 4px;
       }
       pre {
-        background-color: #eee;
+        background-color: #e6e6e8;
         padding: 16px;
+        white-space: pre-wrap;
+        overflow-y: auto;
+        margin: 0px;
+        border-radius: 4px;
+        box-shadow: 0 2px 2px inset rgba(0, 0, 0, 0.05);
       }
       #fides-modal-link {
         border: none;
@@ -42,6 +60,21 @@
         background: none;
         cursor: pointer;
         text-decoration: underline;
+      }
+      .json-container {
+        font-family: unset;
+        font-size: unset;
+        background-color: unset;
+        color: unset;
+        box-sizing: unset;
+      }
+      .delete-cookie {
+        background-color: #2b2e35;
+        color: #fafafa;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
       }
     </style>
   </head>
@@ -52,7 +85,7 @@
       <p>This page exists to demonstrate the fides.js script.</p>
 
       <div>
-        <button type="button" onclick="deleteCookie()">
+        <button class="delete-cookie" type="button" onclick="deleteCookie()">
           delete cookie and reload
         </button>
       </div>
@@ -67,9 +100,11 @@
            */
           setTimeout(() => {
             const app = document.getElementById("render-embed-here");
-            const container = document.createElement("div");
-            container.id = "fides-embed-container";
-            app.appendChild(container);
+            if (app) {
+              const container = document.createElement("div");
+              container.id = "fides-embed-container";
+              app.appendChild(container);
+            }
           }, window.render_delay);
         }
       </script>
@@ -90,21 +125,12 @@
       <pre id="consent-json"></pre>
 
       <h2>Consent Modal Link</h2>
-      <div id="render-link-here"></div>
+      <pre><button id="fides-modal-link"></button></pre>
       <script>
-        setTimeout(() => {
-          /** NOTE: normally you would add the `<button>` with "fides-modal-link" id directly to
-           * your page instead of doing this dynamically as we're doing here. For the purposes
-           * of this demo, we're adding it dynamically after a delay to allow for simulating
-           * a dynamic or slow page.
-           */
-          const app = document.getElementById("render-link-here");
-          const button = document.createElement("button");
-          // Display the fides configured modal link label (if any).
-          button.innerText = Fides.getModalLinkLabel();
-          button.id = "fides-modal-link";
-          app.appendChild(button);
-        }, window.render_delay);
+        window.addEventListener("FidesLocaleUpdated", () => {
+          document.getElementById("fides-modal-link").textContent =
+            Fides.getModalLinkLabel();
+        });
       </script>
 
       <h2>Consent Experience</h2>
@@ -113,8 +139,25 @@
       <h2>Geolocation</h2>
       <pre id="consent-geolocation"></pre>
 
+      <h2>Locale</h2>
+      <pre id="consent-locale"></pre>
+      <script>
+        window.addEventListener("FidesLocaleUpdated", (evt) => {
+          document.getElementById("consent-locale").textContent =
+            evt.detail.locale;
+        });
+      </script>
+
       <h2>Consent Options</h2>
       <pre id="consent-options"></pre>
+
+      <h2>Property id</h2>
+      <pre id="property-id"></pre>
+
+      <h2>Global Privacy Control (GPC) enabled</h2>
+      <pre
+        id="gpc"
+      ><script>document.write(!!window.navigator.globalPrivacyControl)</script></pre>
     </main>
   </body>
 
@@ -134,12 +177,17 @@
         document.getElementById("consent-json").textContent = JSON.stringify(
           Fides.consent,
           null,
-          2
+          2,
         );
 
-        // Pretty-print the fides experience config object and add it to the page.
-        document.getElementById("consent-experience").textContent =
-          JSON.stringify(Fides.experience, null, 2);
+        // Generate a tree view of the fides experience config object and add it to the page.
+        if (Fides.experience && Object.keys(Fides.experience).length > 10) {
+          const tree = jsonview.create(Fides.experience);
+          jsonview.render(tree, document.getElementById("consent-experience"));
+        } else {
+          document.getElementById("consent-experience").textContent =
+            JSON.stringify(Fides.experience, null, 2);
+        }
 
         // Pretty-print the fides geolocation object and add it to the page.
         document.getElementById("consent-geolocation").textContent =
@@ -149,7 +197,14 @@
         document.getElementById("consent-options").textContent = JSON.stringify(
           Fides.options,
           null,
-          2
+          2,
+        );
+
+        // Pretty-print the fides property id  and add it to the page.
+        document.getElementById("property-id").textContent = JSON.stringify(
+          Fides.config.propertyId,
+          null,
+          2,
         );
 
         // Test behavior of integrations that can be configured without/before their platform scripts.
@@ -163,8 +218,40 @@
       if (Fides.initialized) {
         onInitialized();
       } else {
-        window.addEventListener("FidesInitialized", onInitialized);
+        window.addEventListener("FidesReady", onInitialized);
       }
+      window.addEventListener("FidesUpdated", () => {
+        console.log("Fides has been updated");
+        document.getElementById("consent-json").textContent = JSON.stringify(
+          Fides.consent,
+          null,
+          2,
+        );
+      });
+
+      window.addEventListener("FidesUIShown", () => {
+        // Log event timing
+        const fidesLoaded = performance
+          .getEntriesByType("resource")
+          .find((entry) => entry.name.includes("fides"));
+        const fidesEvents = performance
+          .getEntriesByType("mark")
+          .filter((entry) => entry.name.includes("Fides"));
+
+        const fidesTiming = {};
+        fidesTiming[
+          `fides.js (${(fidesLoaded.encodedBodySize / 1000).toFixed(2)} kB)`
+        ] = {
+          "Time (ms)": parseFloat(fidesLoaded.responseEnd.toFixed(2)),
+        };
+        fidesEvents.map((entry) => {
+          const name = entry.name;
+          fidesTiming[name] = {
+            "Time (ms)": parseFloat(entry.startTime.toFixed(2)),
+          };
+        });
+        console.table(fidesTiming);
+      });
     })();
   </script>
 </html>

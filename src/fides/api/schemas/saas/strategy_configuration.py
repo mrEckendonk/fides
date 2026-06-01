@@ -1,10 +1,14 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, root_validator, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fides.api.schemas.saas.saas_config import Header, QueryParam, SaaSRequest
-from fides.api.schemas.saas.shared_schemas import ConnectorParamRef, IdentityParamRef
+from fides.api.schemas.saas.shared_schemas import (
+    ConnectorParamRef,
+    DatasetRef,
+    IdentityParamRef,
+)
 
 
 class StrategyConfiguration(BaseModel):
@@ -21,9 +25,15 @@ class FilterPostProcessorConfiguration(StrategyConfiguration):
     """Returns objects where a field has a given value"""
 
     field: str
-    value: Union[str, IdentityParamRef]
+    value: Union[str, DatasetRef, IdentityParamRef]
     exact: bool = True
     case_sensitive: bool = True
+
+
+class ExtractForExecutionLogPostProcessorConfiguration(StrategyConfiguration):
+    """Configuration for extracting data from response body and adding to execution log messages"""
+
+    path: Optional[str] = None
 
 
 class OffsetPaginationConfiguration(StrategyConfiguration):
@@ -34,9 +44,10 @@ class OffsetPaginationConfiguration(StrategyConfiguration):
 
     incremental_param: str
     increment_by: int
-    limit: Optional[Union[int, ConnectorParamRef]]
+    limit: Optional[Union[int, ConnectorParamRef]] = None
 
-    @validator("increment_by")
+    @field_validator("increment_by")
+    @classmethod
     def check_increment_by(cls, increment_by: int) -> int:
         if increment_by == 0:
             raise ValueError("'increment_by' cannot be zero")
@@ -56,10 +67,12 @@ class LinkPaginationConfiguration(StrategyConfiguration):
     """Gets the URL for the next page from the headers or the body."""
 
     source: LinkSource
-    rel: Optional[str]
-    path: Optional[str]
+    rel: Optional[str] = None
+    path: Optional[str] = None
+    has_next: Optional[str] = None
 
-    @root_validator
+    @model_validator(mode="before")
+    @classmethod
     def validate_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         source = values.get("source")
         if source == LinkSource.headers.value and values.get("rel") is None:
@@ -72,10 +85,7 @@ class LinkPaginationConfiguration(StrategyConfiguration):
             )
         return values
 
-    class Config:
-        """Using enum values"""
-
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class CursorPaginationConfiguration(StrategyConfiguration):
@@ -85,6 +95,7 @@ class CursorPaginationConfiguration(StrategyConfiguration):
 
     cursor_param: str
     field: str
+    has_next: Optional[str] = None
 
 
 class ApiKeyAuthenticationConfiguration(StrategyConfiguration):
@@ -92,11 +103,12 @@ class ApiKeyAuthenticationConfiguration(StrategyConfiguration):
     API key parameter to be added in as a header or query param
     """
 
-    headers: Optional[List[Header]]
-    query_params: Optional[List[QueryParam]]
-    body: Optional[str]
+    headers: Optional[List[Header]] = None
+    query_params: Optional[List[QueryParam]] = None
+    body: Optional[str] = None
 
-    @root_validator
+    @model_validator(mode="before")
+    @classmethod
     def validate_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         headers = values.get("headers")
         query_params = values.get("query_params")
@@ -116,7 +128,7 @@ class BasicAuthenticationConfiguration(StrategyConfiguration):
     """
 
     username: str
-    password: Optional[str]
+    password: Optional[str] = None
 
 
 class BearerAuthenticationConfiguration(StrategyConfiguration):
@@ -143,15 +155,46 @@ class OAuth2BaseConfiguration(StrategyConfiguration):
     do not specify a TTL for the access tokens.
     """
 
-    expires_in: Optional[int]
+    expires_in: Optional[int] = None
     token_request: SaaSRequest
-    refresh_request: Optional[SaaSRequest]
+    refresh_request: Optional[SaaSRequest] = None
 
 
 class OAuth2AuthorizationCodeConfiguration(OAuth2BaseConfiguration):
     """
+    Oauth Authorization that requires manual user interaction to get authorization
     The standard OAuth2 configuration but with an additional property to configure
     the authorization request for the Authorization Code flow.
     """
 
     authorization_request: SaaSRequest
+
+
+class OAuth2ClientCredentialsConfiguration(OAuth2BaseConfiguration):
+    """
+    Ouath authorization that does not require manual user interation to get authorization
+    The standard OAuth2 configuration, but excluding the refresh token during logging
+    since the client credentials flow does not require a refresh token.
+    """
+
+    refresh_request: Optional[SaaSRequest] = Field(exclude=True)
+
+
+class GoogleCloudServiceAccountConfiguration(StrategyConfiguration):
+    """
+    Configuration for Google Cloud Service Account authentication.
+
+    Uses service account credentials (keyfile_creds from connection secrets)
+    to automatically generate OAuth2 access tokens to authenticate against Google Cloud APIs.
+    """
+
+    scopes: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "OAuth2 scopes to request for the access token. "
+            "Defaults to ['https://www.googleapis.com/auth/cloud-platform'] if not specified. "
+            "Common scopes include: "
+            "'https://www.googleapis.com/auth/bigquery' for BigQuery, "
+            "'https://www.googleapis.com/auth/devstorage.read_write' for Cloud Storage, "
+        ),
+    )

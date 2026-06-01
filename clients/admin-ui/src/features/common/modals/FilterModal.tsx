@@ -1,29 +1,24 @@
 import {
-  AccordionButton,
-  AccordionIcon,
-  AccordionItem,
-  AccordionPanel,
-  Box,
   Button,
-  Checkbox,
-  Divider,
-  Heading,
+  ChakraAccordionButton as AccordionButton,
+  ChakraAccordionIcon as AccordionIcon,
+  ChakraAccordionItem as AccordionItem,
+  ChakraAccordionPanel as AccordionPanel,
+  ChakraBox as Box,
+  ChakraCheckbox as Checkbox,
+  ChakraHeading as Heading,
+  ChakraSimpleGrid as SimpleGrid,
+  ChakraText as Text,
+  Flex,
   Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  ModalProps,
-  SimpleGrid,
-  Text,
 } from "fidesui";
 import React, { ReactNode, useState } from "react";
 
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
+
 export const getQueryParamsFromList = (
   optionList: Option[],
-  queryParam: string
+  queryParam: string,
 ) => {
   const checkedOptions = optionList.filter((option) => option.isChecked);
   return checkedOptions.length > 0
@@ -125,8 +120,7 @@ export const AccordionMultifieldFilter = ({
         </SimpleGrid>
         {!isViewingMore && areExtraOptionsAvailable ? (
           <Button
-            size="sm"
-            variant="ghost"
+            type="text"
             onClick={() => {
               setIsViewingMore(true);
             }}
@@ -136,8 +130,7 @@ export const AccordionMultifieldFilter = ({
         ) : null}
         {isViewingMore && areExtraOptionsAvailable ? (
           <Button
-            size="sm"
-            variant="ghost"
+            type="text"
             onClick={() => {
               setIsViewingMore(false);
             }}
@@ -158,9 +151,9 @@ type FilterSectionProps = {
 };
 
 export const FilterSection = ({ heading, children }: FilterSectionProps) => (
-  <Box padding="12px 8px 8px 12px" maxHeight={600}>
+  <Box maxHeight={600}>
     {heading ? (
-      <Heading size="md" lineHeight={6} fontWeight="bold" mb={2}>
+      <Heading size="md" lineHeight={6} fontWeight="bold" mb={2} px={3}>
         {heading}
       </Heading>
     ) : null}
@@ -168,51 +161,45 @@ export const FilterSection = ({ heading, children }: FilterSectionProps) => (
   </Box>
 );
 
-export interface FilterModalProps extends ModalProps {
+// TODO: Migrate FilterModal consumers to use the CustomFilter component from fidesui instead
+export interface FilterModalProps {
   resetFilters: () => void;
+  isOpen: boolean;
+  onClose: () => void;
+  children?: ReactNode;
 }
+
 export const FilterModal = ({
   resetFilters,
   isOpen,
   onClose,
   children,
-  ...props
 }: FilterModalProps): JSX.Element => (
-  <Modal isOpen={isOpen} onClose={onClose} isCentered size="2xl" {...props}>
-    <ModalOverlay />
-    <ModalContent>
-      <ModalHeader>Filters</ModalHeader>
-      <ModalCloseButton />
-      <Divider />
-      <ModalBody
-        maxH="85vh"
-        padding="0px"
-        overflowX="auto"
-        style={{ scrollbarGutter: "stable" }}
-      >
-        {children}
-      </ModalBody>
-      <ModalFooter>
-        <Box display="flex" justifyContent="space-between" width="100%">
-          <Button
-            variant="outline"
-            size="sm"
-            mr={3}
-            onClick={resetFilters}
-            flexGrow={1}
-          >
-            Reset filters
-          </Button>
-          <Button
-            colorScheme="primary"
-            size="sm"
-            onClick={onClose}
-            flexGrow={1}
-          >
-            Done
-          </Button>
-        </Box>
-      </ModalFooter>
-    </ModalContent>
+  <Modal
+    open={isOpen}
+    onCancel={onClose}
+    centered
+    width={MODAL_SIZE.lg}
+    title="Filters"
+    footer={
+      <Flex gap={12}>
+        <Button onClick={resetFilters} className="flex-1">
+          Reset filters
+        </Button>
+        <Button type="primary" onClick={onClose} className="flex-1">
+          Done
+        </Button>
+      </Flex>
+    }
+    styles={{
+      body: {
+        maxHeight: "85vh",
+        padding: 0,
+        overflowX: "auto",
+        scrollbarGutter: "stable",
+      },
+    }}
+  >
+    {children}
   </Modal>
 );

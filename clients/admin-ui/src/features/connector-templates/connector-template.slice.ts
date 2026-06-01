@@ -2,6 +2,7 @@ import { createSlice } from "@reduxjs/toolkit";
 
 import { CONNECTOR_TEMPLATE } from "~/constants";
 import { baseApi } from "~/features/common/api.slice";
+import { SaaSConfigVersionResponse } from "~/types/api";
 
 export interface State {}
 const initialState: State = {};
@@ -29,7 +30,46 @@ export const connectorTemplateApi = baseApi.injectEndpoints({
       },
       invalidatesTags: () => ["Connection Type"],
     }),
+    deleteConnectorTemplate: build.mutation<void, string>({
+      query: (connectorTemplateType) => ({
+        url: `${CONNECTOR_TEMPLATE}/${connectorTemplateType}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: () => ["Connection Type"],
+    }),
+    getConnectorTemplateVersions: build.query<
+      SaaSConfigVersionResponse[],
+      string
+    >({
+      query: (connectorType) =>
+        `${CONNECTOR_TEMPLATE}/${connectorType}/versions`,
+      providesTags: ["Connection Type"],
+    }),
+    getConnectorTemplateVersionConfig: build.query<
+      string,
+      { connectorType: string; version: string }
+    >({
+      query: ({ connectorType, version }) => ({
+        url: `${CONNECTOR_TEMPLATE}/${connectorType}/versions/${version}/config`,
+        responseHandler: "text",
+      }),
+    }),
+    getConnectorTemplateVersionDataset: build.query<
+      string,
+      { connectorType: string; version: string }
+    >({
+      query: ({ connectorType, version }) => ({
+        url: `${CONNECTOR_TEMPLATE}/${connectorType}/versions/${version}/dataset`,
+        responseHandler: "text",
+      }),
+    }),
   }),
 });
 
-export const { useRegisterConnectorTemplateMutation } = connectorTemplateApi;
+export const {
+  useRegisterConnectorTemplateMutation,
+  useDeleteConnectorTemplateMutation,
+  useGetConnectorTemplateVersionsQuery,
+  useGetConnectorTemplateVersionConfigQuery,
+  useGetConnectorTemplateVersionDatasetQuery,
+} = connectorTemplateApi;

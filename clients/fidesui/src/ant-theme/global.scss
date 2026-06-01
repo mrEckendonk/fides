@@ -1,0 +1,302 @@
+@use "../fonts/fonts.scss";
+
+/**
+ * Global Ant Design styles for Fides applications
+ * These styles handle cases where tokens are not available
+ */
+
+/**
+  * Chakra removes heading font weight, wheras Ant assumes browser defaults.
+  * This sets the font weight for headings back to the browser default for Ant support.
+  * Remove this once Chakra has been removed.
+ */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: bold;
+}
+
+:focus-visible {
+  outline-color: var(--fidesui-brand-minos);
+}
+
+/**
+ * Styles for Ant components where tokens are not available
+ */
+
+.ant-space {
+  &-addon {
+    --fidesui-space-addon-background: unset;
+  }
+}
+
+.ant-btn-icon {
+  // fixes misalignment of Carbon icons in buttons
+  line-height: 1;
+}
+
+// Input labels should have a font weight of 600
+.ant-form-item {
+  &-label {
+    font-weight: 600;
+  }
+  &-explain,
+  &-extra {
+    --fidesui-font-size: var(--fidesui-font-size-sm);
+    margin-top: 0.25rem;
+    color: var(--fidesui-neutral-700);
+  }
+  &-tooltip {
+    cursor: default !important;
+  }
+}
+
+// Custom styles for dark submenus
+.ant-menu-dark .ant-menu-sub {
+  > .ant-menu-item {
+    > .ant-menu-title-content a {
+      color: var(--fidesui-neutral-200);
+
+      &:focus-visible {
+        text-decoration: underline;
+      }
+    }
+
+    &:focus-within:not(.ant-menu-item-selected) {
+      background-color: var(--fidesui-neutral-800);
+    }
+
+    &:hover {
+      --fidesui-menu-dark-item-hover-bg: var(--fidesui-neutral-800);
+    }
+  }
+
+  // The selected submenu item should be dark, because the background is light
+  // But using the token "darkItemSelectedColor" also affect the group title,
+  // therefore we need this css rule
+  > .ant-menu-item.ant-menu-item-selected > .ant-menu-title-content a {
+    color: var(--fidesui-brand-minos);
+  }
+}
+
+.ant-menu {
+  .ant-menu-submenu-arrow {
+    // Remove rounding from submenu arrow
+    // to better match the style Carbon icons
+    --fidesui-border-radius: 0px;
+
+    // fix missing pixel in the arrow icon
+    // (it's the same width as ant only changing 0.6 to 0.65 here)
+    &::before,
+    &::after {
+      width: calc(calc(var(--fidesui-font-size) / 7 * 5) * 0.65);
+    }
+  }
+
+  &.ant-menu-horizontal .ant-menu-item:first-child {
+    padding-left: 0;
+
+    &::after {
+      inset-inline-start: 0;
+    }
+  }
+}
+
+.ant-input {
+  // Read-only inputs should match disabled.
+  &:read-only {
+    --fidesui-color-text: var(--fidesui-color-text-disabled);
+    --fidesui-color-bg-container: var(--fidesui-color-bg-container-disabled);
+    --fidesui-input-hover-bg: var(--fidesui-color-bg-container-disabled);
+    --fidesui-input-active-bg: var(--fidesui-color-bg-container-disabled);
+    --fidesui-input-active-border-color: var(--fidesui-color-border-disabled);
+    --fidesui-input-hover-border-color: var(--fidesui-color-border-disabled);
+    --fidesui-input-active-shadow: none;
+    --fidesui-input-hover-shadow: none;
+  }
+}
+
+.ant-steps-item-title {
+  font-weight: 500;
+}
+
+.ant-table {
+  &-wrapper & {
+    --fidesui-table-header-icon-color: var(--fidesui-neutral-300);
+  }
+
+  // This is to match the font size of the table cells when other Ant components are used in a cell component (eg. Text, Link, List, etc.).
+  &-cell * {
+    --fidesui-font-size: var(--fidesui-table-cell-font-size-sm);
+  }
+
+  // fixes container bleeding over the border radius of the table itself when horizontally scrollable
+  // We may be able to remove this once we update to a version containing this fix https://github.com/ant-design/ant-design/pull/56478
+  &-container {
+    &::before {
+      border-start-start-radius: var(--fidesui-table-header-border-radius);
+    }
+    &::after {
+      border-start-end-radius: var(--fidesui-table-header-border-radius);
+    }
+  }
+  &-content {
+    border-start-start-radius: var(--fidesui-table-header-border-radius);
+    border-start-end-radius: var(--fidesui-table-header-border-radius);
+  }
+}
+
+.ant-list {
+  * {
+    // Ant inappropriately removes outline from everything in the list
+    // This breaks the focus outline for links and buttons in the list,
+    // which causes accessibility issues for non-mouse users.
+    // This restores the outline for focusable elements.
+    &:focus-visible {
+      outline: auto;
+    }
+  }
+
+  // By default, Ant transitions from text color to primary color on
+  // hover of list title links. Since our text color and primary color
+  // are the same, it breaks the hover state. This fixes it.
+  // Unfortunately, this level of specificity is required since it's the
+  // level of specificity that Ant uses.
+  .ant-list-item .ant-list-item-meta .ant-list-item-meta-title > a,
+  .ant-list-item-meta-title a {
+    &:hover,
+    &:focus-visible {
+      color: var(--fidesui-neutral-600);
+    }
+  }
+
+  .ant-list-item .ant-list-item-action li {
+    padding-left: 0;
+  }
+}
+
+.ant-select-dropdown {
+  & .ant-select-item-group {
+    font-weight: 600;
+    font-size: var(--fidesui-select-option-font-size);
+    color: var(--fidesui-color-text);
+    border-radius: 0;
+
+    &:not(:first-child) {
+      border-top: 1px solid var(--fidesui-color-border);
+    }
+  }
+}
+
+.ant-progress {
+  &-steps-item {
+    // rounded edges for Ant Progress Component with steps
+    border-radius: calc(var(--fidesui-progress-line-border-radius) / 40);
+  }
+  &-steps &-text {
+    // override Ant's hardcoded 2em width
+    width: auto;
+  }
+}
+
+.ant-tree {
+  .ant-tree-node-content-wrapper {
+    display: flex;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .ant-tree-treenode {
+    --fidesui-tree-node-selected-bg: var(--fidesui-neutral-100);
+    --fidesui-tree-directory-node-selected-color: var(
+      --fidesui-tree-node-selected-color
+    );
+    --fidesui-tree-directory-node-selected-bg: var(--fidesui-neutral-100);
+  }
+
+  .ant-tree-title {
+    flex: auto;
+    overflow: hidden;
+  }
+}
+
+.ant-list-item-action-split {
+  display: none;
+}
+
+.ant-popover {
+  .ant-popover-inner-content {
+    // default to no padding. It's easier to pad the instance content than use negative margins to compensate for the padding.
+    --fidesui-popover-inner-content-padding: 0;
+  }
+}
+
+// Reduce bottom padding when notification has no description
+.ant-notification .ant-notification-notice-wrapper .ant-notification-notice {
+  &:not(:has(.ant-notification-notice-description)) {
+    padding-bottom: 12px;
+  }
+}
+
+// Used to move the close button for drawers to the right side
+.ant-drawer-header-title {
+  flex-direction: row-reverse;
+}
+
+.ant-segmented {
+  &-item-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.ant-switch {
+  &.ant-switch-checked {
+    &.ant-switch-disabled {
+      opacity: 0.3;
+    }
+  }
+}
+
+.recharts-wrapper {
+  *:focus:not(:focus-visible) {
+    outline: none !important;
+  }
+}
+
+.ant-card {
+  // Ant does some highly specific styling of the actions list items taylored to
+  // using only Ant Icons, and without support for actual buttons. This overrides
+  // that styling to fill the width like they've done for icons while also removing the
+  // cursor from the wrapping element which has no actual functionality.
+  & &-actions > li > span {
+    cursor: unset;
+  }
+  &-actions .ant-btn {
+    width: 100%;
+  }
+}
+
+.ant-pagination {
+  // fixes a bug where the ellipsis is too wide and wraps to the next line. Maybe they'll fix this.
+  &-item-ellipsis {
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+}
+
+// Ant Design's JS-driven animations (CSSMotion) don't reliably respect the
+// theme token `motion: false` during SSR hydration. This CSS rule acts as a
+// fallback: when prefers-reduced-motion is active (e.g. Cypress CI), it
+// forces all Ant animation classes to skip their opacity/transform transitions
+// so elements are immediately visible.
+@media (prefers-reduced-motion: reduce) {
+  [class*="ant-"] {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}

@@ -1,37 +1,93 @@
-import { Box, Button, ButtonGroup, Flex, Text, Wrap } from "fidesui";
+import {
+  Button,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraText as Text,
+  ChakraWrap as Wrap,
+  Icons,
+  Tag,
+  Tooltip,
+} from "fidesui";
 import { ReactNode } from "react";
 
-import Tag from "~/features/common/Tag";
+import { useConnectionLogo } from "~/features/common/hooks";
+import { useGetAllConnectionTypesQuery } from "~/features/connection-type";
 import ConnectionTypeLogo from "~/features/datastore-connections/ConnectionTypeLogo";
+import DeleteConnectionModal from "~/features/datastore-connections/DeleteConnectionModal";
 import useTestConnection from "~/features/datastore-connections/useTestConnection";
-import getIntegrationTypeInfo from "~/features/integrations/add-integration/allIntegrationTypes";
+import getIntegrationTypeInfo, {
+  IntegrationTypeInfo,
+} from "~/features/integrations/add-integration/allIntegrationTypes";
 import ConnectionStatusNotice from "~/features/integrations/ConnectionStatusNotice";
-import { ConnectionConfigurationResponse } from "~/types/api";
+import { useIntegrationAuthorization } from "~/features/integrations/hooks/useIntegrationAuthorization";
+import { useJiraAuthorization } from "~/features/integrations/hooks/useJiraAuthorization";
+import { SaasConnectionTypes } from "~/features/integrations/types/SaasConnectionTypes";
+import useIntegrationOption from "~/features/integrations/useIntegrationOption";
+import { getCategoryLabel } from "~/features/integrations/utils/categoryUtils";
+import { ConnectionConfigurationResponse, ConnectionType } from "~/types/api";
 
 const IntegrationBox = ({
   integration,
+  integrationTypeInfo,
   showTestNotice,
   otherButtons,
+  showDeleteButton,
   configureButtonLabel = "Configure",
   onConfigureClick,
 }: {
   integration?: ConnectionConfigurationResponse;
+  integrationTypeInfo?: IntegrationTypeInfo;
   showTestNotice?: boolean;
   otherButtons?: ReactNode;
+  showDeleteButton?: boolean;
   configureButtonLabel?: string;
   onConfigureClick?: () => void;
 }) => {
   const { testConnection, isLoading, testData } =
     useTestConnection(integration);
 
-  const integrationTypeInfo = getIntegrationTypeInfo(
-    integration?.connection_type
+  // Get logo data using the custom hook
+  const logoData = useConnectionLogo(integration);
+
+  // Fetch connection types for SAAS integration generation
+  const { data: connectionTypesData } = useGetAllConnectionTypesQuery({});
+  const connectionTypes = connectionTypesData?.items || [];
+
+  // Use provided integrationTypeInfo or fallback to generating it
+  const typeInfo =
+    integrationTypeInfo ||
+    getIntegrationTypeInfo(
+      integration?.connection_type,
+      integration?.saas_config?.type,
+      connectionTypes,
+    );
+
+  const connectionOption = useIntegrationOption(
+    integration?.connection_type,
+    integration?.saas_config?.type as SaasConnectionTypes,
   );
+
+  const isJira = integration?.connection_type === ConnectionType.JIRA_TICKET;
+
+  const defaultAuth = useIntegrationAuthorization({
+    connection: integration,
+    connectionOption,
+    testData,
+  });
+
+  const jiraAuth = useJiraAuthorization({
+    connection: integration,
+    testData,
+  });
+
+  const { handleAuthorize, needsAuthorization } = isJira
+    ? jiraAuth
+    : defaultAuth;
 
   return (
     <Box
-      maxW="760px"
       borderWidth={1}
+      borderColor="gray.200"
       borderRadius="lg"
       overflow="hidden"
       padding="12px"
@@ -39,39 +95,64 @@ const IntegrationBox = ({
       data-testid={`integration-info-${integration?.key}`}
     >
       <Flex>
-        <ConnectionTypeLogo data={integration ?? ""} boxSize="50px" />
+        <ConnectionTypeLogo data={logoData} size={50} />
         <Flex direction="column" flexGrow={1} marginLeft="16px">
-          <Text color="gray.700" fontWeight="semibold">
-            {integration?.name || "(No name)"}
-          </Text>
+          <Flex alignItems="center" gap={2}>
+            <Text color="gray.700" fontWeight="semibold">
+              {integration?.name || "(No name)"}
+            </Text>
+            {connectionOption?.custom && (
+              <Tooltip title="Custom integration" placement="top">
+                <Box as="span" display="inline-flex">
+                  <Icons.SettingsCheck size={16} />
+                </Box>
+              </Tooltip>
+            )}
+            {otherButtons}
+          </Flex>
           {showTestNotice ? (
-            <ConnectionStatusNotice testData={testData} />
+            <ConnectionStatusNotice
+              testData={testData}
+              connectionOption={connectionOption}
+              connectionType={integration?.connection_type}
+            />
           ) : (
             <Text color="gray.700" fontSize="sm" fontWeight="semibold" mt={1}>
-              {integrationTypeInfo.category}
+              {getCategoryLabel(typeInfo.category)}
             </Text>
           )}
         </Flex>
-        <ButtonGroup size="sm" variant="outline">
-          {showTestNotice && (
+        <Flex marginLeft="auto" gap={4} flexShrink={0}>
+          {showDeleteButton && integration && (
+            <DeleteConnectionModal connection_key={integration.key} />
+          )}
+          {showTestNotice && needsAuthorization && (
+            <Button
+              onClick={handleAuthorize}
+              loading={isJira ? jiraAuth.isLoading : undefined}
+              data-testid="authorize-integration-btn"
+            >
+              {isJira ? "Authorize with Jira" : "Authorize integration"}
+            </Button>
+          )}
+          {showTestNotice && !needsAuthorization && (
             <Button
               onClick={testConnection}
-              isLoading={isLoading}
+              loading={isLoading}
               data-testid="test-connection-btn"
             >
               Test connection
             </Button>
           )}
-          {otherButtons}
           {onConfigureClick && (
             <Button onClick={onConfigureClick} data-testid="configure-btn">
               {configureButtonLabel}
             </Button>
           )}
-        </ButtonGroup>
+        </Flex>
       </Flex>
       <Wrap marginTop="16px">
-        {integrationTypeInfo.tags.map((item) => (
+        {typeInfo.tags.map((item: string) => (
           <Tag key={item}>{item}</Tag>
         ))}
       </Wrap>

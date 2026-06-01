@@ -1,31 +1,11 @@
 import {
-  Badge,
-  Box,
-  Button,
-  ButtonGroup,
-  Checkbox,
-  Flex,
-  ModalFooter,
-  ModalHeader,
-  Text,
+  ChakraBox as Box,
+  ChakraCheckbox as Checkbox,
+  ChakraFlex as Flex,
+  ChakraText as Text,
+  Tag,
 } from "fidesui";
 import { ReactNode } from "react";
-
-export const Header = ({ title }: { title: string }) => (
-  <ModalHeader
-    fontSize="lg"
-    fontWeight="semibold"
-    pt={5}
-    paddingInline={6}
-    pb={5}
-    backgroundColor="gray.50"
-    borderTopRadius="md"
-    borderBottom="1px solid"
-    borderColor="gray.200"
-  >
-    {title}
-  </ModalHeader>
-);
 
 export const HeaderCheckboxRow = ({
   title,
@@ -55,50 +35,10 @@ export const HeaderCheckboxRow = ({
           {title}
         </Text>
       </Checkbox>
-      <Badge
-        colorScheme="purple"
-        variant="solid"
-        width="fit-content"
-        data-testid="num-selected-badge"
-      >
+      <Tag color="minos" className="w-fit" data-testid="num-selected-badge">
         {numSelected} selected
-      </Badge>
+      </Tag>
     </Box>
     {children}
   </Flex>
-);
-
-export const Footer = ({
-  onApply,
-  onClose,
-}: {
-  onApply: () => void;
-  onClose: () => void;
-}) => (
-  <ModalFooter justifyContent="center">
-    <ButtonGroup
-      size="sm"
-      display="flex"
-      justifyContent="space-between"
-      width="100%"
-    >
-      <Button
-        data-testid="cancel-btn"
-        flexGrow={1}
-        variant="outline"
-        mr={3}
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
-      <Button
-        flexGrow={1}
-        colorScheme="primary"
-        onClick={onApply}
-        data-testid="apply-btn"
-      >
-        Apply
-      </Button>
-    </ButtonGroup>
-  </ModalFooter>
 );

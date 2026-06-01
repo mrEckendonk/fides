@@ -2,124 +2,134 @@ name: Frontend Code Checks
 
 on:
   pull_request:
-    paths:
-      - "clients/**"
-      - ".github/workflows/frontend_checks.yml"
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - "main"
       - "release-**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CI: true
 
 jobs:
+  Check-Frontend-Changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has_frontend_changes: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check for frontend file changes
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          list-files: shell
+          filters: |
+            frontend:
+              - 'clients/**'
+              - '.github/workflows/frontend_checks.yml'
+
+      - name: Log changed files
+        if: steps.filter.outputs.frontend == 'true'
+        run: echo "${{ steps.filter.outputs.frontend_files }}"
+
   Clients-Unit:
+    needs: Check-Frontend-Changes
+    if: needs.Check-Frontend-Changes.outputs.has_frontend_changes == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20.x]
-        clients:
-          - "admin-ui"
-          - "privacy-center"
-          - "fides-js"
     defaults:
       run:
         working-directory: clients
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24.x
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Lint
-        run: npm run lint
+      - name: Generate docs
+        working-directory: clients/fides-js
+        run: npm run docs:generate
 
-      - name: Format
-        run: npm run format:ci
+      - name: Fail if docs are not up to date
+        working-directory: clients/fides-js
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Docs are not up to date. Please run 'npm run docs:generate' and commit the changes.";
+            git status
+            git diff
+            exit 1
+          fi
 
-      - name: Build
-        run: npm run build
+      - name: Check (lint, format, typecheck)
+        run: npm run check:ci
 
-      - name: Unit test (${{ matrix.clients }})
-        working-directory: clients/${{ matrix.clients }}
+      - name: Unit tests
         run: npm run test:ci
+        
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v7
+        id: test-coverage-upload-step
+        with:
+          path: |
+            ${{ github.workspace }}/clients/admin-ui/coverage/coverage-summary.json
+            ${{ github.workspace }}/clients/fides-js/coverage/coverage-summary.json
+            ${{ github.workspace }}/clients/privacy-center/coverage/coverage-summary.json
+          if-no-files-found: error
 
-  Clients-Cypress:
+  # Summary job for branch protection - consolidates all frontend checks
+  Frontend-Checks-Summary:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20.x]
-        clients:
-          - "admin-ui"
-          - "privacy-center"
-    defaults:
-      run:
-        working-directory: clients
+    if: always()
+    needs:
+      - Clients-Unit
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Check job results
+        run: |
+          echo "Clients-Unit: ${{ needs.Clients-Unit.result }}"
 
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
+          # Fail only if jobs failed (not if skipped)
+          if [ "${{ needs.Clients-Unit.result }}" == "failure" ]; then
+            echo "❌ One or more required jobs failed"
+            exit 1
+          fi
 
-      - name: Install dependencies
-        run: npm install
+          # Check for cancelled jobs (treat as failure)
+          if [ "${{ needs.Clients-Unit.result }}" == "cancelled" ]; then
+            echo "❌ One or more required jobs were cancelled"
+            exit 1
+          fi
 
-      - name: Build
-        run: npm run build
+          echo "✅ All required frontend checks passed or were skipped"
 
-      - name: Cypress E2E Tests (${{ matrix.clients }})
-        uses: cypress-io/github-action@v4
-        with:
-          working-directory: clients/${{ matrix.clients }}
-          install: false
-          start: npm run cy:start
-          wait-on: "http://localhost:${{ matrix.clients == 'privacy-center' && 3001 || 3000 }}"
-          wait-on-timeout: 180
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: cypress-videos-${{ matrix.clients }}
-          path: /home/runner/work/fides/fides/clients/${{ matrix.clients }}/cypress/videos/*.mp4
-
-  Clients-Cypress-Component:
+  Frontend-Coverage:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20.x]
-        clients:
-          - "admin-ui"
-    defaults:
-      run:
-        working-directory: clients
+    needs:
+      - Clients-Unit
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Download Test Coverage Artifact
+        id: test-coverage-download-step
+        uses: actions/download-artifact@v8
         with:
-          node-version: ${{ matrix.node-version }}
+          artifact-ids: ${{ steps.test-coverage-upload-step.outputs.artifact-id }}
+          path: /tmp/test-coverage
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Cypress Component Tests (${{ matrix.clients }})
-        uses: cypress-io/github-action@v4
+      - name: Jest Coverage Comment
+        uses: MishaKav/jest-coverage-comment@main
         with:
-          working-directory: clients/${{ matrix.clients }}
-          install: false
-          component: true
+          multiple-files: |
+            admin-ui, ${{ steps.test-coverage-download-step.outputs.download-path }}/admin-ui/coverage/coverage-summary.json
+            fides-js, ${{ steps.test-coverage-download-step.outputs.download-path }}/fides-js/coverage/coverage-summary.json
+            privacy-center, ${{ steps.test-coverage-download-step.outputs.download-path }}/privacy-center/coverage/coverage-summary.json

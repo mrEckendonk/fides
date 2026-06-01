@@ -1,0 +1,351 @@
+import {
+  Button,
+  Card,
+  ConfirmationModal,
+  Dropdown,
+  Flex,
+  Icons,
+  Input,
+  Radio,
+  Skeleton,
+  Space,
+  useMessage,
+} from "fidesui";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { getErrorMessage } from "~/features/common/helpers";
+import { useHasPermission } from "~/features/common/Restrict";
+import { ScopeRegistryEnum } from "~/types/api";
+
+import { CreateTCFConfigModal } from "./CreateTCFConfigModal";
+import { useDeleteTCFConfigurationMutation } from "./tcf-config.slice";
+
+interface TCFConfiguration {
+  id: string;
+  name: string;
+}
+
+interface TCFConfigurationDropdownProps {
+  selectedConfigId: string;
+  configurations: TCFConfiguration[];
+  isLoading?: boolean;
+  onConfigurationSelect: (configId: string) => void;
+  onConfigurationDelete?: (configId: string) => void;
+}
+
+interface DropdownContentProps {
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
+  searchResults: TCFConfiguration[];
+  selectedConfigId: string;
+  handleSelection: (id: string) => void;
+  userCanCreateConfigs: boolean;
+  userCanDeleteConfigs: boolean;
+  modalOnOpen: () => void;
+  onDeleteOpen: () => void;
+  setConfigToDelete: (config: TCFConfiguration) => void;
+  isLoading: boolean;
+  setDropdownOpen: (open: boolean) => void;
+  configurations: TCFConfiguration[];
+}
+
+const LoadingContent = () => (
+  <Space orientation="vertical" size="small">
+    <Skeleton.Input active block size="small" />
+    <Skeleton.Input active block size="small" />
+    <Skeleton.Input active block size="small" />
+  </Space>
+);
+
+const ConfigurationList = ({
+  searchResults,
+  selectedConfigId,
+  handleSelection,
+  userCanDeleteConfigs,
+  onDeleteOpen,
+  setConfigToDelete,
+}: Omit<
+  DropdownContentProps,
+  | "searchTerm"
+  | "setSearchTerm"
+  | "isLoading"
+  | "userCanCreateConfigs"
+  | "modalOnOpen"
+  | "setDropdownOpen"
+  | "configurations"
+>) => (
+  <Radio.Group
+    onChange={(e) => handleSelection(e.target.value)}
+    value={selectedConfigId}
+    className="flex flex-col gap-2"
+  >
+    {searchResults.map((config) => (
+      <Flex
+        key={config.id}
+        className={userCanDeleteConfigs ? "justify-between" : "justify-start"}
+        data-testid={`tcf-config-item-${config.id}`}
+      >
+        <Radio
+          value={config.id}
+          name="tcf-config-id"
+          data-testid="tcf-config-item"
+        >
+          <span className="text-sm">{config.name}</span>
+        </Radio>
+        {userCanDeleteConfigs && (
+          <Button
+            type="text"
+            size="small"
+            aria-label="Delete"
+            icon={<Icons.TrashCan />}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfigToDelete(config);
+              onDeleteOpen();
+            }}
+            data-testid="delete-config-button"
+          />
+        )}
+      </Flex>
+    ))}
+  </Radio.Group>
+);
+
+const DropdownContent = ({
+  searchTerm,
+  setSearchTerm,
+  searchResults,
+  selectedConfigId,
+  handleSelection,
+  userCanCreateConfigs,
+  userCanDeleteConfigs,
+  modalOnOpen,
+  onDeleteOpen,
+  setConfigToDelete,
+  isLoading,
+  setDropdownOpen,
+  configurations,
+}: DropdownContentProps) => {
+  const [currentSelection, setCurrentSelection] =
+    useState<string>(selectedConfigId);
+
+  useEffect(() => {
+    setCurrentSelection(selectedConfigId);
+  }, [selectedConfigId]);
+
+  const handleRadioChange = (value: string) => {
+    setCurrentSelection(value);
+  };
+
+  let content;
+  if (isLoading) {
+    content = <LoadingContent />;
+  } else if (searchResults.length === 0) {
+    content = <p className="text-center">No configurations found.</p>;
+  } else {
+    content = (
+      <ConfigurationList
+        searchResults={searchResults}
+        selectedConfigId={currentSelection}
+        handleSelection={handleRadioChange}
+        userCanDeleteConfigs={userCanDeleteConfigs}
+        onDeleteOpen={onDeleteOpen}
+        setConfigToDelete={setConfigToDelete}
+      />
+    );
+  }
+
+  return (
+    <Card
+      title="TCF configurations"
+      className="min-w-[300px]"
+      extra={
+        <Button
+          type="text"
+          size="small"
+          aria-label="Close"
+          icon={<Icons.Close />}
+          onClick={() => setDropdownOpen(false)}
+          data-testid="close-config-dropdown"
+        />
+      }
+      style={{
+        boxShadow: "var(--fidesui-box-shadow)",
+      }}
+    >
+      {configurations.length > 10 && (
+        <Input
+          size="small"
+          className="mb-4"
+          placeholder="Search..."
+          onChange={(e) => setSearchTerm(e.target.value)}
+          value={searchTerm}
+        />
+      )}
+
+      {content}
+
+      <Flex gap="small" className="mt-4">
+        {userCanCreateConfigs && (
+          <Button
+            size="small"
+            onClick={() => {
+              modalOnOpen();
+              setDropdownOpen(false);
+            }}
+            className="flex-1"
+            data-testid="create-config-button"
+          >
+            + Create
+          </Button>
+        )}
+        <Button
+          size="small"
+          onClick={() => handleSelection(currentSelection)}
+          className="flex-1"
+          data-testid="apply-config-button"
+          disabled={currentSelection === selectedConfigId}
+        >
+          Apply
+        </Button>
+      </Flex>
+    </Card>
+  );
+};
+
+const renderDropdownContent = (props: DropdownContentProps) => (
+  <DropdownContent {...props} />
+);
+
+export const TCFConfigurationDropdown = ({
+  selectedConfigId,
+  configurations,
+  isLoading = false,
+  onConfigurationSelect,
+  onConfigurationDelete,
+}: TCFConfigurationDropdownProps): JSX.Element => {
+  const userCanCreateConfigs = useHasPermission([
+    ScopeRegistryEnum.PRIVACY_EXPERIENCE_CREATE,
+  ]);
+  const userCanDeleteConfigs = useHasPermission([
+    ScopeRegistryEnum.PRIVACY_EXPERIENCE_CREATE,
+  ]);
+
+  const message = useMessage();
+  const [deleteTCFConfiguration] = useDeleteTCFConfigurationMutation();
+
+  const [modalIsOpen, setModalIsOpen] = useState(false);
+  const modalOnOpen = useCallback(() => setModalIsOpen(true), []);
+  const modalOnClose = useCallback(() => setModalIsOpen(false), []);
+
+  const [deleteIsOpen, setDeleteIsOpen] = useState(false);
+  const onDeleteOpen = useCallback(() => setDeleteIsOpen(true), []);
+  const onDeleteClose = useCallback(() => setDeleteIsOpen(false), []);
+
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [configToDelete, setConfigToDelete] = useState<TCFConfiguration>();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const searchResults = useMemo(() => {
+    if (!searchTerm) {
+      return configurations;
+    }
+    return configurations.filter((config) =>
+      config.name.toLowerCase().includes(searchTerm.toLowerCase()),
+    );
+  }, [configurations, searchTerm]);
+
+  const selectedConfig = useMemo(
+    () => configurations.find((config) => config.id === selectedConfigId),
+    [configurations, selectedConfigId],
+  );
+
+  const buttonLabel = selectedConfig?.name ?? "Select Configuration";
+
+  const handleSelection = (id: string) => {
+    onConfigurationSelect(id);
+    setDropdownOpen(false);
+  };
+
+  const handleDeleteConfig = async (id: string) => {
+    try {
+      await deleteTCFConfiguration(id).unwrap();
+      onConfigurationDelete?.(id);
+      setConfigToDelete(undefined);
+      onDeleteClose();
+      message.success(
+        `Configuration "${configToDelete?.name}" was successfully deleted.`,
+      );
+    } catch (error: any) {
+      const errorMsg = getErrorMessage(
+        error,
+        "A problem occurred while deleting the configuration.",
+      );
+      message.error(errorMsg);
+    }
+  };
+
+  return (
+    <>
+      <Dropdown
+        open={dropdownOpen}
+        onOpenChange={setDropdownOpen}
+        trigger={["click"]}
+        styles={{
+          root: {
+            zIndex: 999,
+          },
+        }}
+        popupRender={() =>
+          renderDropdownContent({
+            searchTerm,
+            setSearchTerm,
+            searchResults,
+            selectedConfigId,
+            handleSelection,
+            userCanCreateConfigs,
+            userCanDeleteConfigs,
+            modalOnOpen,
+            onDeleteOpen,
+            setConfigToDelete,
+            isLoading,
+            setDropdownOpen,
+            configurations,
+          })
+        }
+      >
+        <Button
+          icon={<Icons.ChevronDown />}
+          iconPlacement="end"
+          data-testid="tcf-config-dropdown-trigger"
+        >
+          {buttonLabel}
+        </Button>
+      </Dropdown>
+
+      <CreateTCFConfigModal
+        isOpen={modalIsOpen}
+        onClose={modalOnClose}
+        onSuccess={(configId) => {
+          onConfigurationSelect(configId);
+        }}
+      />
+
+      <ConfirmationModal
+        isOpen={deleteIsOpen}
+        onClose={() => {
+          setConfigToDelete(undefined);
+          onDeleteClose();
+        }}
+        onConfirm={() => {
+          if (configToDelete) {
+            handleDeleteConfig(configToDelete.id);
+          }
+        }}
+        title="Delete configuration"
+        message="Are you sure you want to delete this configuration? This action
+            cannot be undone."
+      />
+    </>
+  );
+};

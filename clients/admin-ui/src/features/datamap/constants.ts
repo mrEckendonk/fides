@@ -4,11 +4,16 @@
 
 export const CELL_SIZE = 20;
 
-export const DATA_CATEGORY_COLUMN_ID = "unioned_data_categories";
+/**
+ * Width (in pixels) of the spatial datamap's right-side drawer. Mirrors the
+ * default width applied by fidesui's `CustomDrawer` HOC, and is consumed by
+ * `DatamapGraph` to offset the graph viewport when the drawer is open so the
+ * selected node stays visible. Keep in sync with `CustomDrawer`'s default if
+ * that ever changes.
+ */
+export const DATAMAP_DRAWER_WIDTH = 480;
 
-export const ItemTypes = {
-  DraggableColumnListItem: "DraggableColumnListItem",
-};
+export const DATA_CATEGORY_COLUMN_ID = "unioned_data_categories";
 
 export enum ExportFormat {
   csv = "csv",
@@ -61,13 +66,3 @@ COLUMN_NAME_MAP[
 COLUMN_NAME_MAP[SYSTEM_PRIVACY_DECLARATION_NAME] = "Processing Activity";
 COLUMN_NAME_MAP[SYSTEM_INGRESS] = "Source Systems";
 COLUMN_NAME_MAP[SYSTEM_EGRESS] = "Destination Systems";
-
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export enum DATAMAP_LOCAL_STORAGE_KEYS {
-  GROUP_BY = "datamap-group-by",
-  COLUMN_ORDER = "datamap-column-order",
-  TABLE_GROUPING = "datamap-table-grouping",
-  TABLE_STATE = "datamap-report-table-state",
-  DISPLAY_ALL_COLUMNS = "datamap-display-all-columns",
-  SORTING_STATE = "datamap-sorting-state",
-}

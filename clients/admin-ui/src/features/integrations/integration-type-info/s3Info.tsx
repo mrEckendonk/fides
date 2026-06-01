@@ -1,4 +1,4 @@
-import { ListItem } from "fidesui";
+import { ChakraListItem as ListItem } from "fidesui";
 
 import {
   InfoCodeBlock,
@@ -10,8 +10,9 @@ import {
   InfoUnorderedList,
 } from "~/features/common/copy/components";
 import ShowMoreContent from "~/features/common/copy/ShowMoreContent";
-import { ConnectionCategory } from "~/features/integrations/ConnectionCategory";
 import { AccessLevel, ConnectionType } from "~/types/api";
+import { ConnectionCategory } from "~/types/api/models/ConnectionCategory";
+import { IntegrationFeature } from "~/types/api/models/IntegrationFeature";
 
 export const S3_PLACEHOLDER = {
   name: "Amazon S3",
@@ -21,7 +22,7 @@ export const S3_PLACEHOLDER = {
   created_at: "",
 };
 
-export const S3_TAGS = ["Data Warehouse", "S3", "Detection", "Discovery"];
+export const S3_TAGS = ["DSR Automation", "Discovery", "Detection"];
 
 export const S3Overview = () => (
   <>
@@ -120,10 +121,10 @@ export const S3Instructions = () => (
       </InfoText>
       <InfoHeading text="Step 4: Grant the IAM user permission to assume the Fides S3 Access Role" />
       <InfoText>
-        Navigate to the IAM user’s Permissions page and add a permission by
+        Navigate to the IAM user&apos;s Permissions page and add a permission by
         creating an inline policy. This permission should grant the IAM user
-        permission to assume the Fides S3 Access Role created above (you’ll need
-        to retrieve the role ARN). The inline policy should look similar to
+        permission to assume the Fides S3 Access Role created above (you&apos;ll
+        need to retrieve the role ARN). The inline policy should look similar to
         this:
       </InfoText>
       <InfoCodeBlock>{SAMPLE_JSON}</InfoCodeBlock>
@@ -152,6 +153,7 @@ const S3_TYPE_INFO = {
   overview: <S3Overview />,
   instructions: <S3Instructions />,
   tags: S3_TAGS,
+  enabledFeatures: [IntegrationFeature.DATA_DISCOVERY],
 };
 
 export default S3_TYPE_INFO;

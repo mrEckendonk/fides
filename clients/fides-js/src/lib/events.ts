@@ -1,31 +1,71 @@
-import { debugLog } from "./consent-utils";
+import type {
+  FidesEvent as DocsFidesEvent,
+  FidesEventType,
+  FidesLocaleEvent,
+} from "../docs";
 import { FidesCookie } from "./consent-types";
-import type { FidesEventType } from "../docs";
+import { applyOverridesToConsent } from "./consent-utils";
 
 // Bonus points: update the WindowEventMap interface with our custom event types
 declare global {
   interface WindowEventMap extends Record<FidesEventType, FidesEvent> {}
 }
 
+export enum FidesEventOrigin {
+  FIDES = "fides",
+  EXTERNAL = "external",
+}
+
+export enum FidesEventTargetType {
+  TOGGLE = "toggle",
+  BUTTON = "button",
+  LINK = "link",
+}
+
+export const FIDES_LOCALE_UPDATED_EVENT = "FidesLocaleUpdated";
+
 /**
  * Defines the type of "extra" details that can be optionally added to certain
- * events. This is intentionally vague, but constrained to be basic (primitive)
- * values for simplicity.
+ * events. This is intentionally vague. See the /docs/fides-event.ts
  */
 export type FidesEventExtraDetails = Record<
   string,
-  string | number | boolean | undefined
+  string | number | boolean | Record<string, unknown> | undefined
 >;
 
 /**
- * Defines the properties available on event.detail. Currently the FidesCookie
- * and an extra field `meta` for any other details that the event wants to pass
- * around.
+ * Defines the properties available on event.detail. Currently includes:
+ * - FidesCookie properties
+ * - debug flag
+ * - extraDetails for additional event context
+ * - timestamp from performance.mark() if available
  */
 export type FidesEventDetail = FidesCookie & {
   debug?: boolean;
   extraDetails?: FidesEventExtraDetails;
+  timestamp?: number;
 };
+
+/**
+ * Defines the properties available on event.detail.extraDetails.servingComponent
+ */
+export type FidesEventDetailsServingComponent = NonNullable<
+  DocsFidesEvent["detail"]["extraDetails"]
+>["servingComponent"];
+
+/**
+ * Defines the properties available on event.detail.extraDetails.trigger
+ */
+export type FidesEventDetailsTrigger = NonNullable<
+  DocsFidesEvent["detail"]["extraDetails"]
+>["trigger"];
+
+/**
+ * Defines the properties available on event.detail.extraDetails.preference
+ */
+export type FidesEventDetailsPreference = NonNullable<
+  DocsFidesEvent["detail"]["extraDetails"]
+>["preference"];
 
 /**
  * TODO (PROD-1815): Replace this type with this: import { FidesEvent } from "../types"
@@ -35,12 +75,17 @@ export type FidesEventDetail = FidesCookie & {
 export type FidesEvent = CustomEvent<FidesEventDetail>;
 
 /**
+ * Export the FidesEventType type from the docs module, for usage in tests.
+ */
+export type { FidesEventType };
+
+/**
  * Dispatch a custom event on the window object, providing the current Fides
  * state on the "detail" property of the event.
  *
  * Example usage:
  * ```
- * window.addEventListener("FidesInitialized", (evt) => console.log("Fides.consent initialized:", evt.detail.consent));
+ * window.addEventListener("FidesReady", (evt) => console.log("Fides.consent initialized:", evt.detail.consent));
  * window.addEventListener("FidesUpdated", (evt) => console.log("Fides.consent updated:", evt.detail.consent));
  * ```
  *
@@ -52,21 +97,46 @@ export type FidesEvent = CustomEvent<FidesEventDetail>;
  */
 export const dispatchFidesEvent = (
   type: FidesEventType,
-  cookie: FidesCookie | undefined,
-  debug: boolean,
-  extraDetails?: FidesEventExtraDetails
+  fidesCookie: FidesCookie | undefined,
+  extraDetails?: FidesEventExtraDetails,
 ) => {
+  const cookie = fidesCookie ? { ...fidesCookie } : undefined;
   if (typeof window !== "undefined" && typeof CustomEvent !== "undefined") {
     // Extracts consentMethod directly from the cookie instead of having to pass in duplicate data to this method
     const constructedExtraDetails: FidesEventExtraDetails = {
-      consentMethod: cookie?.fides_meta.consentMethod,
+      consentMethod: cookie?.fides_meta
+        .consentMethod as FidesEventExtraDetails["consentMethod"],
       ...extraDetails,
     };
+    if (!(extraDetails?.trigger as FidesEventDetailsTrigger)?.origin) {
+      constructedExtraDetails.trigger = {
+        ...(constructedExtraDetails.trigger as FidesEventDetailsTrigger),
+        ...({ origin: FidesEventOrigin.FIDES } as FidesEventDetailsTrigger),
+      } as FidesEventDetailsTrigger;
+    }
+    const perfMark = performance?.mark?.(type);
+    const timestamp = perfMark?.startTime;
+    const normalizedCookie: FidesCookie | undefined = cookie;
+    if (normalizedCookie && cookie?.consent) {
+      normalizedCookie.consent = applyOverridesToConsent(
+        cookie.consent,
+        window.Fides?.experience?.non_applicable_privacy_notices,
+        window.Fides?.experience?.privacy_notices,
+        undefined,
+        undefined,
+        cookie.non_applicable_notice_keys,
+      );
+    }
     const event = new CustomEvent(type, {
-      detail: { ...cookie, debug, extraDetails: constructedExtraDetails },
+      detail: {
+        ...normalizedCookie,
+        debug: !!window.Fides?.options?.debug,
+        extraDetails: constructedExtraDetails,
+        timestamp,
+      },
+      bubbles: true,
     });
-    debugLog(
-      debug,
+    fidesDebugger(
       `Dispatching event type ${type} ${
         constructedExtraDetails?.servingComponent
           ? `from ${constructedExtraDetails.servingComponent} `
@@ -75,7 +145,79 @@ export const dispatchFidesEvent = (
         constructedExtraDetails
           ? `with extra details ${JSON.stringify(constructedExtraDetails)} `
           : ""
-      }`
+      } (${timestamp?.toFixed(2)}ms)`,
+    );
+    window.dispatchEvent(event);
+  }
+};
+
+/**
+ * An alternative way to subscribe to Fides events. The same events are supported, except the callback
+ * receives the event details directly. This is useful in restricted environments where you can't
+ * directly access `window.addEventListener`.
+ *
+ * Returns an unsubscribe function that can be called to remove the event listener.
+ */
+export const onFidesEvent = (
+  type: FidesEventType,
+  callback: (evt: FidesEventDetail) => void,
+): (() => void) => {
+  const listener = (evt: FidesEvent) => callback(evt.detail);
+  window.addEventListener(type, listener);
+  return () => {
+    window.removeEventListener(type, listener);
+  };
+};
+
+/**
+ * Helper function to dispatch FidesConsentLoaded event
+ * If there's an option to dispatch FidesInitialized event, it will be dispatched as well
+ */
+export const dispatchConsentLoadedEvents = (
+  fidesCookie: FidesCookie,
+  extraDetails?: FidesEventExtraDetails,
+) => {
+  dispatchFidesEvent("FidesConsentLoaded", fidesCookie, extraDetails);
+  const mode = window.Fides?.options?.fidesInitializedEventMode;
+  if (mode === "multiple") {
+    dispatchFidesEvent("FidesInitialized", fidesCookie, extraDetails);
+  }
+};
+
+/**
+ * Helper function to dispatch both FidesReady and FidesInitialized events
+ * for backwards compatibility.
+ */
+export const dispatchReadyEvents = (
+  fidesCookie: FidesCookie,
+  extraDetails?: FidesEventExtraDetails,
+) => {
+  dispatchFidesEvent("FidesReady", fidesCookie, extraDetails);
+  const mode = window.Fides?.options?.fidesInitializedEventMode;
+  if (mode === "multiple" || mode === "once") {
+    dispatchFidesEvent("FidesInitialized", fidesCookie, extraDetails);
+  }
+};
+
+/**
+ * Dispatch the FidesLocaleUpdated event to notify listeners of locale changes
+ */
+export const dispatchLocaleEvent = (locale: string) => {
+  if (typeof window !== "undefined" && typeof CustomEvent !== "undefined") {
+    const perfMark = performance?.mark?.("FidesLocaleUpdated");
+    const timestamp = perfMark?.startTime;
+    const event: FidesLocaleEvent = new CustomEvent(
+      FIDES_LOCALE_UPDATED_EVENT,
+      {
+        detail: {
+          locale,
+          timestamp,
+        },
+        bubbles: true,
+      },
+    );
+    fidesDebugger(
+      `Dispatching FidesLocaleUpdated event for locale: ${locale} (${timestamp?.toFixed(2)}ms)`,
     );
     window.dispatchEvent(event);
   }

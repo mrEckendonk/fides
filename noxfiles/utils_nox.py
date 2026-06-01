@@ -4,7 +4,7 @@ from pathlib import Path
 
 import nox
 
-from constants_nox import COMPOSE_FILE_LIST
+from constants_nox import COMPOSE_FILE_LIST, RUN
 from run_infrastructure import run_infrastructure
 
 
@@ -53,10 +53,13 @@ def teardown(session: nox.Session, volumes: bool = False, images: bool = False) 
 
 
 def install_requirements(session: nox.Session, include_optional: bool = False) -> None:
-    session.install("-r", "requirements.txt")
-    session.install("-r", "dev-requirements.txt")
+    """Install project with dev dependencies (via uv sync); optionally include all extra.
+    uv sync includes the dev dependency group by default; use --no-dev to exclude it."""
+    # uv sync installs the project and dependency-groups (e.g. dev) into the given env
+    session.env["UV_PROJECT_ENVIRONMENT"] = str(session.virtualenv.location)
+    session.run("uv", "sync", external=True)
     if include_optional:
-        session.install("-r", "optional-requirements.txt")
+        session.run("uv", "sync", "--extra", "all", external=True)
 
 
 @nox.session()
@@ -87,7 +90,7 @@ def init_saas_connector(session: nox.Session) -> None:
 
     # render fixtures file
     fixtures_template = environment.get_template("new_fixtures.jinja")
-    filename = f"tests/fixtures/saas/{variable_map['connector_id']}_fixtures.py"
+    filename = f"tests/fides/fixtures/saas/{variable_map['connector_id']}_fixtures.py"
     contents = fixtures_template.render(variable_map)
     try:
         with open(filename, mode="x", encoding="utf-8") as fixtures:
@@ -100,9 +103,7 @@ def init_saas_connector(session: nox.Session) -> None:
 
     # render tests file
     test_template = environment.get_template("test_new_task.jinja")
-    filename = (
-        f"tests/ops/integration_tests/saas/test_{variable_map['connector_id']}_task.py"
-    )
+    filename = f"tests/fides/ops/integration_tests/saas/test_{variable_map['connector_id']}_task.py"
     contents = test_template.render(variable_map)
     try:
         with open(filename, mode="x", encoding="utf-8") as tests:
@@ -112,3 +113,25 @@ def init_saas_connector(session: nox.Session) -> None:
         session.error(
             f"Files for {session.posargs[0]} already exist, skipping initialization"
         )
+
+
+@nox.session()
+@nox.parametrize(
+    "db_command",
+    [
+        nox.param("init", id="init"),
+        nox.param("reset", id="reset"),
+    ],
+)
+def db(session: nox.Session, db_command: str) -> None:
+    """Run commands against the database."""
+    teardown(session)
+    if db_command == "reset":
+        reset_command = ("docker", "volume", "rm", "-f", "fides_app-db-data")
+        session.run(*reset_command, external=True)
+    init_command = (
+        "python",
+        "-c",
+        "from fides.api.db.database import init_db; from fides.config import get_config; config = get_config(); init_db(config.database.sync_database_uri)",
+    )
+    session.run(*RUN, *init_command, external=True)

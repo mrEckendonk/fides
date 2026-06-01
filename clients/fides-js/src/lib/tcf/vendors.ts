@@ -1,4 +1,4 @@
-import { PrivacyExperience } from "../consent-types";
+import { PrivacyExperience, PrivacyExperienceMinimal } from "../consent-types";
 import {
   GVLJson,
   TCFVendorConsentRecord,
@@ -33,9 +33,9 @@ export const decodeVendorId = (vendorId: TCFVendorRelationships["id"]) => {
  */
 export const vendorGvlEntry = (
   vendorId: TCFVendorRelationships["id"],
-  gvl: GVLJson | undefined
+  gvl: GVLJson | undefined,
 ) => {
-  if (!gvl) {
+  if (!gvl?.vendors) {
     return undefined;
   }
   const { source, id } = decodeVendorId(vendorId);
@@ -53,7 +53,6 @@ export const vendorIsAc = (vendorId: TCFVendorRelationships["id"]) =>
 export const uniqueGvlVendorIds = (experience: PrivacyExperience): number[] => {
   const { tcf_vendor_relationships: vendors = [] } = experience;
 
-  // Filter to just i.e. [gvl.2, gvl.4]
   const gvlIds = vendors
     .map((v) => v.id)
     .filter((uid) => vendorGvlEntry(uid, experience.gvl));
@@ -61,15 +60,34 @@ export const uniqueGvlVendorIds = (experience: PrivacyExperience): number[] => {
   return gvlIds.map((uid) => +decodeVendorId(uid).id);
 };
 
+export const uniqueGvlVendorIdsFromMinimal = (
+  experienceMinimal: PrivacyExperienceMinimal,
+): number[] => {
+  const combinedIds = [
+    ...(experienceMinimal.tcf_vendor_consent_ids || []),
+    ...(experienceMinimal.tcf_vendor_legitimate_interest_ids || []),
+  ];
+  // creating a set automatically removes duplicates
+  const uniqueCombinedSet = new Set(combinedIds);
+
+  const gvlIds = [...uniqueCombinedSet].filter((uid) =>
+    vendorGvlEntry(uid, experienceMinimal.gvl),
+  );
+  // Return [2,4] as numbers
+  return gvlIds.map((uid) => +decodeVendorId(uid).id);
+};
+
 const transformVendorDataToVendorRecords = ({
   consents,
   legints,
+  specials,
   relationships,
   isFidesSystem,
   gvl,
 }: {
   consents: TCFVendorConsentRecord[];
   legints: TCFVendorLegitimateInterestsRecord[];
+  specials?: TCFVendorRelationships[];
   relationships: TCFVendorRelationships[];
   isFidesSystem: boolean;
   gvl: PrivacyExperience["gvl"];
@@ -78,6 +96,7 @@ const transformVendorDataToVendorRecords = ({
   relationships.forEach((relationship) => {
     const vendorConsent = consents.find((v) => v.id === relationship.id);
     const vendorLegint = legints.find((v) => v.id === relationship.id);
+    const vendorSpecial = specials?.find((v) => v.id === relationship.id);
     const record: VendorRecord = {
       ...relationship,
       ...vendorConsent,
@@ -85,6 +104,7 @@ const transformVendorDataToVendorRecords = ({
       isFidesSystem,
       isConsent: !!vendorConsent,
       isLegint: !!vendorLegint,
+      isSpecial: !!vendorSpecial,
       isGvl: !!vendorGvlEntry(relationship.id, gvl),
     };
     records.push(record);
@@ -93,7 +113,7 @@ const transformVendorDataToVendorRecords = ({
 };
 
 export const transformExperienceToVendorRecords = (
-  experience: PrivacyExperience
+  experience: PrivacyExperience,
 ): VendorRecord[] => {
   const {
     tcf_vendor_consents: consentVendors = [],
@@ -104,9 +124,14 @@ export const transformExperienceToVendorRecords = (
     tcf_system_relationships: systemRelationships = [],
   } = experience;
 
+  const specialVendors = vendorRelationships.filter(
+    (v) => v.special_purposes && v.special_purposes.length > 0,
+  );
+
   const vendorRecords = transformVendorDataToVendorRecords({
     consents: consentVendors,
     legints: legintVendors,
+    specials: specialVendors,
     relationships: vendorRelationships,
     isFidesSystem: false,
     gvl: experience.gvl,

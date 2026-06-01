@@ -1,19 +1,28 @@
-import { DiscoveryMonitorItem } from "~/features/data-discovery-and-detection/types/DiscoveryMonitorItem";
+import {
+  StagedResourceAPIResponse,
+  StagedResourceTypeValue,
+} from "~/types/api";
 
-import { StagedResourceType } from "../types/StagedResourceType";
-
-export const findResourceType = (item: DiscoveryMonitorItem | undefined) => {
+export const findResourceType = (
+  item: StagedResourceAPIResponse | undefined,
+) => {
   if (!item) {
-    return StagedResourceType.NONE;
+    return undefined;
   }
-  if (item.schemas) {
-    return StagedResourceType.DATABASE;
+  if (item.resource_type) {
+    return item.resource_type;
   }
-  if (item.tables) {
-    return StagedResourceType.SCHEMA;
+
+  // Fallback to match the resource type based on the presence of
+  // nested resources.
+  if (item.schemas?.length) {
+    return StagedResourceTypeValue.DATABASE;
   }
-  if (item.fields) {
-    return StagedResourceType.TABLE;
+  if (item.tables?.length) {
+    return StagedResourceTypeValue.SCHEMA;
   }
-  return StagedResourceType.FIELD;
+  if (item.fields?.length) {
+    return StagedResourceTypeValue.TABLE;
+  }
+  return StagedResourceTypeValue.FIELD;
 };

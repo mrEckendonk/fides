@@ -1,27 +1,33 @@
-import { Divider, Stack, useToast } from "fidesui";
-import React, { useCallback, useEffect, useMemo } from "react";
 import {
-  getConsentContext,
-  resolveLegacyConsentValue,
-  GpcStatus,
   FidesCookie,
+  getGpcContext,
   getOrMakeFidesCookie,
+  GpcStatus,
+  resolveLegacyConsentValue,
   saveFidesCookie,
 } from "fides-js";
+import {
+  ChakraDivider as Divider,
+  ChakraStack as Stack,
+  useChakraToast as useToast,
+} from "fidesui";
+import { useRouter } from "next/navigation";
+import React, { useCallback, useEffect, useMemo } from "react";
+
 import { useAppDispatch, useAppSelector } from "~/app/hooks";
+import { inspectForBrowserIdentities } from "~/common/browser-identities";
+import { useLocalStorage } from "~/common/hooks";
+import { ErrorToastOptions, SuccessToastOptions } from "~/common/toast-options";
+import BrandLink from "~/components/BrandLink";
+import { useConfig } from "~/features/common/config.slice";
 import {
   changeConsent,
   selectFidesKeyToConsent,
   useUpdateConsentRequestPreferencesDeprecatedMutation,
 } from "~/features/consent/consent.slice";
 import { getGpcStatus, makeNoticeConsent } from "~/features/consent/helpers";
-
-import { useConfig } from "~/features/common/config.slice";
-import { inspectForBrowserIdentities } from "~/common/browser-identities";
-import { useLocalStorage } from "~/common/hooks";
 import { ConsentMethod, ConsentPreferences } from "~/types/api";
-import { useRouter } from "next/router";
-import { ErrorToastOptions, SuccessToastOptions } from "~/common/toast-options";
+
 import ConsentItem from "./ConsentItem";
 import SaveCancel from "./SaveCancel";
 
@@ -35,12 +41,12 @@ const ConfigDrivenConsent = ({
   const config = useConfig();
   const consentOptions = useMemo(
     () => config.consent?.page.consentOptions ?? [],
-    [config]
+    [config],
   );
   const toast = useToast();
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const consentContext = useMemo(() => getConsentContext(), []);
+  const consentContext = useMemo(() => getGpcContext(), []);
   const fidesKeyToConsent = useAppSelector(selectFidesKeyToConsent);
   const [consentRequestId] = useLocalStorage("consentRequestId", "");
   const [verificationCode] = useLocalStorage("verificationCode", "");
@@ -52,7 +58,7 @@ const ConfigDrivenConsent = ({
   /**
    * Update the consent choices on the backend.
    */
-  const saveUserConsentOptions = useCallback(() => {
+  const saveUserConsentOptions = useCallback(async () => {
     const newConsent = makeNoticeConsent({
       consentOptions,
       fidesKeyToConsent,
@@ -60,8 +66,8 @@ const ConfigDrivenConsent = ({
     });
     const consent = consentOptions.map((option) => {
       const defaultValue = resolveLegacyConsentValue(
-        option.default,
-        consentContext
+        option.default!,
+        consentContext,
       );
       const value = fidesKeyToConsent[option.fidesDataUseKey] ?? defaultValue;
       const gpcStatus = getGpcStatus({
@@ -78,9 +84,9 @@ const ConfigDrivenConsent = ({
         conflicts_with_gpc: gpcStatus === GpcStatus.OVERRIDDEN,
       };
     });
-    const cookie: FidesCookie = getOrMakeFidesCookie();
+    const cookie: FidesCookie = await getOrMakeFidesCookie();
     cookie.fides_meta.consentMethod = ConsentMethod.SAVE; // include the consentMethod as extra metadata
-    saveFidesCookie({ ...cookie, consent: newConsent }, base64Cookie);
+    saveFidesCookie({ ...cookie, consent: newConsent }, { base64Cookie });
 
     const executableOptions = consentOptions.map((option) => ({
       data_use: option.fidesDataUseKey,
@@ -124,7 +130,7 @@ const ConfigDrivenConsent = ({
         ...ErrorToastOptions,
       });
     },
-    [toast]
+    [toast],
   );
 
   useEffect(() => {
@@ -160,8 +166,8 @@ const ConfigDrivenConsent = ({
     () =>
       consentOptions.map((option) => {
         const defaultValue = resolveLegacyConsentValue(
-          option.default,
-          consentContext
+          option.default!,
+          consentContext,
         );
         const value = fidesKeyToConsent[option.fidesDataUseKey] ?? defaultValue;
         const gpcStatus = getGpcStatus({
@@ -176,7 +182,7 @@ const ConfigDrivenConsent = ({
           gpcStatus,
         };
       }),
-    [consentContext, consentOptions, fidesKeyToConsent]
+    [consentContext, consentOptions, fidesKeyToConsent],
   );
 
   return (
@@ -208,6 +214,7 @@ const ConfigDrivenConsent = ({
         cancelLabel="Cancel"
         saveLabel="Save"
       />
+      <BrandLink bottom={0} />
     </Stack>
   );
 };

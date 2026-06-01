@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 from sqlalchemy import ARRAY, Column, ForeignKey, String
 from sqlalchemy.ext.declarative import declared_attr
@@ -11,11 +11,15 @@ from sqlalchemy.orm import Session
 from fides.api.cryptography.cryptographic_util import (
     generate_salt,
     generate_secure_random_string,
-    hash_with_salt,
+    hash_credential_with_salt,
 )
 from fides.api.cryptography.schemas.jwt import (
+    JWE_EXPIRES_AT,
     JWE_ISSUED_AT,
     JWE_PAYLOAD_CLIENT_ID,
+    JWE_PAYLOAD_CONNECTIONS,
+    JWE_PAYLOAD_MONITORS,
+    JWE_PAYLOAD_PASSWORD_RESET_AT,
     JWE_PAYLOAD_ROLES,
     JWE_PAYLOAD_SCOPES,
     JWE_PAYLOAD_SYSTEMS,
@@ -28,6 +32,26 @@ from fides.config import FidesConfig
 DEFAULT_SCOPES: list[str] = []
 DEFAULT_ROLES: list[str] = []
 DEFAULT_SYSTEMS: list[str] = []
+DEFAULT_CONNECTIONS: list[str] = []
+DEFAULT_MONITORS: list[str] = []
+
+
+def _generate_and_hash_secret(
+    length_bytes: int, encoding: str = "UTF-8"
+) -> tuple[str, str, str]:
+    """Generate a random secret and return (plaintext, salt, hashed_secret).
+
+    This is the single canonical path for producing a storable client credential.
+    Both initial creation and rotation go through here so the hashing approach
+    stays consistent across the codebase.
+    """
+    secret = generate_secure_random_string(length_bytes)
+    salt = generate_salt()
+    hashed_secret = hash_credential_with_salt(
+        secret.encode(encoding),
+        salt.encode(encoding),
+    )
+    return secret, salt, hashed_secret
 
 
 class ClientDetail(Base):
@@ -42,10 +66,17 @@ class ClientDetail(Base):
     scopes = Column(ARRAY(String), nullable=False, server_default="{}", default=dict)
     roles = Column(ARRAY(String), nullable=False, server_default="{}", default=dict)
     systems = Column(ARRAY(String), nullable=False, server_default="{}", default=dict)
+    connections = Column(
+        ARRAY(String), nullable=False, server_default="{}", default=dict
+    )
+    monitors = Column(ARRAY(String), nullable=False, server_default="{}", default=dict)
+    name = Column(String, nullable=True)
+    description = Column(String, nullable=True)
     fides_key = Column(String, index=True, unique=True, nullable=True)
     user_id = Column(
         String, ForeignKey(FidesUser.id_field_path), nullable=True, unique=True
     )
+    user: Optional["FidesUser"]
 
     @classmethod
     def create_client_and_secret(
@@ -55,18 +86,25 @@ class ClientDetail(Base):
         client_secret_byte_length: int,
         *,
         scopes: list[str] | None = None,
-        fides_key: str = None,
-        user_id: str = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        fides_key: Optional[str] = None,
+        user_id: Optional[str] = None,
         encoding: str = "UTF-8",
         roles: list[str] | None = None,
         systems: list[str] | None = None,
+        connections: list[str] | None = None,
+        monitors: list[str] | None = None,
+        in_memory: bool | None = False,
     ) -> tuple["ClientDetail", str]:
         """Creates a ClientDetail and returns that along with the unhashed secret
         so it can be returned to the user on create
         """
 
         client_id = generate_secure_random_string(client_id_byte_length)
-        secret = generate_secure_random_string(client_secret_byte_length)
+        secret, salt, hashed_secret = _generate_and_hash_secret(
+            client_secret_byte_length, encoding
+        )
 
         if not scopes:
             scopes = DEFAULT_SCOPES
@@ -77,25 +115,37 @@ class ClientDetail(Base):
         if not systems:
             systems = DEFAULT_SYSTEMS
 
-        salt = generate_salt()
-        hashed_secret = hash_with_salt(
-            secret.encode(encoding),
-            salt.encode(encoding),
-        )
+        if not connections:
+            connections = DEFAULT_CONNECTIONS
 
-        client = super().create(
-            db,
-            data={
-                "id": client_id,
-                "salt": salt,
-                "hashed_secret": hashed_secret,
-                "scopes": scopes,
-                "fides_key": fides_key,
-                "user_id": user_id,
-                "roles": roles,
-                "systems": systems,
-            },
-        )
+        if not monitors:
+            monitors = DEFAULT_MONITORS
+
+        data = {
+            "id": client_id,
+            "salt": salt,
+            "hashed_secret": hashed_secret,
+            "scopes": scopes,
+            "name": name,
+            "description": description,
+            "fides_key": fides_key,
+            "user_id": user_id,
+            "roles": roles,
+            "systems": systems,
+            "connections": connections,
+            "monitors": monitors,
+        }
+
+        if in_memory:
+            client = ClientDetail(
+                **data
+            )  # For creating a temporary ClientDetail for invalid user login flow
+        else:
+            client = super().create(
+                db,
+                data=data,
+                check_name=False,
+            )
         return client, secret  # type: ignore
 
     @classmethod
@@ -113,21 +163,58 @@ class ClientDetail(Base):
             return _get_root_client_detail(config, scopes=scopes, roles=roles)
         return super().get(db, object_id=object_id)
 
-    def create_access_code_jwe(self, encryption_key: str) -> str:
-        """Generates a JWE from the client detail provided"""
+    def create_access_code_jwe(
+        self, encryption_key: str, token_expire_minutes: int
+    ) -> str:
+        """Generates a JWE from the client detail provided.
+
+        Includes iat (issued-at) and exp (expires-at, Unix timestamp) for
+        server-side expiration enforcement and client-facing expiry info.
+
+        If the client is associated with a user who has a password_reset_at timestamp,
+        it is included in the payload for stateless token invalidation checks.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Get password_reset_at if user is associated
+        password_reset_at = None
+        if self.user is not None and self.user.password_reset_at is not None:
+            password_reset_at = self.user.password_reset_at.isoformat()
+
         payload = {
-            # client id may not be necessary
             JWE_PAYLOAD_CLIENT_ID: self.id,
             JWE_PAYLOAD_SCOPES: self.scopes,
-            JWE_ISSUED_AT: datetime.now().isoformat(),
+            JWE_ISSUED_AT: now.isoformat(),
+            JWE_EXPIRES_AT: int(now.timestamp()) + (token_expire_minutes * 60),
             JWE_PAYLOAD_ROLES: self.roles,
             JWE_PAYLOAD_SYSTEMS: self.systems,
+            JWE_PAYLOAD_CONNECTIONS: self.connections,
+            JWE_PAYLOAD_MONITORS: self.monitors,
         }
+
+        if password_reset_at is not None:
+            payload[JWE_PAYLOAD_PASSWORD_RESET_AT] = password_reset_at
+
         return generate_jwe(json.dumps(payload), encryption_key)
+
+    def rotate_secret(
+        self, db: Session, secret_length_bytes: int, encoding: str = "UTF-8"
+    ) -> str:
+        """Generates a new secret, persists its hash, and returns the plaintext secret."""
+        new_secret, new_salt, new_hashed_secret = _generate_and_hash_secret(
+            secret_length_bytes, encoding
+        )
+        self.update(db, data={"hashed_secret": new_hashed_secret, "salt": new_salt})
+        return new_secret
+
+    @property
+    def client_id(self) -> str:
+        """Alias for id, used for API serialization via ClientResponse."""
+        return self.id
 
     def credentials_valid(self, provided_secret: str, encoding: str = "UTF-8") -> bool:
         """Verifies that the provided secret is correct."""
-        provided_secret_hash = hash_with_salt(
+        provided_secret_hash = hash_credential_with_salt(
             provided_secret.encode(encoding),
             self.salt.encode(encoding),
         )
@@ -155,6 +242,8 @@ def _get_root_client_detail(
             scopes=scopes,
             roles=roles,
             systems=[],
+            connections=[],
+            monitors=[],
         )
 
     return ClientDetail(
@@ -164,4 +253,6 @@ def _get_root_client_detail(
         scopes=DEFAULT_SCOPES,
         roles=DEFAULT_ROLES,
         systems=DEFAULT_SYSTEMS,
+        connections=DEFAULT_CONNECTIONS,
+        monitors=DEFAULT_MONITORS,
     )

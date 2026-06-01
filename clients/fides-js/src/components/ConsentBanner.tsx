@@ -1,18 +1,26 @@
-import { h, FunctionComponent, ComponentChildren, VNode } from "preact";
-import { useState, useEffect } from "preact/hooks";
-import { getConsentContext } from "../lib/consent-context";
-import { GpcStatus } from "../lib/consent-types";
-import CloseButton from "./CloseButton";
-import { GpcBadge } from "./GpcBadge";
-import ExperienceDescription from "./ExperienceDescription";
-import { I18n, messageExists } from "../lib/i18n";
+import { ComponentChildren, FunctionComponent, VNode } from "preact";
+import { HTMLAttributes } from "preact/compat";
+import { useEffect } from "preact/hooks";
 
-interface ButtonGroupProps {
-  isMobile: boolean;
-}
+import { A11yDialogAttributes } from "~/lib/a11y-dialog";
+
+import { getGpcContext } from "../lib/consent-context";
+import {
+  GpcStatus,
+  PrivacyExperience,
+  PrivacyNoticeWithPreference,
+} from "../lib/consent-types";
+import { FidesEventTargetType } from "../lib/events";
+import { processGpcConditionals } from "../lib/gpc-utils";
+import { messageExists } from "../lib/i18n";
+import { useI18n } from "../lib/i18n/i18n-context";
+import { useEvent } from "../lib/providers/event-context";
+import CloseButton from "./CloseButton";
+import ExperienceDescription from "./ExperienceDescription";
+import { GpcBadge } from "./GpcBadge";
 
 interface BannerProps {
-  i18n: I18n;
+  attributes: A11yDialogAttributes;
   dismissable: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -23,16 +31,15 @@ interface BannerProps {
    * */
   children?: ComponentChildren;
   onVendorPageClick?: () => void;
-  renderButtonGroup: (props: ButtonGroupProps) => VNode;
+  renderButtonGroup: () => VNode;
   className?: string;
   isEmbedded: boolean;
 }
 
 const ConsentBanner: FunctionComponent<BannerProps> = ({
-  i18n,
+  attributes,
   dismissable,
   onOpen,
-  onClose,
   bannerIsOpen,
   children,
   onVendorPageClick,
@@ -40,23 +47,10 @@ const ConsentBanner: FunctionComponent<BannerProps> = ({
   className,
   isEmbedded,
 }) => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
-    window.addEventListener("resize", handleResize);
-
-    // Cleanup the event listener on component unmount
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, []);
-
-  const showGpcBadge = getConsentContext().globalPrivacyControl;
-
+  const { container, dialog, title, closeButton } = attributes;
+  const { i18n } = useI18n();
+  const showGpcBadge = getGpcContext().globalPrivacyControl;
+  const { setTrigger } = useEvent();
   useEffect(() => {
     if (bannerIsOpen) {
       onOpen();
@@ -66,12 +60,19 @@ const ConsentBanner: FunctionComponent<BannerProps> = ({
   // If explicit "banner_description" or "banner_title" values are set, use
   // those to populate the banner. Otherwise, use the generic "description" and
   // "title" values that are shared with the modal component
-  const bannerTitle = messageExists(i18n, "exp.banner_title")
+  const rawBannerTitle = messageExists(i18n, "exp.banner_title")
     ? i18n.t("exp.banner_title")
     : i18n.t("exp.title");
-  const bannerDescription = messageExists(i18n, "exp.banner_description")
+  const rawBannerDescription = messageExists(i18n, "exp.banner_description")
     ? i18n.t("exp.banner_description")
     : i18n.t("exp.description");
+
+  // Process GPC conditionals in the banner text
+  const bannerTitle = processGpcConditionals(rawBannerTitle, !!showGpcBadge);
+  const bannerDescription = processGpcConditionals(
+    rawBannerDescription,
+    !!showGpcBadge,
+  );
 
   const containerClassName = [
     "fides-banner",
@@ -83,33 +84,58 @@ const ConsentBanner: FunctionComponent<BannerProps> = ({
     .filter((c) => typeof c === "string")
     .join(" ");
 
+  let privacyNotices: PrivacyNoticeWithPreference[] | undefined = [];
+
+  if (
+    !!(window.Fides?.experience as PrivacyExperience)?.experience_config
+      ?.show_layer1_notices &&
+    !!(window.Fides?.experience as PrivacyExperience)?.privacy_notices
+  ) {
+    privacyNotices = (window.Fides?.experience as PrivacyExperience)
+      ?.privacy_notices;
+  }
+
   return (
-    <div id="fides-banner-container" className={containerClassName}>
-      <div id="fides-banner">
-        <div id="fides-banner-inner">
+    <div
+      className={containerClassName}
+      {...(container as Partial<HTMLAttributes<HTMLDivElement>>)}
+      id={`${container.id}-container`}
+    >
+      <div id={container.id}>
+        <div
+          {...(dialog as Partial<HTMLAttributes<HTMLDivElement>>)}
+          id={`${container.id}-inner`}
+        >
           <CloseButton
             ariaLabel="Close banner"
-            onClick={onClose}
+            onClick={() => {
+              setTrigger({
+                type: FidesEventTargetType.BUTTON,
+                label: "Close banner",
+              });
+              closeButton.onClick();
+            }}
             hidden={window.Fides?.options?.preventDismissal || !dismissable}
           />
-          <div
-            id="fides-banner-inner-container"
-            style={{
-              gridTemplateColumns: children ? "1fr 1fr" : "1fr",
-            }}
-          >
-            <div id="fides-banner-inner-description">
+          <div id={`${container.id}-inner-container`}>
+            <div className="fides-banner__col">
               <div id="fides-banner-heading">
-                <div id="fides-banner-title" className="fides-banner-title">
+                <div
+                  {...title} // adds role, aria-level, id
+                  className="fides-banner-title"
+                >
                   {bannerTitle}
                 </div>
                 {showGpcBadge && (
-                  <GpcBadge i18n={i18n} status={GpcStatus.APPLIED} />
+                  <GpcBadge
+                    status={GpcStatus.APPLIED}
+                    data-testid="fides-banner-gpc-applied"
+                  />
                 )}
               </div>
               <div
-                id="fides-banner-description"
-                className="fides-banner-description"
+                id={`${container.id}-description`}
+                className="fides-banner-description fides-banner__content"
               >
                 <ExperienceDescription
                   description={bannerDescription}
@@ -118,12 +144,24 @@ const ConsentBanner: FunctionComponent<BannerProps> = ({
                     window.Fides?.options?.allowHTMLDescription
                   }
                 />
+                {!!privacyNotices?.length && (
+                  <div
+                    id={`${container.id}-notices`}
+                    className="fides-banner-notices"
+                  >
+                    {privacyNotices.map((notice, i) => (
+                      <span key={notice.id}>
+                        <strong>{notice.name}</strong>
+                        {i < privacyNotices!.length - 1 && ", "}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             {children}
-            {!isMobile && renderButtonGroup({ isMobile })}
           </div>
-          {isMobile && renderButtonGroup({ isMobile })}
+          {renderButtonGroup()}
         </div>
       </div>
     </div>

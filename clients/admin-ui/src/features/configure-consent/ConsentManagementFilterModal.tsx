@@ -1,4 +1,7 @@
-import { Accordion, useDisclosure } from "fidesui";
+import {
+  ChakraAccordion as Accordion,
+  useChakraDisclosure as useDisclosure,
+} from "fidesui";
 import { useEffect, useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
@@ -70,7 +73,7 @@ export const useConsentManagementFilters = () => {
           value: dataUse.fides_key,
           displayText: dataUse.name || dataUse.fides_key,
           isChecked: false,
-        }))
+        })),
       );
     }
   }, [dataUses, dataUseOptions, setDataUseOptions]);
@@ -94,11 +97,11 @@ export const useConsentManagementFilters = () => {
   const resetFilters = () => {
     setDataUseOptions((prev) => prev.map((o) => ({ ...o, isChecked: false })));
     setLegalBasisOptions((prev) =>
-      prev.map((o) => ({ ...o, isChecked: false }))
+      prev.map((o) => ({ ...o, isChecked: false })),
     );
     setPurposeOptions((prev) => prev.map((o) => ({ ...o, isChecked: false })));
     setConsentCategoryOptions((prev) =>
-      prev.map((o) => ({ ...o, isChecked: false }))
+      prev.map((o) => ({ ...o, isChecked: false })),
     );
   };
 
@@ -106,7 +109,7 @@ export const useConsentManagementFilters = () => {
     newValue: string,
     checked: boolean,
     options: Option[],
-    setOptions: (options: Option[]) => void
+    setOptions: (options: Option[]) => void,
   ) => {
     const newOptions = options.map((option) => {
       if (option.value === newValue) {
@@ -130,7 +133,7 @@ export const useConsentManagementFilters = () => {
       legalBasis,
       checked,
       legalBasisOptions,
-      setLegalBasisOptions
+      setLegalBasisOptions,
     );
   };
   const onPurposeChange = (purposes: string, checked: boolean) => {
@@ -138,13 +141,13 @@ export const useConsentManagementFilters = () => {
   };
   const onConsentCategoryChange = (
     consentCategory: string,
-    checked: boolean
+    checked: boolean,
   ) => {
     onCheckBoxChange(
       consentCategory,
       checked,
       consentCategoryOptions,
-      setConsentCategoryOptions
+      setConsentCategoryOptions,
     );
   };
 

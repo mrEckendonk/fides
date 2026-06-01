@@ -10,8 +10,9 @@ from fides.cli.options import (
     connection_string_option,
     credentials_id_option,
     include_null_flag,
+    okta_client_id_option,
     okta_org_url_option,
-    okta_token_option,
+    okta_private_key_option,
     organization_fides_key_option,
 )
 from fides.cli.utils import (
@@ -19,7 +20,6 @@ from fides.cli.utils import (
     handle_bigquery_config_options,
     handle_database_credentials_options,
     handle_okta_credentials_options,
-    with_analytics,
 )
 from fides.core import dataset as _dataset
 from fides.core import system as _system
@@ -47,7 +47,6 @@ def generate_dataset(ctx: click.Context) -> None:
 @credentials_id_option
 @connection_string_option
 @include_null_flag
-@with_analytics
 def generate_dataset_db(
     ctx: click.Context,
     output_filename: str,
@@ -86,7 +85,6 @@ def generate_dataset_gcp(ctx: click.Context) -> None:
 @credentials_id_option
 @click.option("--keyfile-path", type=str)
 @include_null_flag
-@with_analytics
 def generate_dataset_bigquery(
     ctx: click.Context,
     dataset_name: str,
@@ -131,7 +129,6 @@ def generate_dataset_aws(ctx: click.Context) -> None:
 @aws_region_option
 @click.option("--single-dataset", type=bool, default=False)
 @include_null_flag
-@with_analytics
 def generate_dataset_dynamodb(
     ctx: click.Context,
     output_filename: str,
@@ -179,28 +176,30 @@ def generate_system(ctx: click.Context) -> None:
 @click.argument("output_filename", type=str)
 @credentials_id_option
 @okta_org_url_option
-@okta_token_option
+@okta_client_id_option
+@okta_private_key_option
 @include_null_flag
 @organization_fides_key_option
-@with_analytics
 def generate_system_okta(
     ctx: click.Context,
     output_filename: str,
     credentials_id: str,
-    token: str,
     org_url: str,
+    client_id: str,
+    private_key: str,
     include_null: bool,
     org_key: str,
 ) -> None:
     """
     Generates systems from your Okta applications. Connects via
-    an Okta admin account.
+    OAuth2 client credentials.
     """
     config = ctx.obj["CONFIG"]
     okta_config = handle_okta_credentials_options(
         fides_config=config,
-        token=token,
         org_url=org_url,
+        client_id=client_id,
+        private_key=private_key,
         credentials_id=credentials_id,
     )
 
@@ -224,7 +223,6 @@ def generate_system_okta(
 @aws_region_option
 @include_null_flag
 @organization_fides_key_option
-@with_analytics
 def generate_system_aws(
     ctx: click.Context,
     output_filename: str,

@@ -1,0 +1,118 @@
+import { Form, FormInstance, Input, Select, Spin } from "fidesui";
+import { isEmpty } from "lodash";
+
+import { useCustomFields } from "~/features/common/custom-fields";
+import { LegacyAllowedTypes } from "~/features/common/custom-fields/types";
+import CustomTaxonomySelect from "~/features/taxonomy/components/CustomTaxonomySelect";
+
+interface TaxonomyCustomFieldsFormProps {
+  customFields: ReturnType<typeof useCustomFields>;
+  formId: string;
+  form: FormInstance;
+}
+
+const TaxonomyCustomFieldsForm = ({
+  customFields,
+  formId,
+  form,
+}: TaxonomyCustomFieldsFormProps) => {
+  const {
+    idToAllowListWithOptions,
+    idToCustomFieldDefinition,
+    isEnabled,
+    isLoading,
+    sortedCustomFieldDefinitionIds,
+  } = customFields;
+
+  if (!isEnabled || sortedCustomFieldDefinitionIds.length === 0) {
+    return null;
+  }
+
+  return (
+    <Form
+      form={form}
+      name={formId}
+      initialValues={customFields.customFieldValues}
+      layout="vertical"
+      data-testid="custom-fields-form"
+    >
+      {isLoading ? (
+        <Spin />
+      ) : (
+        <div>
+          {!isEmpty(sortedCustomFieldDefinitionIds) && (
+            <div>
+              {sortedCustomFieldDefinitionIds.map((definitionId) => {
+                const customFieldDefinition =
+                  idToCustomFieldDefinition.get(definitionId);
+                if (!customFieldDefinition) {
+                  // This should never happen.
+                  return null;
+                }
+
+                const {
+                  id,
+                  name,
+                  description,
+                  allow_list_id: allowListId,
+                  field_type: fieldType,
+                } = customFieldDefinition;
+
+                if (!allowListId) {
+                  return (
+                    <Form.Item
+                      key={definitionId}
+                      name={id}
+                      label={name}
+                      tooltip={description}
+                    >
+                      {fieldType === LegacyAllowedTypes.STRING ? (
+                        <Input />
+                      ) : (
+                        <CustomTaxonomySelect
+                          taxonomyKey={fieldType}
+                          defaultValue={customFields.customFieldValues[id]}
+                        />
+                      )}
+                    </Form.Item>
+                  );
+                }
+
+                const allowList = idToAllowListWithOptions.get(
+                  customFieldDefinition.allow_list_id!,
+                );
+                if (!allowList) {
+                  // This would only happen if the field definitions load before
+                  // the allow list data.
+                  return null;
+                }
+
+                const { options } = allowList;
+                return (
+                  <Form.Item
+                    key={definitionId}
+                    name={id}
+                    label={name}
+                    tooltip={description}
+                  >
+                    {/* eslint-disable-next-line jsx-a11y/control-has-associated-label */}
+                    <Select
+                      mode={
+                        fieldType !== LegacyAllowedTypes.STRING
+                          ? "multiple"
+                          : undefined
+                      }
+                      allowClear
+                      options={options}
+                    />
+                  </Form.Item>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </Form>
+  );
+};
+export default TaxonomyCustomFieldsForm;

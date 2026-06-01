@@ -1,0 +1,32 @@
+import { RangePickerProps } from "antd/es/date-picker";
+import { DatePicker } from "antd/lib";
+import React from "react";
+
+import { ArrowRight, Calendar } from "../icons/carbon";
+
+const withCustomProps = (WrappedComponent: typeof DatePicker.RangePicker) => {
+  const WrappedSelect = ({
+    suffixIcon = <Calendar />,
+    separator = (
+      <ArrowRight style={{ color: "var(--fidesui-color-text-disabled)" }} />
+    ),
+    ...props
+  }: RangePickerProps) => {
+    const customProps = {
+      suffixIcon,
+      separator,
+      ...props,
+    };
+    return <WrappedComponent {...customProps} />;
+  };
+  return WrappedSelect;
+};
+/**
+ * Higher-order component that adds consistent styling and enhanced functionality to Ant Design's RangePicker component.
+ *
+ * Default customizations:
+ * - Uses Carbon icons for suffix (calendar icon) and separator (right arrow)
+ * - Uses the same gray color for the right arrow icon
+ *
+ */
+export const CustomDateRangePicker = withCustomProps(DatePicker.RangePicker);

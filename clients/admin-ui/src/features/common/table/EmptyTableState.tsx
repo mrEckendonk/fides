@@ -1,4 +1,9 @@
-import { Box, HStack, Text, WarningTwoIcon } from "fidesui";
+import {
+  ChakraBox as Box,
+  ChakraHStack as HStack,
+  ChakraText as Text,
+  Icons,
+} from "fidesui";
 import { ReactNode } from "react";
 
 type Props = {
@@ -18,7 +23,9 @@ const EmptyTableState = ({ title, description, button }: Props) => (
     px={6}
     data-testid="empty-state"
   >
-    <WarningTwoIcon alignSelf="start" color="blue.400" mt={0.5} />
+    <Box as="span" alignSelf="start" color="blue.400" mt={0.5}>
+      <Icons.WarningAltFilled size={16} />
+    </Box>
     <Box flexGrow={1}>
       <Text fontWeight="bold" fontSize="sm" mb={1}>
         {title}

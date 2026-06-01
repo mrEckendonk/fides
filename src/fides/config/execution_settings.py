@@ -1,6 +1,7 @@
 from typing import Optional
 
 from pydantic import Field
+from pydantic_settings import SettingsConfigDict
 
 from .fides_settings import FidesSettings
 
@@ -10,17 +11,13 @@ ENV_PREFIX = "FIDES__EXECUTION__"
 class ExecutionSettings(FidesSettings):
     """Configuration settings for DSR execution."""
 
-    masking_strict: bool = Field(
-        default=True,
-        description="If set to True, only use UPDATE requests to mask data. If False, Fides will use any defined DELETE or GDPR DELETE endpoints to remove PII, which may extend beyond the specific data categories that configured in your execution policy.",
-    )
     privacy_request_delay_timeout: int = Field(
         default=3600,
-        description="The amount of time to wait for actions which delay privacy requests (e.g., pre- and post-processing webhooks).",
+        description="The amount of time to wait, in minutes, for actions which delay privacy requests (e.g., pre- and post-processing webhooks). Default: 3600 minutes",
     )
     require_manual_request_approval: bool = Field(
         default=False,
-        description="Whether privacy requests require explicit approval to execute.",
+        description="Whether access and erasure privacy requests require explicit approval to execute. Consent privacy requests are always auto-approved.",
     )
     subject_identity_verification_required: bool = Field(
         default=False,
@@ -48,6 +45,10 @@ class ExecutionSettings(FidesSettings):
         default=False,
         description="Allows custom privacy request fields to be used in request execution.",
     )
+    allow_custom_privacy_request_file_upload: bool = Field(
+        default=False,
+        description="Allows file uploads to be attached to incoming privacy requests.",
+    )
     request_task_ttl: int = Field(
         default=604800,
         description="The number of seconds a request task should live.",
@@ -56,10 +57,64 @@ class ExecutionSettings(FidesSettings):
         default=30,
         description="Seconds between polling for Privacy Requests that should change state",
     )
-    use_dsr_3_0: bool = Field(
-        default=False,
-        description="Temporary flag to switch to using DSR 3.0 to process your tasks.",
+    interrupted_task_requeue_interval: int = Field(
+        default=300,
+        description="Seconds between polling for interrupted tasks to requeue",
     )
-
-    class Config:
-        env_prefix = ENV_PREFIX
+    privacy_request_requeue_retry_count: int = Field(
+        default=3,
+        description="The number of times a privacy request will be requeued when its tasks are interrupted before being marked as error",
+    )
+    async_polling_interval_hours: int = Field(
+        default=1,
+        description="Hours between status checks for async tasks",
+    )
+    async_polling_request_timeout_days: int = Field(
+        default=30,
+        description="Maximum time in days to wait for an async polling request to complete before timing out",
+    )
+    erasure_request_finalization_required: bool = Field(
+        default=False,
+        description="Whether erasure requests require an additional finalization step after all collections have been executed.",
+    )
+    fuzzy_search_enabled: bool = Field(
+        default=True,
+        description="Whether fuzzy search is enabled for privacy request lookups.",
+    )
+    email_send_cron_expression: str = Field(
+        default="0 12 * * mon",
+        description="The cron expression to send batch emails for DSR email integration. Defaults to weekly on Mondays at 12pm (noon).",
+    )
+    email_send_timezone: str = Field(
+        default="US/Eastern",
+        description="The timezone to send batch emails for DSR email integration.",
+    )
+    memory_watchdog_enabled: bool = Field(
+        default=False,
+        description="Whether the memory watchdog is enabled to monitor and gracefully terminate tasks that approach memory limits.",
+    )
+    use_legacy_traversal: bool = Field(
+        default=False,
+        description="When enabled, falls back to the legacy traversal algorithm. Intended as a temporary safety net in case of regressions with the optimized traversal.",
+    )
+    task_soft_time_limit_seconds: int = Field(
+        default=0,
+        description="Soft time limit in seconds for privacy request Celery tasks. "
+        "When exceeded, SoftTimeLimitExceeded is raised and the full stack trace is logged. "
+        "Set to 0 to disable (default).",
+    )
+    jira_polling_interval_minutes: int = Field(
+        default=3,
+        description="Minutes between polling Jira for ticket status updates.",
+    )
+    reply_polling_interval_minutes: int = Field(
+        default=3,
+        ge=1,
+        description="Minutes between polling the IMAP mailbox for DSR reply messages.",
+    )
+    notification_interval_minutes: int = Field(
+        default=5,
+        ge=1,
+        description="Minutes between processing pending DSR lifecycle notifications.",
+    )
+    model_config = SettingsConfigDict(env_prefix=ENV_PREFIX)

@@ -1,14 +1,14 @@
 import {
-  Box,
-  Checkbox,
-  Table,
-  TableHeadProps,
-  Tbody,
-  Td,
-  Text,
-  Th,
-  Thead,
-  Tr,
+  ChakraBox as Box,
+  ChakraCheckbox as Checkbox,
+  ChakraTable as Table,
+  ChakraTableHeadProps as TableHeadProps,
+  ChakraTbody as Tbody,
+  ChakraTd as Td,
+  ChakraText as Text,
+  ChakraTh as Th,
+  ChakraThead as Thead,
+  ChakraTr as Tr,
 } from "fidesui";
 
 import type { ColumnMetadata } from "~/features/common/ColumnDropdown";
@@ -54,7 +54,7 @@ export const SystemTableCell = ({
         whiteSpace="nowrap"
         overflow="hidden"
         textOverflow="ellipsis"
-        title={system.fidesctl_meta?.resource_id}
+        title={system.fidesctl_meta?.resource_id || ""}
       >
         {system.fidesctl_meta?.resource_id}
       </Box>

@@ -1,32 +1,42 @@
 import type { NextPage } from "next";
 import React, { useMemo } from "react";
 
-import { DirtyFormConfirmationModal } from "~/features/common/hooks/useIsAnyFormDirty";
+import ErrorPage from "~/features/common/errors/ErrorPage";
 import Layout from "~/features/common/Layout";
+import PageHeader from "~/features/common/PageHeader";
 import Datamap from "~/features/datamap/Datamap";
-import DatamapGraphStore from "~/features/datamap/datamap-graph/DatamapGraphContext";
 import DatamapTableContext, {
   DatamapTableContextValue,
 } from "~/features/datamap/datamap-table/DatamapTableContext";
+import { useDatamapTable } from "~/features/datamap/datamap-table/hooks/useDatamapTable";
 
 const Home: NextPage = () => {
   const datamapTableContextValue = useMemo(
     () => new DatamapTableContextValue(),
-    []
+    [],
   );
+
+  const { error } = useDatamapTable();
+
+  if (error) {
+    return (
+      <ErrorPage
+        error={error}
+        defaultMessage="A problem occurred while fetching your datamap"
+      />
+    );
+  }
 
   return (
     <Layout
-      title="View Map"
+      title="Data lineage"
       mainProps={{
-        padding: "40px 0 0 40px",
+        padding: "24px 0 0 40px",
       }}
     >
+      <PageHeader style={{ paddingLeft: 0 }} heading="Data lineage" />
       <DatamapTableContext.Provider value={datamapTableContextValue}>
-        <DatamapGraphStore>
-          <Datamap />
-          <DirtyFormConfirmationModal />
-        </DatamapGraphStore>
+        <Datamap />
       </DatamapTableContext.Provider>
     </Layout>
   );

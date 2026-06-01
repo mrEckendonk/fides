@@ -23,6 +23,23 @@ dataset:
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
+  - name: access_package_review
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: privacy_request_id
+      data_categories: [system.operations]
+    - name: redactions
+      data_categories: [system.operations]
+    - name: approved_at
+      data_categories: [system.operations]
+    - name: approved_by
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
   - name: alembic_version
     fields:
     - name: version_num
@@ -46,6 +63,233 @@ dataset:
       data_categories:
       - system.operations
     - name: single_row
+      data_categories:
+      - system.operations
+  - name: attachment_reference
+    fields:
+    - name: attachment_id
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: reference_id
+      data_categories:
+      - system.operations
+    - name: reference_type
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+  - name: attachment
+    fields:
+    - name: attachment_type
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: file_name
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: storage_key
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+    - name: user_id
+      data_categories:
+      - system.operations
+    - name: username
+      data_categories:
+        - user.account.username
+    - name: client_id
+      data_categories:
+        - system.operations
+  - name: attachment_user_provided
+    fields:
+    - name: created_at
+      data_categories: [system.operations]
+    - name: field_name
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: object_key
+      data_categories: [system.operations]
+    - name: policy_key
+      data_categories: [system.operations]
+    - name: promoted_at
+      data_categories: [system.operations]
+    - name: property_id
+      data_categories: [system.operations]
+    - name: status
+      data_categories: [system.operations]
+    - name: storage_key
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: answer_version
+    description: 'Immutable history of assessment answer versions'
+    fields:
+    - name: answer_id
+      data_categories:
+      - system.operations
+    - name: answer_source
+      data_categories:
+      - system.operations
+    - name: answer_status
+      data_categories:
+      - system.operations
+    - name: answer_text
+      data_categories:
+      - system.operations
+    - name: change_type
+      data_categories:
+      - system.operations
+    - name: confidence
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: created_by
+      data_categories:
+      - system.operations
+    - name: diff_from_previous
+      data_categories:
+      - system.operations
+    - name: evidence
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: source_references
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+    - name: version_number
+      data_categories:
+      - system.operations
+  - name: assessment_answer
+    description: 'Current answer for each question in an assessment'
+    fields:
+    - name: assessment_id
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: current_version_id
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: question_id
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+  - name: assessment_question
+    description: 'Questions belonging to an assessment template'
+    fields:
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: expected_coverage
+      data_categories:
+      - system.operations
+    - name: fides_sources
+      data_categories:
+      - system.operations
+    - name: group_order
+      data_categories:
+      - system.operations
+    - name: guidance
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: question_key
+      data_categories:
+      - system.operations
+    - name: question_order
+      data_categories:
+      - system.operations
+    - name: question_text
+      data_categories:
+      - system.operations
+    - name: required
+      data_categories:
+      - system.operations
+    - name: requirement_key
+      data_categories:
+      - system.operations
+    - name: requirement_title
+      data_categories:
+      - system.operations
+    - name: template_id
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+  - name: assessment_template
+    description: 'Versioned assessment template definitions'
+    fields:
+    - name: assessment_type
+      data_categories:
+      - system.operations
+    - name: authority
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: description
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: fides_revision
+      data_categories:
+      - system.operations
+    - name: is_active
+      data_categories:
+      - system.operations
+    - name: is_managed
+      data_categories:
+      - system.operations
+    - name: legal_reference
+      data_categories:
+      - system.operations
+    - name: name
+      data_categories:
+      - system.operations
+    - name: parent_template_id
+      data_categories:
+      - system.operations
+    - name: region
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+    - name: version
       data_categories:
       - system.operations
   - name: auditlog
@@ -100,6 +344,123 @@ dataset:
     - name: user_id
       data_categories:
       - user.unique_id
+  - name: post_upgrade_background_migration_tasks
+    description: 'Table used to track post-upgrade background migration tasks (backfills and deferred index creation)'
+    data_categories: [system.operations]
+    fields:
+    - name: id
+      description: 'Primary key (UUID)'
+      data_categories: [system.operations]
+    - name: key
+      description: 'Unique name of the migration task'
+      data_categories: [system.operations]
+    - name: task_type
+      description: 'Type of task (backfill or index)'
+      data_categories: [system.operations]
+    - name: completed_at
+      description: 'Timestamp when the task completed successfully, NULL if in-progress'
+      data_categories: [system.operations]
+  - name: chat_config
+    description: 'Configuration for chat providers (Slack, Microsoft Teams, etc.)'
+    data_categories: []
+    fields:
+    - name: access_token
+      description: 'Encrypted OAuth access token for the chat provider'
+      data_categories:
+      - system.operations
+    - name: client_id
+      description: 'OAuth client ID for the chat provider'
+      data_categories:
+      - system.operations
+    - name: client_secret
+      description: 'Encrypted OAuth client secret for the chat provider'
+      data_categories:
+      - system.operations
+    - name: connected_by_email
+      description: 'Email address of the user who connected the chat provider'
+      data_categories:
+      - user.contact.email
+    - name: created_at
+      description: 'Timestamp when the configuration was created'
+      data_categories:
+      - system.operations
+    - name: enabled
+      description: 'Whether the chat configuration is enabled'
+      data_categories:
+      - system.operations
+    - name: id
+      description: 'Unique identifier for the chat configuration'
+      data_categories:
+      - system.operations
+    - name: provider_type
+      description: 'Type of chat provider (slack, teams, etc.)'
+      data_categories:
+      - system.operations
+    - name: signing_secret
+      description: 'Encrypted signing secret for verifying chat provider requests'
+      data_categories:
+      - system.operations
+    - name: updated_at
+      description: 'Timestamp when the configuration was last updated'
+      data_categories:
+      - system.operations
+    - name: workspace_name
+      description: 'Name of the chat workspace'
+      data_categories:
+      - system.operations
+    - name: workspace_url
+      description: 'URL of the chat workspace'
+      data_categories:
+      - system.operations
+  - name: comment
+    fields:
+    - name: comment_text
+      data_categories:
+      - system.operations
+    - name: comment_type
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: parent_id
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+    - name: user_id
+      data_categories:
+      - system.operations
+    - name: username
+      data_categories:
+        - user.account.username
+    - name: client_id
+      data_categories:
+        - system.operations
+  - name: comment_reference
+    fields:
+    - name: comment_id
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: reference_id
+      data_categories:
+      - system.operations
+    - name: reference_type
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
   - name: client
     fields:
     - name: created_at
@@ -126,12 +487,24 @@ dataset:
     - name: systems
       data_categories:
         - system.operations
+    - name: connections
+      data_categories:
+        - system.operations
     - name: updated_at
       data_categories:
       - system.operations
     - name: user_id
       data_categories:
       - system.operations
+    - name: monitors
+      data_categories:
+        - system.operations
+    - name: name
+      data_categories:
+        - system.operations
+    - name: description
+      data_categories:
+        - system.operations
   - name: systemmanager
     fields:
       - name: id
@@ -268,6 +641,9 @@ dataset:
     - name: replaced_by
       data_categories:
         - system.operations
+    - name: tagging_instructions
+      data_categories:
+        - system.operations
   - name: ctl_data_subjects
     fields:
     - name: automated_decisions_or_profiling
@@ -375,6 +751,9 @@ dataset:
     - name: data_categories
       data_categories:
       - system.operations
+    - name: data_purposes
+      data_categories:
+      - system.operations
     - name: description
       data_categories:
       - system.operations
@@ -438,7 +817,7 @@ dataset:
       - system.operations
     - name: first_name
       data_categories:
-      - system.operations
+      - user.name.first
     - name: hashed_password
       data_categories:
       - system.operations
@@ -449,6 +828,9 @@ dataset:
       data_categories:
       - system.operations
     - name: last_name
+      data_categories:
+      - user.name.last
+    - name: email_verified_at
       data_categories:
       - system.operations
     - name: password_reset_at
@@ -462,6 +844,21 @@ dataset:
       data_categories:
       - system.operations
     - name: username
+      data_categories:
+      - user.account.username
+    - name: disabled
+      data_categories:
+      - system.operations
+    - name: disabled_reason
+      data_categories:
+      - system.operations
+    - name: email_address
+      data_categories:
+      - user.contact.email
+    - name: password_login_enabled
+      data_categories:
+      - system.operations
+    - name: totp_secret
       data_categories:
       - system.operations
   - name: fidesuserpermissions
@@ -482,6 +879,29 @@ dataset:
       data_categories:
       - system.operations
     - name: user_id
+      data_categories:
+      - system.operations
+  - name: fides_user_respondent_email_verification
+    fields:
+    - name: id
+      data_categories:
+      - system.operations
+    - name: user_id
+      data_categories:
+      - system.operations
+    - name: access_token
+      data_categories:
+      - system.operations
+    - name: access_token_expires_at
+      data_categories:
+      - system.operations
+    - name: identity_verified_at
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: updated_at
       data_categories:
       - system.operations
   - name: ctl_organizations
@@ -704,6 +1124,9 @@ dataset:
     - name: vendor_deleted_date
       data_categories:
       - system.operations
+    - name: hidden
+      data_categories:
+      - system.operations
   - name: messagingconfig
     description: 'Fides Generated Description for Table: messagingconfig'
     data_categories: []
@@ -724,6 +1147,28 @@ dataset:
       data_categories: [system.operations]
     - name: service_type
       description: 'Fides Generated Description for Column: service_type'
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: last_test_succeeded
+      data_categories: [system.operations]
+    - name: last_test_timestamp
+      data_categories: [system.operations]
+  - name: masking_secret
+    description: 'Fides Generated Description for Table: masking_secret'
+    data_categories: []
+    fields:
+    - name: created_at
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: masking_strategy
+      data_categories: [system.operations]
+    - name: privacy_request_id
+      data_categories: [system.operations]
+    - name: secret
+      data_categories: [system.operations]
+    - name: secret_type
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
@@ -765,6 +1210,8 @@ dataset:
       data_categories: [system.operations]
     - name: last_test_timestamp
       data_categories: [system.operations]
+    - name: last_run_timestamp
+      data_categories: [system.operations]
     - name: name
       data_categories: [system.operations]
     - name: saas_config
@@ -773,12 +1220,27 @@ dataset:
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
-    - name: system_id
-      description: 'The identifier of the system to locate this data within'
-      data_categories: [system.operations]
     - name: enabled_actions
       description: 'The privacy actions that are enabled for this connection'
       data_categories: [system.operations]
+  - name: connection_config_saas_history
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: connection_config_id
+        data_categories: [system.operations]
+      - name: connection_key
+        data_categories: [system.operations]
+      - name: version
+        data_categories: [system.operations]
+      - name: config
+        data_categories: [system.operations]
+      - name: dataset
+        data_categories: [system.operations]
   - name: consent
     description: 'A database table used to map consent preference to identities'
     data_categories: []
@@ -823,6 +1285,34 @@ dataset:
       data_categories: [system.operations]
     - name: property_id
       data_categories: [system.operations]
+    - name: source
+      data_categories: [system.operations]
+  - name: correspondence_metadata
+    fields:
+    - name: bounce_reason
+      data_categories: [system.operations]
+    - name: comment_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: delivered_at
+      data_categories: [system.operations]
+    - name: delivery_status
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: in_reply_to
+      data_categories: [system.operations]
+    - name: message_id
+      data_categories: [system.operations]
+    - name: recipient_email
+      data_categories: [user.contact.email]
+    - name: reply_to_address
+      data_categories: [user.contact.email]
+    - name: sender_email
+      data_categories: [user.contact.email]
+    - name: updated_at
+      data_categories: [system.operations]
   - name: custom_connector_template
     description: 'A table used to hold custom connector templates which include a SaaS config, dataset, and an optional icon and functions'
     data_categories: []
@@ -857,6 +1347,23 @@ dataset:
     - name: replaceable
       description: 'Fides Generated Description for Column: replaceable'
       data_categories: [system.operations]
+  - name: dashboard_snapshot
+    data_categories: [system.operations]
+    fields:
+    - name: created_at
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: metadata
+      data_categories: [system.operations]
+    - name: metric_key
+      data_categories: [system.operations]
+    - name: snapshot_date
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: value
+      data_categories: [system.operations]
   - name: datasetconfig
     data_categories: []
     fields:
@@ -870,7 +1377,105 @@ dataset:
       data_categories: [system.operations]
     - name: id
       data_categories: [system.operations]
+    - name: property_ids
+      data_categories: [system.operations]
     - name: updated_at
+      data_categories: [system.operations]
+  - name: digest_config
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: digest_type
+      data_categories: [system.operations]
+    - name: name
+      data_categories: [system.operations]
+    - name: description
+      data_categories: [system.operations]
+    - name: enabled
+      data_categories: [system.operations]
+    - name: messaging_service_type
+      data_categories: [system.operations]
+    - name: cron_expression
+      data_categories: [system.operations]
+    - name: timezone
+      data_categories: [system.operations]
+    - name: last_sent_at
+      data_categories: [system.operations]
+    - name: next_scheduled_at
+      data_categories: [system.operations]
+    - name: config_metadata
+      data_categories: [system.operations]
+  - name: digest_condition
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: digest_config_id
+      data_categories: [system.operations]
+    - name: condition_tree
+      data_categories: [system.operations]
+    - name: digest_condition_type
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: digest_task_execution
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: digest_config_id
+      data_categories: [system.operations]
+    - name: celery_task_id
+      data_categories: [system.operations]
+    - name: action_type
+      data_categories: [system.operations]
+    - name: status
+      data_categories: [system.operations]
+    - name: total_recipients
+      data_categories: [system.operations]
+    - name: processed_recipients
+      data_categories: [system.operations]
+    - name: successful_communications
+      data_categories: [system.operations]
+    - name: failed_communications
+      data_categories: [system.operations]
+    - name: execution_state
+      data_categories: [system.operations]
+    - name: processed_user_ids
+      data_categories: [system.operations]
+    - name: started_at
+      data_categories: [system.operations]
+    - name: completed_at
+      data_categories: [system.operations]
+    - name: last_checkpoint_at
+      data_categories: [system.operations]
+    - name: error_message
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: duplicate_group
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: rule_version
+      data_categories: [system.operations]
+    - name: dedup_key
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: is_active
       data_categories: [system.operations]
   - name: executionlog
     data_categories: []
@@ -893,10 +1498,331 @@ dataset:
       data_categories: [system.operations]
     - name: privacy_request_id
       data_categories: [system.operations]
+    - name: saas_version
+      data_categories: [system.operations]
     - name: status
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
+  - name: manual_task
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: task_type
+      data_categories: [system.operations]
+    - name: parent_entity_id
+      data_categories: [system.operations]
+    - name: parent_entity_type
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: manual_task_reference
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: task_id
+      data_categories: [system.operations]
+    - name: reference_id
+      data_categories: [system.operations]
+    - name: reference_type
+      data_categories: [system.operations]
+    - name: config_field_key
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: manual_task_config
+    fields:
+    - name: config_type
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: is_current
+      data_categories: [system.operations]
+    - name: task_id
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: version
+      data_categories: [system.operations]
+    - name: execution_timing
+      data_categories: [system.operations]
+    - name: property_ids
+      data_categories: [system.operations]
+  - name: manual_task_config_field
+    fields:
+    - name: config_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: execution_timing
+      data_categories: [system.operations]
+    - name: field_key
+      data_categories: [system.operations]
+    - name: field_metadata
+      data_categories: [system.operations]
+    - name: field_type
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: task_id
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: manual_task_instance
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: task_id
+      data_categories: [system.operations]
+    - name: config_id
+      data_categories: [system.operations]
+    - name: entity_id
+      data_categories: [system.operations]
+    - name: entity_type
+      data_categories: [system.operations]
+    - name: status
+      data_categories: [system.operations]
+    - name: due_date
+      data_categories: [system.operations]
+    - name: completed_at
+      data_categories: [system.operations]
+    - name: completed_by_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: manual_task_submission
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: task_id
+      data_categories: [system.operations]
+    - name: config_id
+      data_categories: [system.operations]
+    - name: instance_id
+      data_categories: [system.operations]
+    - name: submitted_by
+      data_categories: [system.operations]
+    - name: submitted_at
+      data_categories: [system.operations]
+    - name: field_id
+      data_categories: [system.operations]
+    - name: data
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: manual_task_conditional_dependency
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: manual_task_id
+      data_categories: [system.operations]
+    - name: config_field_key
+      data_categories: [system.operations]
+    - name: condition_tree
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: jira_ticket_task
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: manual_task_instance_id
+      data_categories: [system.operations]
+    - name: connection_config_id
+      data_categories: [system.operations]
+    - name: needs_polling
+      data_categories: [system.operations]
+    - name: ticket_key
+      data_categories: [system.operations]
+    - name: ticket_url
+      data_categories: [system.operations]
+    - name: external_status
+      data_categories: [system.operations]
+    - name: external_status_category
+      data_categories: [system.operations]
+    - name: last_polled_at
+      data_categories: [system.operations]
+  - name: monitorexecution
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: monitor_config_key
+      data_categories: [system.operations]
+    - name: status
+      data_categories: [system.operations]
+    - name: started
+      data_categories: [system.operations]
+    - name: completed
+      data_categories: [system.operations]
+    - name: classification_instances
+      data_categories: [system.operations]
+    - name: messages
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: privacy_assessment
+    description: 'A privacy assessment instance linked to a system/declaration'
+    fields:
+    - name: completeness
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: created_by
+      data_categories:
+      - system.operations
+    - name: data_categories
+      data_categories:
+      - system.operations
+    - name: data_use
+      data_categories:
+      - system.operations
+    - name: data_use_name
+      data_categories:
+      - system.operations
+    - name: declaration_id
+      data_categories:
+      - system.operations
+    - name: declaration_name
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: name
+      data_categories:
+      - system.operations
+    - name: risk_level
+      data_categories:
+      - system.operations
+    - name: status
+      data_categories:
+      - system.operations
+    - name: system_fides_key
+      data_categories:
+      - system.operations
+    - name: system_name
+      data_categories:
+      - system.operations
+    - name: template_id
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+    - name: privacy_assessment_task_id
+      data_categories:
+      - system.operations
+    - name: context_snapshot
+      data_categories:
+      - system.operations
+    - name: last_evaluated_at
+      data_categories:
+      - system.operations
+  - name: privacy_assessment_config
+    description: 'Global configuration for privacy assessments (single-row table)'
+    fields:
+    - name: assessment_model_override
+      data_categories:
+      - system.operations
+    - name: chat_model_override
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: id
+      data_categories:
+      - system.operations
+    - name: reassessment_cron
+      data_categories:
+      - system.operations
+    - name: reassessment_enabled
+      data_categories:
+      - system.operations
+    - name: reassessment_timezone
+      data_categories:
+      - system.operations
+    - name: slack_channel_id
+      data_categories:
+      - system.operations
+    - name: slack_channel_name
+      data_categories:
+      - system.operations
+    - name: questionnaire_tone_prompt
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+  - name: privacy_assessment_task
+    description: 'Tracks async Celery task execution for privacy assessment generation'
+    fields:
+    - name: id
+      data_categories:
+      - system.operations
+    - name: created_at
+      data_categories:
+      - system.operations
+    - name: updated_at
+      data_categories:
+      - system.operations
+    - name: action_type
+      data_categories:
+      - system.operations
+    - name: status
+      data_categories:
+      - system.operations
+    - name: celery_id
+      data_categories:
+      - system.operations
+    - name: total_count
+      data_categories:
+      - system.operations
+    - name: completed_count
+      data_categories:
+      - system.operations
+    - name: message
+      data_categories:
+      - system.operations
+    - name: assessment_types
+      data_categories:
+      - system.operations
+    - name: system_fides_keys
+      data_categories:
+      - system.operations
+    - name: created_by
+      data_categories:
+      - system.operations
+    - name: use_llm
+      data_categories:
+      - system.operations
+    - name: llm_model
+      data_categories:
+      - system.operations
+    - name: high_risk_only
+      data_categories:
+      - system.operations
   - name: policy
     data_categories: []
     fields:
@@ -914,6 +1840,19 @@ dataset:
     - name: key
       data_categories: [system.operations]
     - name: name
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: policy_condition
+    data_categories: []
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: policy_id
+      data_categories: [system.operations]
+    - name: condition_tree
+      data_categories: [system.operations]
+    - name: created_at
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
@@ -1044,7 +1983,15 @@ dataset:
       data_categories: [ system.operations ]
     - name: dismissable
       data_categories: [system.operations]
+    - name: show_layer1_notices
+      data_categories: [system.operations]
+    - name: layer1_button_options
+      data_categories: [ system.operations ]
     - name: auto_detect_language
+      data_categories: [ system.operations ]
+    - name: auto_subdomain_cookie_deletion
+      data_categories: [ system.operations ]
+    - name: cookie_deletion_based_on_host_domain
       data_categories: [ system.operations ]
     - name: id
       data_categories: [system.operations]
@@ -1054,6 +2001,16 @@ dataset:
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
+    - name: reject_all_mechanism
+      data_categories: [system.operations]
+    - name: tcf_configuration_id
+      data_categories: [system.operations]
+    - name: allow_vendor_asset_disclosure
+      data_categories: [ system.operations ]
+    - name: asset_disclosure_include_types
+      data_categories: [ system.operations ]
+    - name: resurface_behavior
+      data_categories: [ system.operations ]
   - name: privacyexperienceconfighistory
     description: 'Historical table to store all versions of Experience Config History for record keeping'
     fields:
@@ -1075,11 +2032,31 @@ dataset:
       data_categories: [system.operations]
     - name: description
       data_categories: [system.operations]
+    - name: purpose_header
+      data_categories: [system.operations]
     - name: disabled
       data_categories: [system.operations]
     - name: dismissable
       data_categories: [system.operations]
+    - name: gpc_description
+      data_categories: [system.operations]
+    - name: gpc_label
+      data_categories: [system.operations]
+    - name: gpc_status_applied_label
+      data_categories: [system.operations]
+    - name: gpc_status_overridden_label
+      data_categories: [system.operations]
+    - name: gpc_title
+      data_categories: [system.operations]
+    - name: show_layer1_notices
+      data_categories: [ system.operations ]
+    - name: layer1_button_options
+      data_categories: [ system.operations ]
     - name: auto_detect_language
+      data_categories: [ system.operations ]
+    - name: auto_subdomain_cookie_deletion
+      data_categories: [ system.operations ]
+    - name: cookie_deletion_based_on_host_domain
       data_categories: [ system.operations ]
     - name: id
       data_categories: [system.operations]
@@ -1111,9 +2088,21 @@ dataset:
       data_categories: [system.operations]
     - name: version
       data_categories: [system.operations]
+    - name: reject_all_mechanism
+      data_categories: [system.operations]
+    - name: tcf_configuration_id
+      data_categories: [system.operations]
+    - name: allow_vendor_asset_disclosure
+      data_categories: [ system.operations ]
+    - name: asset_disclosure_include_types
+      data_categories: [ system.operations ]
+    - name: resurface_behavior
+      data_categories: [ system.operations ]
   - name: privacynoticetemplate
     data_categories: []
     fields:
+    - name: att_exempt
+      data_categories: [system.operations]
     - name: consent_mechanism
       data_categories: [system.operations]
     - name: created_at
@@ -1145,6 +2134,8 @@ dataset:
   - name: privacynotice
     data_categories: []
     fields:
+    - name: att_exempt
+      data_categories: [system.operations]
     - name: consent_mechanism
       data_categories: [system.operations]
     - name: created_at
@@ -1161,6 +2152,8 @@ dataset:
       data_categories: [system.operations]
     - name: has_gpc_flag
       data_categories: [system.operations]
+    - name: parent_id
+      data_categories: [system.operations]
     - name: id
       data_categories: [system.operations]
     - name: internal_description
@@ -1173,9 +2166,13 @@ dataset:
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
+    - name: display_order
+      data_categories: [system.operations]
   - name: privacynoticehistory
     description: For auditing purposes, a record of how a privacy notice and a translation has changed
     fields:
+    - name: att_exempt
+      data_categories: [ system.operations ]
     - name: displayed_in_api
       data_categories: [ system.operations ]
     - name: displayed_in_overlay
@@ -1248,6 +2245,8 @@ dataset:
       data_categories: [system.operations]
     - name: identity_verified_at
       data_categories: [system.operations]
+    - name: location
+      data_categories: [user.location]
     - name: origin
       data_categories: [system.operations]
     - name: paused_at
@@ -1262,6 +2261,10 @@ dataset:
       data_categories: [system.operations]
     - name: reviewed_by
       data_categories: [user.name]
+    - name: finalized_at
+      data_categories: [ system.operations ]
+    - name: finalized_by
+      data_categories: [ user.name ]
     - name: started_processing_at
       data_categories: [system.operations]
     - name: status
@@ -1275,6 +2278,16 @@ dataset:
     - name: custom_privacy_request_fields_approved_at
       data_categories: [ system.operations ]
     - name: custom_privacy_request_fields_approved_by
+      data_categories: [ system.operations ]
+    - name: source
+      data_categories: [ system.operations ]
+    - name: submitted_by
+      data_categories: [ system.operations ]
+    - name: deleted_at
+      data_categories: [ system.operations ]
+    - name: deleted_by
+      data_categories: [ system.operations ]
+    - name: duplicate_request_group_id
       data_categories: [ system.operations ]
   - name: privacyrequesterror
     data_categories: []
@@ -1322,6 +2335,108 @@ dataset:
     - name: privacy_request_id
       data_categories: [system.operations]
     - name: updated_at
+      data_categories: [system.operations]
+    - name: is_hash_migrated
+      data_categories: [system.operations]
+  - name: rbac_permission
+    description: 'Permission definitions for RBAC system'
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: code
+      data_categories: [system.operations]
+    - name: description
+      data_categories: [system.operations]
+    - name: resource_type
+      data_categories: [system.operations]
+    - name: is_active
+      data_categories: [system.operations]
+  - name: rbac_role
+    description: 'Role definitions for RBAC system with hierarchy support'
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: name
+      data_categories: [system.operations]
+    - name: key
+      data_categories: [system.operations]
+    - name: description
+      data_categories: [system.operations]
+    - name: is_system_role
+      data_categories: [system.operations]
+    - name: is_active
+      data_categories: [system.operations]
+    - name: parent_role_id
+      data_categories: [system.operations]
+    - name: priority
+      data_categories: [system.operations]
+  - name: rbac_constraint
+    description: 'NIST RBAC constraint definitions (SoD and cardinality) with role sets and thresholds'
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: name
+      data_categories: [system.operations]
+    - name: constraint_type
+      data_categories: [system.operations]
+    - name: threshold
+      data_categories: [system.operations]
+    - name: description
+      data_categories: [system.operations]
+    - name: is_active
+      data_categories: [system.operations]
+  - name: rbac_constraint_role
+    description: 'Junction table linking roles to NIST RBAC constraints (role_set members)'
+    fields:
+    - name: constraint_id
+      data_categories: [system.operations]
+    - name: role_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+  - name: rbac_role_permission
+    description: 'Junction table mapping roles to permissions'
+    fields:
+    - name: role_id
+      data_categories: [system.operations]
+    - name: permission_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+  - name: rbac_user_role
+    description: 'User role assignments with resource scoping and temporal validity'
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: user_id
+      data_categories: [system.operations]
+    - name: role_id
+      data_categories: [system.operations]
+    - name: resource_type
+      data_categories: [system.operations]
+    - name: resource_id
+      data_categories: [system.operations]
+    - name: valid_from
+      data_categories: [system.operations]
+    - name: valid_until
+      data_categories: [system.operations]
+    - name: assigned_by
       data_categories: [system.operations]
   - name: rule
     data_categories: []
@@ -1493,35 +2608,6 @@ dataset:
     - name: updated_at
       data_categories:
       - system.operations
-  - name: userregistration
-    description: 'Records the registration status of this Fides deployment'
-    data_categories: null
-    fields:
-    - name: id
-      data_categories:
-      - system.operations
-    - name: created_at
-      data_categories:
-      - system.operations
-    - name: updated_at
-      data_categories:
-      - system.operations
-    - name: analytics_id
-      description: 'The identifier for this Fides deployment within Fideslog'
-      data_categories:
-      - system.operations
-    - name: opt_in
-      description: 'Whether the user has opted to share analytics data'
-      data_categories:
-      - system.operations
-    - name: user_email
-      description: 'The email of the user setting this opt_in preference'
-      data_categories:
-      - user.contact.email
-    - name: user_organization
-      description: 'The name of the organization this Fides deployment belongs to'
-      data_categories:
-      - user.workplace
   - name: cookies
     description: 'Fides Generated Description for Table: cookies'
     data_categories: []
@@ -1561,6 +2647,8 @@ dataset:
     - name: type
       data_categories: [system.operations]
     - name: content
+      data_categories: [system.operations]
+    - name: label
       data_categories: [system.operations]
     - name: created_at
       data_categories: [system.operations]
@@ -1631,6 +2719,8 @@ dataset:
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
+    - name: is_hash_migrated
+      data_categories: [system.operations]
   - name: plus_custom_asset
     description: 'Table used to store stylesheets and other custom UI assets'
     data_categories: []
@@ -1661,6 +2751,19 @@ dataset:
     - name: updated_at
       data_categories: [system.operations]
     - name: updated_systems
+      data_categories: [system.operations]
+  - name: system_connection_config_link
+    description: 'Join table linking systems to connection configurations'
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: system_id
+      data_categories: [system.operations]
+    - name: connection_config_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
       data_categories: [system.operations]
   - name: tcf_purpose_overrides
     fields:
@@ -1746,6 +2849,8 @@ dataset:
       data_categories: [system.operations]
     - name: hashed_external_id
       data_categories: [system.operations]
+    - name: is_hash_migrated
+      data_categories: [system.operations]
   - name: servednoticehistory
     description: 'Table that records every time a Notice was served'
     data_categories: [system.operations]
@@ -1808,6 +2913,8 @@ dataset:
       data_categories: [system.operations]
     - name: hashed_external_id
       data_categories: [system.operations]
+    - name: is_hash_migrated
+      data_categories: [system.operations]
   - name: currentprivacypreferencev2
     description: 'Stores the latest saved preferences for a given user'
     data_categories: [system.operations]
@@ -1839,6 +2946,10 @@ dataset:
     - name: hashed_external_id
       data_categories: [system.operations]
     - name: property_id
+      data_categories: [system.operations]
+    - name: is_hash_migrated
+      data_categories: [system.operations]
+    - name: received_at
       data_categories: [system.operations]
   - name: lastservednoticev2
     description: 'Stores the last notices that were served to a user'
@@ -1895,7 +3006,19 @@ dataset:
       data_categories: [system.operations]
     - name: description
       data_categories: [system.operations]
+    - name: purpose_header
+      data_categories: [system.operations]
     - name: experience_config_id
+      data_categories: [system.operations]
+    - name: gpc_description
+      data_categories: [system.operations]
+    - name: gpc_label
+      data_categories: [system.operations]
+    - name: gpc_status_applied_label
+      data_categories: [system.operations]
+    - name: gpc_status_overridden_label
+      data_categories: [system.operations]
+    - name: gpc_title
       data_categories: [system.operations]
     - name: id
       data_categories: [system.operations]
@@ -1910,7 +3033,7 @@ dataset:
     - name: privacy_policy_url
       data_categories: [system.operations]
     - name: privacy_preferences_link_label
-      data_categories: [system.operations]
+      data_categories: [ system.operations]
     - name: reject_button_label
       data_categories: [system.operations]
     - name: save_button_label
@@ -1949,7 +3072,15 @@ dataset:
       data_categories: [system.operations]
     - name: dismissable
       data_categories: [system.operations]
+    - name: show_layer1_notices
+      data_categories: [ system.operations ]
+    - name: layer1_button_options
+      data_categories: [ system.operations ]
     - name: auto_detect_language
+      data_categories: [ system.operations ]
+    - name: auto_subdomain_cookie_deletion
+      data_categories: [ system.operations ]
+    - name: cookie_deletion_based_on_host_domain
       data_categories: [ system.operations ]
     - name: id
       data_categories: [system.operations]
@@ -1963,6 +3094,12 @@ dataset:
       data_categories: [system.operations]
     - name: updated_at
       data_categories: [system.operations]
+    - name: allow_vendor_asset_disclosure
+      data_categories: [ system.operations ]
+    - name: asset_disclosure_include_types
+      data_categories: [ system.operations ]
+    - name: resurface_behavior
+      data_categories: [ system.operations ]
   - name: experiencenotices
     description: 'The table that links Privacy Notices to Experience Configs (many-to-many)'
     fields:
@@ -1975,6 +3112,8 @@ dataset:
     - name: notice_id
       data_categories: [system.operations]
     - name: updated_at
+      data_categories: [system.operations]
+    - name: display_order
       data_categories: [system.operations]
   - name: plus_property
     fields:
@@ -2104,6 +3243,42 @@ dataset:
       data_categories: [system]
     - name: callback_succeeded
       data_categories: [system]
+    - name: async_type
+      data_categories: [system]
+  - name: request_task_sub_request
+    description: 'Model for storing request data for middle steps during the execution of a request task'
+    fields:
+    - name: id
+      data_categories: [system]
+    - name: created_at
+      data_categories: [system]
+    - name: updated_at
+      data_categories: [system]
+    - name: request_task_id
+      data_categories: [system]
+    - name: param_values
+      data_categories: [system]
+    - name: status
+      data_categories: [system]
+    - name: access_data
+      data_categories: [user]
+    - name: rows_masked
+      data_categories: [system]
+  - name: monitor_aggregate_statistics
+    data_categories: [system.operations]
+    fields:
+    - name: created_at
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: monitor_config_key
+      data_categories: [system.operations]
+    - name: monitor_type
+      data_categories: [system.operations]
+    - name: statistics
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
   - name: monitorconfig
     fields:
     - name: classify_params
@@ -2122,6 +3297,8 @@ dataset:
       data_categories: [system]
     - name: databases
       data_categories: [system]
+    - name: excluded_databases
+      data_categories: [system]
     - name: monitor_execution_trigger
       data_categories: [system]
     - name: datasource_params
@@ -2130,10 +3307,28 @@ dataset:
       data_categories: [system]
     - name: last_monitored
       data_categories: [system]
+    - name: shared_config_id
+      data_categories: [system]
+    - name: inherit_system_stewards
+      data_categories: [system]
+  - name: shared_monitor_config
+    fields:
+    - name: created_at
+      data_categories: [system]
+    - name: description
+      data_categories: [system]
+    - name: id
+      data_categories: [system]
+    - name: key
+      data_categories: [system]
+    - name: name
+      data_categories: [system]
+    - name: updated_at
+      data_categories: [system]
+    - name: classify_params
+      data_categories: [system]
   - name: stagedresource
     fields:
-    - name: child_diff_statuses
-      data_categories: [system]
     - name: children
       data_categories: [system]
     - name: classifications
@@ -2145,6 +3340,8 @@ dataset:
     - name: diff_status
       data_categories: [system]
     - name: id
+      data_categories: [system]
+    - name: is_leaf
       data_categories: [system]
     - name: meta
       data_categories: [system]
@@ -2158,9 +3355,929 @@ dataset:
       data_categories: [system]
     - name: source_modified
       data_categories: [system]
+    - name: target_system_steward_ids
+      data_categories: [system]
     - name: updated_at
       data_categories: [system]
     - name: urn
       data_categories: [system]
     - name: user_assigned_data_categories
       data_categories: [system]
+    - name: user_assigned_data_uses
+      data_categories: [system]
+    - name: user_assigned_system_id
+      data_categories: [system]
+    - name: user_assigned_description
+      data_categories: [system]
+    - name: data_uses
+      data_categories: [system]
+    - name: system_id
+      data_categories: [system]
+    - name: vendor_id
+      data_categories: [system]
+  - name: cloud_infra_group
+    fields:
+    - name: created_at
+      data_categories: [system]
+    - name: id
+      data_categories: [system]
+    - name: monitor_config_id
+      data_categories: [system]
+    - name: name
+      data_categories: [system]
+    - name: system_id
+      data_categories: [system]
+    - name: updated_at
+      data_categories: [system]
+  - name: cloud_infra_group_assignment
+    fields:
+    - name: created_at
+      data_categories: [system]
+    - name: group_id
+      data_categories: [system]
+    - name: id
+      data_categories: [system]
+    - name: promoted
+      data_categories: [system]
+    - name: resource_id
+      data_categories: [system]
+    - name: updated_at
+      data_categories: [system]
+  - name: cloud_infra_staged_resource
+    fields:
+    - name: cloud_account_id
+      data_categories: [system]
+    - name: created_at
+      data_categories: [system]
+    - name: description
+      data_categories: [system]
+    - name: diff_status
+      data_categories: [system]
+    - name: id
+      data_categories: [system]
+    - name: location
+      data_categories: [system]
+    - name: meta
+      data_categories: [system]
+    - name: monitor_config_id
+      data_categories: [system]
+    - name: name
+      data_categories: [system]
+    - name: resource_type
+      data_categories: [system]
+    - name: service
+      data_categories: [system]
+    - name: source_id
+      data_categories: [system]
+    - name: tags
+      data_categories: [system]
+    - name: updated_at
+      data_categories: [system]
+    - name: urn
+      data_categories: [system]
+  - name: fides_user_invite
+    fields:
+      - name: created_at
+        data_categories: [system.operations]
+      - name: hashed_invite_code
+        data_categories: [system.operations]
+      - name: id
+        data_categories: [system.operations]
+      - name: salt
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: username
+        data_categories: [user.account.username]
+  - name: fides_user_password_reset
+    fields:
+      - name: created_at
+        data_categories: [system.operations]
+      - name: hashed_token
+        data_categories: [system.operations]
+      - name: id
+        data_categories: [system.operations]
+      - name: salt
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: user_id
+        data_categories: [user.unique_id]
+  - name: plus_consent_automation
+    fields:
+    - name: connection_config_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: plus_consentable_item
+    fields:
+    - name: consent_automation_id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: external_id
+      data_categories: [system.operations]
+    - name: id
+      data_categories: [system.operations]
+    - name: name
+      data_categories: [system.operations]
+    - name: notice_id
+      data_categories: [system.operations]
+    - name: parent_id
+      data_categories: [system.operations]
+    - name: type
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+  - name: openid_provider
+    description: 'Fides Generated Description for Table: openid_provider'
+    fields:
+    - name: authorization_url
+      description: 'Fides Generated Description for Column: authorization_url'
+      data_categories: [system.operations]
+    - name: client_id
+      description: 'Fides Generated Description for Column: client_id'
+      data_categories: [system.operations]
+    - name: client_secret
+      description: 'Fides Generated Description for Column: client_secret'
+      data_categories: [system.operations]
+    - name: created_at
+      description: 'Fides Generated Description for Column: created_at'
+      data_categories: [system.operations]
+    - name: domain
+      description: 'Fides Generated Description for Column: domain'
+      data_categories: [system.operations]
+    - name: id
+      description: 'Fides Generated Description for Column: id'
+      data_categories: [system.operations]
+    - name: identifier
+      description: 'Fides Generated Description for Column: identifier'
+      data_categories: [system.operations]
+    - name: name
+      description: 'Fides Generated Description for Column: name'
+      data_categories: [system.operations]
+    - name: provider
+      description: 'Fides Generated Description for Column: provider'
+      data_categories: [system.operations]
+    - name: token_url
+      description: 'Fides Generated Description for Column: token_url'
+      data_categories: [system.operations]
+    - name: updated_at
+      description: 'Fides Generated Description for Column: updated_at'
+      data_categories: [system.operations]
+    - name: user_info_url
+      description: 'Fides Generated Description for Column: user_info_url'
+      data_categories: [system.operations]
+    - name: scopes
+      description: 'Scopes with which to request the authorization token.'
+      data_categories: [system.operations]
+    - name: email_field
+      description: 'Field to pull the email from the userinfo object.'
+      data_categories: [system.operations]
+    - name: verify_email_field
+      description: 'Field to pull the verify email flag from the userinfo object.'
+      data_categories: [system.operations]
+    - name: verify_email
+      description: 'Enable or disable whether email address must be verified'
+      data_categories: [system.operations]
+  - name: identity_salt
+    fields:
+      - name: created_at
+        data_categories: [system.operations]
+      - name: encrypted_value
+        data_categories: [system.operations]
+      - name: id
+        data_categories: [system.operations]
+      - name: salt
+        data_categories: [system.operations]
+      - name: single_row
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: plus_control
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: key
+        data_categories: [system.operations]
+      - name: label
+        data_categories: [system.operations]
+      - name: description
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: plus_access_policy_control
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: access_policy_id
+        data_categories: [system.operations]
+      - name: control_id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: plus_access_policy
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: name
+        data_categories: [system.operations]
+      - name: description
+        data_categories: [system.operations]
+      - name: enabled
+        data_categories: [system.operations]
+      - name: is_deleted
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: plus_access_policy_version
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: access_policy_id
+        data_categories: [system.operations]
+      - name: version
+        data_categories: [system.operations]
+      - name: yaml
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: plus_custom_report
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: type
+        data_categories: [system.operations]
+      - name: name
+        data_categories: [system.operations]
+      - name: config
+        data_categories: [system.operations]
+      - name: created_by
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: dbcache
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: namespace
+        data_categories: [system.operations]
+      - name: cache_key
+        data_categories: [system.operations]
+      - name: cache_value
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: asset
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: name
+        data_categories: [system.operations]
+      - name: asset_type
+        data_categories: [system.operations]
+      - name: domain
+        data_categories: [system.operations]
+      - name: parent
+        data_categories: [system.operations]
+      - name: parent_domain
+        data_categories: [system.operations]
+      - name: duration
+        data_categories: [ system.operations ]
+      - name: locations
+        data_categories: [system.operations]
+      - name: consent_status
+        data_categories: [system.operations]
+      - name: data_uses
+        data_categories: [system.operations]
+      - name: meta
+        data_categories: [system.operations]
+      - name: path
+        data_categories: [system.operations]
+      - name: base_url
+        data_categories: [system.operations]
+      - name: system_id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: description
+        data_categories: [system.operations]
+      - name: page
+        data_categories: [system.operations]
+  - name: tcf_configuration
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: name
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: tcf_publisher_restriction
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: tcf_configuration_id
+        data_categories: [system.operations]
+      - name: purpose_id
+        data_categories: [system.operations]
+      - name: restriction_type
+        data_categories: [system.operations]
+      - name: vendor_restriction
+        data_categories: [system.operations]
+      - name: range_entries
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: tcf_version_hash_history
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: privacy_experience_config_id
+        data_categories: [system.operations]
+      - name: previous_hash
+        data_categories: [system.operations]
+      - name: current_hash
+        data_categories: [system.operations]
+      - name: changed_at
+        data_categories: [system.operations]
+      - name: trigger_source
+        data_categories: [system.operations]
+      - name: details
+        data_categories: [system.operations]
+  - name: stagedresourceancestor
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: descendant_urn
+        data_categories: [system.operations]
+      - name: ancestor_urn
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: distance
+        data_categories: [system.operations]
+  - name: monitortask
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: action_type
+        data_categories: [system.operations]
+      - name: status
+        data_categories: [system.operations]
+      - name: celery_id
+        data_categories: [system.operations]
+      - name: task_arguments
+        data_categories: [system.operations]
+      - name: message
+        data_categories: [system.operations]
+      - name: dismissed
+        data_categories: [system.operations]
+      - name: monitor_config_id
+        data_categories: [system.operations]
+      - name: staged_resource_urns
+        data_categories: [system.operations]
+      - name: child_resource_urns
+        data_categories: [system.operations]
+      - name: group_id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: monitortaskexecutionlog
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: celery_id
+        data_categories: [system.operations]
+      - name: monitor_task_id
+        data_categories: [system.operations]
+      - name: run_type
+        data_categories: [system.operations]
+      - name: status
+        data_categories: [system.operations]
+      - name: message
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: taxonomy
+    description: 'Fides Generated Description for Table: taxonomy'
+    fields:
+    - name: applies_to
+      description: 'Fides Generated Description for Column: applies_to'
+      data_categories: [system.operations]
+    - name: created_at
+      description: 'Fides Generated Description for Column: created_at'
+      data_categories: [system.operations]
+    - name: description
+      description: 'Fides Generated Description for Column: description'
+      data_categories: [system.operations]
+    - name: fides_key
+      description: 'Fides Generated Description for Column: fides_key'
+      data_categories: [system.operations]
+    - name: id
+      description: 'Fides Generated Description for Column: id'
+      data_categories: [system.operations]
+    - name: name
+      description: 'Fides Generated Description for Column: name'
+      data_categories: [system.operations]
+    - name: organization_fides_key
+      description: 'Fides Generated Description for Column: organization_fides_key'
+      data_categories: [system.operations]
+    - name: tags
+      description: 'Fides Generated Description for Column: tags'
+      data_categories: [system.operations]
+    - name: updated_at
+      description: 'Fides Generated Description for Column: updated_at'
+      data_categories: [system.operations]
+  - name: taxonomy_element
+    description: 'Fides Generated Description for Table: taxonomy_element'
+    data_categories: [system.operations]
+    fields:
+    - name: active
+      description: 'Fides Generated Description for Column: active'
+      data_categories: [system.operations]
+    - name: created_at
+      description: 'Fides Generated Description for Column: created_at'
+      data_categories: [system.operations]
+    - name: description
+      description: 'Fides Generated Description for Column: description'
+      data_categories: [system.operations]
+    - name: fides_key
+      description: 'Fides Generated Description for Column: fides_key'
+      data_categories: [system.operations]
+    - name: id
+      description: 'Fides Generated Description for Column: id'
+      data_categories: [system.operations]
+    - name: name
+      description: 'Fides Generated Description for Column: name'
+      data_categories: [system.operations]
+    - name: organization_fides_key
+      description: 'Fides Generated Description for Column: organization_fides_key'
+      data_categories: [system.operations]
+    - name: parent_key
+      description: 'Fides Generated Description for Column: parent_key'
+      data_categories: [system.operations]
+    - name: tags
+      description: 'Fides Generated Description for Column: tags'
+      data_categories: [system.operations]
+    - name: taxonomy_type
+      description: 'Fides Generated Description for Column: taxonomy_type'
+      data_categories: [system.operations]
+    - name: updated_at
+      description: 'Fides Generated Description for Column: updated_at'
+      data_categories: [system.operations]
+  - name: taxonomy_allowed_usage
+    description: 'Fides Generated Description for Table: taxonomy_allowed_usage'
+    fields:
+    - name: created_at
+      description: 'Fides Generated Description for Column: created_at'
+      data_categories: [system.operations]
+    - name: id
+      description: 'Fides Generated Description for Column: id'
+      data_categories: [system.operations]
+    - name: source_taxonomy_key
+      description: 'Fides Generated Description for Column: source_taxonomy_key'
+      data_categories: [system.operations]
+    - name: target_type
+      description: 'Fides Generated Description for Column: target_type'
+      data_categories: [system.operations]
+    - name: updated_at
+      description: 'Fides Generated Description for Column: updated_at'
+      data_categories: [system.operations]
+  - name: taxonomy_usage
+    description: 'Fides Generated Description for Table: taxonomy_usage'
+    fields:
+    - name: id
+      description: 'Fides Generated Description for Column: id'
+      data_categories: [system.operations]
+    - name: source_taxonomy
+      description: 'Fides Generated Description for Column: source_taxonomy'
+      data_categories: [system.operations]
+    - name: source_element_key
+      description: 'Fides Generated Description for Column: source_element_key'
+      data_categories: [system.operations]
+    - name: target_taxonomy
+      description: 'Fides Generated Description for Column: target_taxonomy'
+      data_categories: [system.operations]
+    - name: target_element_key
+      description: 'Fides Generated Description for Column: target_element_key'
+      data_categories: [system.operations]
+    - name: created_at
+      description: 'Fides Generated Description for Column: created_at'
+      data_categories: [system.operations]
+    - name: updated_at
+      description: 'Fides Generated Description for Column: updated_at'
+      data_categories: [system.operations]
+  - name: privacy_request_redaction_pattern
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: pattern
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: system_group
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: fides_key
+        data_categories: [system.operations]
+      - name: data_steward_username
+        data_categories: [system.operations]
+      - name: data_uses
+        data_categories: [system.operations]
+      - name: label_color
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: system_group_member
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: system_group_id
+        data_categories: [system.operations]
+      - name: system_id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: web_monitor_group_job
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: group_id
+        data_categories: [system.operations]
+      - name: is_test_run
+        data_categories: [system.operations]
+      - name: raw_experiences_data
+        data_categories: [system.operations]
+      - name: processed_experiences_data
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: classification_benchmark
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: monitor_config_key
+        data_categories: [system.operations]
+      - name: dataset_fides_key
+        data_categories: [system.operations]
+      - name: resource_urns
+        data_categories: [system.operations]
+      - name: overall_metrics
+        data_categories: [system.operations]
+      - name: field_accuracy_details
+        data_categories: [system.operations]
+      - name: status
+        data_categories: [system.operations]
+      - name: messages
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: event_audit
+    description: 'Table used to store audit events for tracking system changes and operations'
+    fields:
+    - name: created_at
+      description: 'Timestamp when the audit event was created'
+      data_categories: [system.operations]
+    - name: description
+      description: 'Human-readable description of the audit event'
+      data_categories: [system.operations]
+    - name: event_details
+      description: 'JSON details about the specific event and its context'
+      data_categories: [system.operations]
+    - name: event_type
+      description: 'Type/category of the audit event'
+      data_categories: [system.operations]
+    - name: id
+      description: 'Unique identifier for the audit event'
+      data_categories: [system.operations]
+    - name: resource_identifier
+      description: 'Identifier of the resource that was affected by the event'
+      data_categories: [system.operations]
+    - name: resource_type
+      description: 'Type of resource that was affected by the event'
+      data_categories: [system.operations]
+    - name: status
+      description: 'Status of the audit event (succeeded, failed, etc.)'
+      data_categories: [system.operations]
+    - name: updated_at
+      description: 'Timestamp when the audit event was last updated'
+      data_categories: [system.operations]
+    - name: user_id
+      description: 'ID of the user who triggered the audit event'
+      data_categories: [user.unique_id]
+    - name: client_id
+      data_categories: [system.operations]
+  - name: oauth_config
+    description: 'Fides Generated Description for Table: oauth_config'
+    data_categories: [ ]
+    fields:
+      - name: client_id
+        description: 'Fides Generated Description for Column: client_id'
+        data_categories: [ system.operations ]
+      - name: client_secret
+        description: 'Fides Generated Description for Column: client_secret'
+        data_categories: [ system.operations ]
+      - name: connection_config_id
+        description: 'Fides Generated Description for Column: connection_config_id'
+        data_categories: [ system.operations ]
+      - name: created_at
+        description: 'Fides Generated Description for Column: created_at'
+        data_categories: [ system.operations ]
+      - name: grant_type
+        description: 'Fides Generated Description for Column: grant_type'
+        data_categories: [ system.operations ]
+      - name: id
+        description: 'Fides Generated Description for Column: id'
+        data_categories: [ system.operations ]
+      - name: scope
+        description: 'Fides Generated Description for Column: scope'
+        data_categories: [ system.operations ]
+      - name: token_url
+        description: 'Fides Generated Description for Column: token_url'
+        data_categories: [ system.operations ]
+      - name: updated_at
+        description: 'Fides Generated Description for Column: updated_at'
+        data_categories: [ system.operations ]
+  - name: privacy_preferences
+    description: 'Privacy preferences for an identity'
+    data_categories: []
+    fields:
+    - name: collected_at
+      description: 'Timestamp when the preferences were collected'
+      data_categories: [ system.operations ]
+    - name: created_at
+      description: 'Timestamp when the preferences were created'
+      data_categories: [ system.operations ]
+    - name: id
+      description: 'Auto-generated unique identifier for the preferences'
+      data_categories: [ system.operations ]
+    - name: is_encrypted
+      description: 'True if the record data is encrypted, false otherwise'
+      data_categories: [ system.operations ]
+    - name: is_latest
+      description: 'Is this the latest set of preferences for the identity?'
+      data_categories: [ system.operations ]
+    - name: record_data
+      description: '*Encrypted* JSON data for the preferences'
+      data_categories: [ user.privacy_preferences ]
+    - name: search_data
+      description: 'Indexed, searchable data extracted from the preferences, hashed to prevent PII leaks but remain searchable'
+      data_categories: [ system.operations ]
+    - name: updated_at
+      description: 'Timestamp when the preferences were last updated'
+      data_categories: [ system.operations ]
+  - name: privacy_preferences_current
+    description: 'Partition table for privacy preferences where is_latest is true'
+    data_categories: [ system.operations ]
+    fields:
+    - name: collected_at
+      description: 'Timestamp when the preferences were collected'
+      data_categories: [ system.operations ]
+    - name: created_at
+      description: 'Timestamp when the preferences were created'
+      data_categories: [ system.operations ]
+    - name: id
+      description: 'Auto-generated unique identifier for the preferences'
+      data_categories: [ system.operations ]
+    - name: is_encrypted
+      description: 'True if the record data is encrypted, false otherwise'
+      data_categories: [ system.operations ]
+    - name: is_latest
+      description: 'Is this the latest set of preferences for the identity?'
+      data_categories: [ system.operations ]
+    - name: record_data
+      description: '*Encrypted* JSON data for the preferences'
+      data_categories: [ user.privacy_preferences ]
+    - name: search_data
+      description: 'Indexed, searchable data extracted from the preferences, hashed to prevent PII leaks but remain searchable'
+      data_categories: [ system.operations ]
+    - name: updated_at
+      description: 'Timestamp when the preferences were last updated'
+      data_categories: [ system.operations ]
+  - name: privacy_preferences_historic
+    description: 'Partition table for privacy preferences where is_latest is false'
+    data_categories: [ system.operations ]
+    fields:
+    - name: collected_at
+      description: 'Timestamp when the preferences were collected'
+      data_categories: [ system.operations ]
+    - name: created_at
+      description: 'Timestamp when the preferences were created'
+      data_categories: [ system.operations ]
+    - name: id
+      description: 'Auto-generated unique identifier for the preferences'
+      data_categories: [ system.operations ]
+    - name: is_encrypted
+      description: 'True if the record data is encrypted, false otherwise'
+      data_categories: [ system.operations ]
+    - name: is_latest
+      description: 'Is this the latest set of preferences for the identity?'
+      data_categories: [ system.operations ]
+    - name: record_data
+      description: '*Encrypted* JSON data for the preferences'
+      data_categories: [ user.privacy_preferences ]
+    - name: search_data
+      description: 'Indexed, searchable data extracted from the preferences, hashed to prevent PII leaks but remain searchable'
+      data_categories: [ system.operations ]
+    - name: updated_at
+      description: 'Timestamp when the preferences were last updated'
+      data_categories: [ system.operations ]
+  - name: identity_definition
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: identity_key
+        data_categories: [system.operations]
+      - name: name
+        description: 'The UI label for the identity'
+        data_categories: [system.operations]
+      - name: description
+        data_categories: [system.operations]
+      - name: type
+        description: 'The type of identity (email, phone_number, uuid, string, integer)'
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: created_by
+        data_categories: [user.unique_id]
+      - name: is_default
+        data_categories: [system.operations]
+      - name: case_sensitive
+        data_categories: [system.operations]
+  - name: saas_config_version
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: connector_type
+        data_categories: [system.operations]
+      - name: version
+        data_categories: [system.operations]
+      - name: config
+        data_categories: [system.operations]
+      - name: dataset
+        data_categories: [system.operations]
+      - name: is_custom
+        data_categories: [system.operations]
+  - name: saas_template_dataset
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: connection_type
+        data_categories: [system.operations]
+      - name: dataset_json
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+  - name: stagedresourceerror
+    fields:
+      - name: created_at
+        data_categories: [system.operations]
+      - name: id
+        data_categories: [system.operations]
+      - name: message
+        data_categories: [system.operations]
+      - name: staged_resource_urn
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: timestamp
+        data_categories: [system.operations]
+      - name: error_type
+        data_categories: [system.operations]
+      - name: diff_status
+        data_categories: [system.operations]
+      - name: task_id
+        data_categories: [system.operations]
+  - name: monitorsteward
+    description: 'Table to link users to monitors as monitor stewards'
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: user_id
+        data_categories: [system.operations]
+      - name: monitor_config_id
+        data_categories: [system.operations]
+      - name: source
+        data_categories: [system.operations]
+      - name: source_system_id
+        data_categories: [system.operations]
+  - name: questionnaire
+    description: 'SME questionnaire sessions linked to privacy assessments'
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: assessment_id
+        data_categories: [system.operations]
+      - name: title
+        data_categories: [system.operations]
+      - name: status
+        data_categories: [system.operations]
+      - name: current_question_index
+        data_categories: [system.operations]
+      - name: provider_context
+        data_categories: [system.operations]
+      - name: completed_at
+        data_categories: [system.operations]
+      - name: last_reminder_at
+        data_categories: [system.operations]
+      - name: reminder_count
+        data_categories: [system.operations]
+  - name: chat_message
+    description: 'Conversation messages within questionnaire sessions'
+    fields:
+      - name: id
+        data_categories: [system.operations]
+      - name: created_at
+        data_categories: [system.operations]
+      - name: updated_at
+        data_categories: [system.operations]
+      - name: questionnaire_id
+        data_categories: [system.operations]
+      - name: message_id
+        data_categories: [system.operations]
+      - name: timestamp
+        data_categories: [system.operations]
+      - name: sender_email
+        data_categories: [user.contact.email]
+      - name: sender_display_name
+        data_categories: [user.name]
+      - name: text
+        data_categories: [system.operations]
+      - name: is_bot_message
+        data_categories: [system.operations]
+      - name: question_index
+        data_categories: [system.operations]
+  - name: encryption_keys
+    description: 'Store encrypted Data Encryption Keys'
+    fields:
+    - name: id
+      data_categories: [system.operations]
+    - name: created_at
+      data_categories: [system.operations]
+    - name: updated_at
+      data_categories: [system.operations]
+    - name: wrapped_dek
+      data_categories: [system.operations]
+    - name: kek_id_hash
+      data_categories: [system.operations]
+    - name: provider
+      data_categories: [system.operations]

@@ -1,22 +1,14 @@
+import { useModal } from "fidesui";
 import { useFormikContext } from "formik";
-import React, {
-  createRef,
-  MutableRefObject,
-  useCallback,
-  useEffect,
-} from "react";
+import { createRef, MutableRefObject, useCallback, useEffect } from "react";
 
 import { useAppDispatch, useAppSelector } from "~/app/hooks";
 import {
-  closeModal,
-  openModal,
   registerForm,
   selectAnyDirtyForms,
-  selectIsModalOpen,
   unregisterForm,
   updateDirtyFormState,
 } from "~/features/common/hooks/dirty-forms.slice";
-import ConfirmationModal from "~/features/common/modals/ConfirmationModal";
 
 /*
  * There needs to be a global promise reference so ensure that
@@ -29,38 +21,22 @@ const modalResponsePromise = createRef() as MutableRefObject<
   Promise<boolean> | undefined
 >;
 
-type BooleanReturnFn = (value: boolean) => boolean;
+type PromiseReturnFn = (value: boolean) => void;
 const modalResolvePromise = createRef() as MutableRefObject<
-  BooleanReturnFn | undefined
+  PromiseReturnFn | undefined
 >;
 
 export const useIsAnyFormDirty = () => {
-  const dispatch = useAppDispatch();
-
   const anyDirtyForms = useAppSelector(selectAnyDirtyForms);
+  const modal = useModal();
+
   const resetReferences = useCallback(() => {
     modalResolvePromise.current = undefined;
     modalResponsePromise.current = undefined;
   }, []);
-  const onConfirm = useCallback(() => {
-    dispatch(closeModal());
-    if (modalResolvePromise.current) {
-      modalResolvePromise.current(true);
-      resetReferences();
-    }
-  }, [dispatch, resetReferences]);
-
-  const onClose = useCallback(() => {
-    dispatch(closeModal());
-    if (modalResolvePromise.current) {
-      modalResolvePromise.current(false);
-      resetReferences();
-    }
-  }, [dispatch, resetReferences]);
 
   const attemptAction = useCallback(() => {
     if (anyDirtyForms) {
-      dispatch(openModal());
       /*
        * A new promise is only made when one isn't already in flight.
        * This is so that in the rare and unlikely event that two
@@ -69,68 +45,87 @@ export const useIsAnyFormDirty = () => {
        * modal both calls correctly resolve at the same time.
        */
       if (!modalResponsePromise.current) {
-        modalResponsePromise.current = new Promise(
-          /*
-           * This type is ignored for now because the type checker
-           * isn't convinced that the `resolve` type is correct.
-           * It is in practice. In the future it may be worth figuring
-           * out exactly how to type this situation.
-           */
-          // @ts-ignore
-          (resolve: (value: boolean) => boolean) => {
-            modalResolvePromise.current = resolve;
-          }
-        );
+        modalResponsePromise.current = new Promise((resolve) => {
+          modalResolvePromise.current = resolve;
+        });
+        modal.confirm({
+          title: "Unsaved Changes",
+          content: "You have unsaved changes",
+          centered: true,
+          icon: null,
+          okText: "Continue anyway",
+          onOk: () => {
+            if (modalResolvePromise.current) {
+              modalResolvePromise.current(true);
+              resetReferences();
+            }
+          },
+          onCancel: () => {
+            if (modalResolvePromise.current) {
+              modalResolvePromise.current(false);
+              resetReferences();
+            }
+          },
+        });
       }
       return modalResponsePromise.current as Promise<boolean>;
     }
     return Promise.resolve(true);
-  }, [anyDirtyForms, dispatch]);
+  }, [anyDirtyForms, modal, resetReferences]);
 
   return {
     attemptAction,
-    onConfirm,
-    onClose,
   };
 };
 
 type FormGuardProps = {
   id: string;
   name: string;
+  /**
+   * Optional explicit dirty flag for non-Formik forms (antd Form, custom
+   * state, etc). When omitted, FormGuard falls back to reading `dirty`
+   * from FormikContext, which is the original behavior.
+   */
+  isDirty?: boolean;
 };
-export const FormGuard = ({ id, name }: FormGuardProps) => {
-  const { dirty } = useFormikContext();
+const FormGuardWithSlice = ({
+  id,
+  name,
+  dirty,
+}: {
+  id: string;
+  name: string;
+  dirty: boolean;
+}) => {
   const dispatch = useAppDispatch();
 
   useEffect(() => {
-    // Provide info on active form
     dispatch(registerForm({ id, name }));
 
     return () => {
-      // When un-rendered, remove from shared state.
       dispatch(unregisterForm({ id }));
     };
   }, [dispatch, id, name]);
 
   useEffect(() => {
-    // Update shared state whenever the dirty state changes.
     dispatch(updateDirtyFormState({ id, isDirty: dirty }));
   }, [dirty, dispatch, id]);
 
   return null;
 };
 
-export const DirtyFormConfirmationModal = () => {
-  const { onConfirm, onClose } = useIsAnyFormDirty();
-  const isModalOpen = useAppSelector(selectIsModalOpen);
-  return (
-    <ConfirmationModal
-      isOpen={isModalOpen}
-      onClose={onClose}
-      onConfirm={onConfirm}
-      isCentered
-      title="Unsaved Changes"
-      message="You have unsaved changes"
-    />
-  );
+const FormGuardFromFormik = ({ id, name }: { id: string; name: string }) => {
+  const { dirty } = useFormikContext();
+  return <FormGuardWithSlice id={id} name={name} dirty={dirty} />;
+};
+
+export const FormGuard = ({ id, name, isDirty }: FormGuardProps) => {
+  // Two flavours: explicit dirty flag (for antd Form / non-Formik forms)
+  // vs Formik-context-derived (the original behaviour). Keeping them as
+  // separate components avoids calling useFormikContext outside a Formik
+  // provider in the explicit case.
+  if (isDirty !== undefined) {
+    return <FormGuardWithSlice id={id} name={name} dirty={isDirty} />;
+  }
+  return <FormGuardFromFormik id={id} name={name} />;
 };

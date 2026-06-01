@@ -1,0 +1,775 @@
+import {
+  stubLocations,
+  stubManualTaskConfig,
+  stubPlus,
+  stubPrivacyRequests,
+  stubPrivacyRequestsConfigurationCrud,
+  stubSystemIntegrations,
+} from "cypress/support/stubs";
+
+import { INTEGRATION_MANAGEMENT_ROUTE } from "~/features/common/nav/routes";
+
+describe("Integration Management - Manual Task Conditions", () => {
+  beforeEach(() => {
+    cy.login();
+    stubPlus(true);
+
+    // Mock config endpoint
+    cy.intercept("GET", "/api/v1/config?api_set=false", {
+      body: {},
+    }).as("getConfig");
+
+    // Mock privacy center config for custom fields
+    cy.intercept("GET", "/api/v1/plus/privacy-center-config", {
+      fixture: "privacy-requests/privacy-center-config.json",
+    }).as("getPrivacyCenterConfig");
+
+    // Mock locations and regulations for privacy request fields
+    cy.intercept("GET", "/api/v1/plus/locations?all_locations=true", {
+      fixture: "locations/list.json",
+    }).as("getLocations");
+
+    // Mock policies for privacy request fields
+    cy.intercept("GET", "/api/v1/policy*", {
+      fixture: "policies/list.json",
+    }).as("getPolicies");
+
+    // Mock privacy request fields endpoint
+    cy.intercept(
+      "GET",
+      "/api/v1/plus/connection/*/manual-task/dependency-conditions/privacy-request-fields",
+      {
+        fixture: "integration-management/privacy-request-fields.json",
+      },
+    ).as("getPrivacyRequestFields");
+
+    // Mock connection endpoint
+    cy.intercept("GET", "/api/v1/connection/demo_manual_task_integration", {
+      fixture:
+        "integration-management/manual-tasks/manual-task-connection.json",
+    }).as("getConnection");
+
+    // Mock connection types endpoint
+    cy.intercept("GET", "/api/v1/connection_type?page=1&size=100", {
+      body: { items: [], total: 0, page: 1, size: 100 },
+    }).as("getConnectionTypes");
+
+    // Mock manual fields endpoint
+    cy.intercept("GET", "/api/v1/plus/connection/*/manual-fields", {
+      body: { items: [], total: 0, page: 1, size: 25 },
+    }).as("getManualFields");
+
+    // Mock manual task config endpoint with conditions
+    cy.intercept("GET", "/api/v1/plus/connection/*/manual-task", {
+      fixture: "integration-management/manual-tasks/task-config.json",
+    }).as("getManualTask");
+
+    // Mock dependency conditions endpoints
+    cy.intercept(
+      "PUT",
+      "/api/v1/plus/connection/*/manual-task/dependency-conditions",
+      {
+        body: {},
+      },
+    ).as("updateDependencyConditions");
+
+    // Mock dataset endpoints for DatasetReferencePicker
+    cy.intercept(
+      "GET",
+      "/api/v1/dataset?minimal=true&exclude_saas_datasets=true",
+      {
+        fixture: "datasets.json",
+      },
+    ).as("getFilteredDatasets");
+
+    cy.intercept("GET", "/api/v1/dataset/*", {
+      fixture: "dataset.json",
+    }).as("getDatasetByKey");
+
+    // Navigate directly to conditions tab
+    cy.visitWithLanguage(
+      `${INTEGRATION_MANAGEMENT_ROUTE}/demo_manual_task_integration#conditions`,
+      "en-US",
+    );
+    cy.wait("@getConnection");
+  });
+
+  describe("Tab Access and Display", () => {
+    it("should access the conditions tab and display existing conditions", () => {
+      // Verify tab is active
+      cy.getAntTab("Conditions")
+        .parents(".ant-tabs-tab")
+        .should("have.class", "ant-tabs-tab-active");
+
+      // Verify existing conditions are displayed
+      cy.getByTestId("conditions-list").should("exist");
+
+      // Check that existing conditions from fixture are displayed
+      cy.getByTestId("conditions-list")
+        .find(".ant-list-item")
+        .should("have.length", 2);
+    });
+
+    it("should not show consent warning banner when no consent tasks exist", () => {
+      cy.getByTestId("consent-conditions-warning").should("not.exist");
+    });
+  });
+
+  describe("Add New Condition", () => {
+    it("should handle exists/not exists operators correctly (value input disabled)", () => {
+      cy.getByTestId("add-condition-btn").click();
+
+      // Select dataset field source
+      cy.getByTestId("field-source-dataset").click();
+
+      // Fill in the dataset reference picker
+      cy.getByTestId("dataset-reference-picker").pickDatasetReference(
+        "Demo Users Dataset",
+        "users",
+        "email",
+      );
+
+      // Test "Exists" operator
+      cy.getByTestId("operator-select").antSelect("Exists");
+
+      // Verify value input is disabled for "exists"
+      cy.getByTestId("value-input").should("be.disabled");
+      cy.getByTestId("value-input").should(
+        "have.attr",
+        "placeholder",
+        "Not required",
+      );
+
+      // Test "Does not exist" operator
+      cy.getByTestId("operator-select").antSelect("Does not exist");
+
+      // Verify value input is disabled for "not exists"
+      cy.getByTestId("value-input").should("be.disabled");
+      cy.getByTestId("value-input").should(
+        "have.attr",
+        "placeholder",
+        "Not required",
+      );
+
+      // Test that value input is enabled for other operators
+      cy.getByTestId("operator-select").antSelect("Equals");
+      cy.getByTestId("value-input").should("not.be.disabled");
+      cy.getByTestId("value-input").should(
+        "have.attr",
+        "placeholder",
+        "Enter value (text, number, or true/false)",
+      );
+    });
+
+    it("should successfully add a new condition", () => {
+      cy.getByTestId("add-condition-btn").click();
+
+      // Select dataset field source
+      cy.getByTestId("field-source-dataset").click();
+
+      // Fill in the dataset reference picker
+      cy.getByTestId("dataset-reference-picker").pickDatasetReference(
+        "Demo Users Dataset",
+        "users",
+        "uuid",
+      );
+
+      // Select operator
+      cy.getByTestId("operator-select").antSelect("Equals");
+
+      // Enter value
+      cy.getByTestId("value-input").type("test_user_123");
+
+      // Submit the form
+      cy.getByTestId("save-btn").click();
+
+      // Verify API call was made with correct parameters
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        expect(interception.request.body).to.deep.equal([
+          {
+            logical_operator: "and",
+            conditions: [
+              {
+                field_address: "asdas.asdas123",
+                operator: "lt",
+                value: 12,
+              },
+              {
+                field_address: "asdasd",
+                operator: "gte",
+                value: "asdasd",
+              },
+              {
+                field_address: "demo_users_dataset:users:uuid",
+                operator: "eq",
+                value: "test_user_123",
+              },
+            ],
+          },
+        ]);
+      });
+
+      // Verify success message
+      cy.contains("Condition added successfully!").should("be.visible");
+    });
+  });
+
+  describe("Edit Condition", () => {
+    it("should open edit modal when edit button is clicked", () => {
+      // Click edit button on first condition
+      cy.getByTestId("edit-condition-0-btn").click();
+
+      // Verify modal opens with editing mode
+      cy.contains("Edit condition").should("be.visible");
+      cy.contains("Update the condition settings for task creation.").should(
+        "be.visible",
+      );
+
+      // Verify form is populated with existing values
+      cy.getByTestId("operator-select").should("contain", "Less than");
+      cy.getByTestId("value-input").should("have.value", "12");
+    });
+
+    it("should successfully update an existing condition", () => {
+      // Click edit button on first condition
+      cy.getByTestId("edit-condition-0-btn").click();
+
+      // Change the operator
+      cy.getByTestId("operator-select").antSelect("Greater than");
+
+      // Change the value
+      cy.getByTestId("value-input").clear().type("15");
+
+      // Submit the form
+      cy.getByTestId("save-btn").click();
+
+      // Verify API call was made with correct parameters
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        expect(interception.request.body).to.deep.equal([
+          {
+            logical_operator: "and",
+            conditions: [
+              {
+                field_address: "asdas.asdas123",
+                operator: "gt",
+                value: 15,
+              },
+              {
+                field_address: "asdasd",
+                operator: "gte",
+                value: "asdasd",
+              },
+            ],
+          },
+        ]);
+      });
+
+      // Verify success message
+      cy.contains("Condition updated successfully!").should("be.visible");
+    });
+  });
+
+  describe("Delete Condition", () => {
+    it("should successfully delete a condition when confirmed", () => {
+      // Click delete button on first condition
+      cy.getByTestId("delete-condition-0-btn").click();
+
+      // Confirm deletion
+      cy.getAntModalConfirmButtons().contains("Delete").click();
+
+      // Verify API call was made with remaining conditions
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        expect(interception.request.body).to.deep.equal([
+          {
+            logical_operator: "and",
+            conditions: [
+              {
+                field_address: "asdasd",
+                operator: "gte",
+                value: "asdasd",
+              },
+            ],
+          },
+        ]);
+      });
+
+      // Verify modal closes
+      cy.get(".ant-modal-confirm").should("not.exist");
+
+      // Verify success message
+      cy.contains("Condition deleted successfully!").should("be.visible");
+    });
+
+    it("should send empty array when deleting the last condition", () => {
+      // Delete first condition
+      cy.getByTestId("delete-condition-0-btn").click();
+      cy.getAntModalConfirmButtons().contains("Delete").click();
+      cy.wait("@updateDependencyConditions");
+
+      // Delete second condition (last remaining)
+      cy.getByTestId("delete-condition-0-btn").click();
+      cy.getAntModalConfirmButtons().contains("Delete").click();
+
+      // Verify API call was made with empty array (not empty group)
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        expect(interception.request.body).to.deep.equal([]);
+      });
+
+      // Verify success message
+      cy.contains("Condition deleted successfully!").should("be.visible");
+
+      // Verify empty state is shown
+      cy.contains(
+        "No conditions configured. Manual tasks will be created for all privacy requests.",
+      ).should("be.visible");
+    });
+  });
+
+  describe("Privacy Request Field Conditions", () => {
+    it("should add condition with privacy request location field", () => {
+      cy.getByTestId("add-condition-btn").click();
+
+      // Privacy request field should be selected by default
+      cy.getByTestId("field-source-privacy-request").should("be.checked");
+
+      // Select location field
+      cy.getByTestId("privacy-request-field-select").antSelect("Location");
+
+      // Select operator
+      cy.getByTestId("operator-select").antSelect("Equals");
+
+      // Verify LocationSelect component appears
+      cy.getByTestId("value-location-input").should("exist");
+
+      // Select a location
+      cy.getByTestId("value-location-input").type("New York");
+      cy.contains("New York").click();
+
+      // Submit the form
+      cy.getByTestId("save-btn").click();
+
+      // Verify API call was made with correct parameters
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        const conditions = interception.request.body[0].conditions;
+        const newCondition = conditions[conditions.length - 1];
+        expect(newCondition.field_address).to.equal("privacy_request.location");
+        expect(newCondition.operator).to.equal("eq");
+        expect(newCondition.value).to.equal("US-NY");
+      });
+
+      // Verify success message
+      cy.contains("Condition added successfully!").should("be.visible");
+    });
+
+    it("should add condition with privacy request policy field", () => {
+      cy.getByTestId("add-condition-btn").click();
+
+      // Select policy has_access_rule field
+      cy.getByTestId("privacy-request-field-select").antSelect(
+        "Has access rule",
+      );
+
+      // Select operator
+      cy.getByTestId("operator-select").antSelect("Equals");
+
+      // Verify boolean input appears (since has_access_rule is a boolean field)
+      cy.getByTestId("value-boolean-input").should("exist");
+
+      // Select True
+      cy.getByTestId("value-boolean-input")
+        .find('input[value="true"]')
+        .check({ force: true });
+
+      // Submit the form
+      cy.getByTestId("save-btn").click();
+
+      // Verify API call was made with correct parameters
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        const conditions = interception.request.body[0].conditions;
+        const newCondition = conditions[conditions.length - 1];
+        expect(newCondition.field_address).to.equal(
+          "privacy_request.policy.has_access_rule",
+        );
+        expect(newCondition.operator).to.equal("eq");
+        expect(newCondition.value).to.equal(true);
+      });
+
+      // Verify success message
+      cy.contains("Condition added successfully!").should("be.visible");
+    });
+  });
+
+  describe("Custom Field Conditions", () => {
+    it("should display custom fields in privacy request field picker", () => {
+      cy.getByTestId("add-condition-btn").click();
+
+      // Search for the custom field to filter the dropdown
+      cy.getByTestId("privacy-request-field-select")
+        .find("input")
+        .type("Department");
+      cy.get(".ant-select-dropdown").should("be.visible");
+
+      // Verify specific custom field appears with correct label
+      cy.get(".ant-select-dropdown").should("contain", "Department");
+    });
+
+    it("should add condition with custom select field", () => {
+      cy.getByTestId("add-condition-btn").click();
+
+      // Search and select the custom field
+      cy.getByTestId("privacy-request-field-select")
+        .find("input")
+        .type("Department");
+      cy.getAntSelectOption("Department").should("be.visible").click();
+
+      // Select operator
+      cy.getByTestId("operator-select").antSelect("Equals");
+
+      // Verify custom select component appears with options
+      cy.getByTestId("value-custom-select-input").should("exist");
+      cy.getByTestId("value-custom-select-input").should("not.be.disabled");
+
+      // Select an option using antSelect
+      cy.getByTestId("value-custom-select-input").antSelect("Engineering");
+
+      // Submit the form
+      cy.getByTestId("save-btn").click();
+
+      // Verify API call was made with correct parameters
+      cy.wait("@updateDependencyConditions").then((interception) => {
+        const conditions = interception.request.body[0].conditions;
+        const newCondition = conditions[conditions.length - 1];
+        expect(newCondition.field_address).to.equal(
+          "privacy_request.custom_privacy_request_fields.department",
+        );
+        expect(newCondition.operator).to.equal("eq");
+        expect(newCondition.value).to.equal("Engineering");
+      });
+
+      // Verify success message
+      cy.contains("Condition added successfully!").should("be.visible");
+    });
+  });
+});
+
+describe("Integration Management - Custom Identity Conditions", () => {
+  beforeEach(() => {
+    cy.login();
+    stubPlus(true);
+
+    cy.intercept("GET", "/api/v1/config?api_set=false", {
+      body: {},
+    }).as("getConfig");
+
+    cy.intercept("GET", "/api/v1/plus/privacy-center-config", {
+      fixture: "privacy-requests/privacy-center-config.json",
+    }).as("getPrivacyCenterConfig");
+
+    cy.intercept("GET", "/api/v1/plus/locations?all_locations=true", {
+      fixture: "locations/list.json",
+    }).as("getLocations");
+
+    cy.intercept("GET", "/api/v1/policy*", {
+      fixture: "policies/list.json",
+    }).as("getPolicies");
+
+    cy.intercept(
+      "GET",
+      "/api/v1/plus/connection/*/manual-task/dependency-conditions/privacy-request-fields",
+      {
+        fixture: "integration-management/privacy-request-fields.json",
+      },
+    ).as("getPrivacyRequestFields");
+
+    cy.intercept("GET", "/api/v1/connection/demo_manual_task_integration", {
+      fixture:
+        "integration-management/manual-tasks/manual-task-connection.json",
+    }).as("getConnection");
+
+    cy.intercept("GET", "/api/v1/connection_type?page=1&size=100", {
+      body: { items: [], total: 0, page: 1, size: 100 },
+    }).as("getConnectionTypes");
+
+    cy.intercept("GET", "/api/v1/plus/connection/*/manual-fields", {
+      body: { items: [], total: 0, page: 1, size: 25 },
+    }).as("getManualFields");
+
+    cy.intercept("GET", "/api/v1/plus/connection/*/manual-task", {
+      fixture: "integration-management/manual-tasks/task-config.json",
+    }).as("getManualTask");
+
+    cy.intercept(
+      "PUT",
+      "/api/v1/plus/connection/*/manual-task/dependency-conditions",
+      {
+        body: {},
+      },
+    ).as("updateDependencyConditions");
+
+    cy.intercept(
+      "GET",
+      "/api/v1/dataset?minimal=true&exclude_saas_datasets=true",
+      {
+        fixture: "datasets.json",
+      },
+    ).as("getFilteredDatasets");
+
+    cy.intercept("GET", "/api/v1/dataset/*", {
+      fixture: "dataset.json",
+    }).as("getDatasetByKey");
+
+    cy.visitWithLanguage(
+      `${INTEGRATION_MANAGEMENT_ROUTE}/demo_manual_task_integration#conditions`,
+      "en-US",
+    );
+    cy.wait("@getConnection");
+  });
+
+  it("should display custom identity fields in the field picker", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.wait("@getPrivacyRequestFields");
+
+    // Privacy request field should be selected by default
+    cy.getByTestId("field-source-privacy-request").should("be.checked");
+
+    // Use the search feature to filter to custom identity options
+    cy.getByTestId("privacy-request-field-select")
+      .find("input")
+      .type("Customer");
+    cy.get(".ant-select-dropdown").should("be.visible");
+
+    // Verify the custom identity field appears in filtered results
+    cy.get(".ant-select-dropdown").should("contain", "Customer id");
+
+    // Clear search and search for the manual entry option
+    cy.getByTestId("privacy-request-field-select").find("input").clear();
+    cy.getByTestId("privacy-request-field-select").find("input").type("Other");
+    cy.get(".ant-select-dropdown").should(
+      "contain",
+      "Other (enter custom key)",
+    );
+  });
+
+  it("should add condition with a custom identity field from the dropdown", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.wait("@getPrivacyRequestFields");
+
+    // Type to search and filter to the custom identity option
+    cy.getByTestId("privacy-request-field-select")
+      .find("input")
+      .type("Customer");
+    cy.getAntSelectOption("Customer id").should("be.visible").click();
+
+    // Select operator
+    cy.getByTestId("operator-select").antSelect("Equals");
+
+    // Enter value
+    cy.getByTestId("value-input").type("cust_12345");
+
+    // Submit the form
+    cy.getByTestId("save-btn").click();
+
+    // Verify API call was made with correct parameters
+    cy.wait("@updateDependencyConditions").then((interception) => {
+      const conditions = interception.request.body[0].conditions;
+      const newCondition = conditions[conditions.length - 1];
+      expect(newCondition.field_address).to.equal(
+        "privacy_request.identity.customer_id",
+      );
+      expect(newCondition.operator).to.equal("eq");
+      expect(newCondition.value).to.equal("cust_12345");
+    });
+
+    cy.contains("Condition added successfully!").should("be.visible");
+  });
+
+  it("should allow manual entry of a custom identity key", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.wait("@getPrivacyRequestFields");
+
+    // Type to search and select the manual entry option
+    cy.getByTestId("privacy-request-field-select").find("input").type("Other");
+    cy.getAntSelectOption("Other (enter custom key)")
+      .should("be.visible")
+      .click();
+
+    // Verify manual key input appears below the select
+    cy.getByTestId("manual-identity-key-input").should("exist");
+    // The select should still be visible
+    cy.getByTestId("privacy-request-field-select").should("exist");
+
+    // Type a custom identity key
+    cy.getByTestId("manual-identity-key-input").type("loyalty_number");
+
+    // Select operator
+    cy.getByTestId("operator-select").antSelect("Exists");
+
+    // Submit the form
+    cy.getByTestId("save-btn").click();
+
+    // Verify API call was made with correct parameters
+    cy.wait("@updateDependencyConditions").then((interception) => {
+      const conditions = interception.request.body[0].conditions;
+      const newCondition = conditions[conditions.length - 1];
+      expect(newCondition.field_address).to.equal(
+        "privacy_request.identity.loyalty_number",
+      );
+      expect(newCondition.operator).to.equal("exists");
+    });
+
+    cy.contains("Condition added successfully!").should("be.visible");
+  });
+
+  it("should show validation error for invalid custom identity key characters", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.wait("@getPrivacyRequestFields");
+
+    // Select the manual entry option
+    cy.getByTestId("privacy-request-field-select").find("input").type("Other");
+    cy.getAntSelectOption("Other (enter custom key)")
+      .should("be.visible")
+      .click();
+
+    // Type a key with invalid characters (hyphens are not allowed)
+    cy.getByTestId("manual-identity-key-input").type("loyalty-number");
+
+    // Select operator and attempt to submit
+    cy.getByTestId("operator-select").antSelect("Exists");
+    cy.getByTestId("save-btn").click();
+
+    // Validation error should appear and block submission
+    cy.contains(
+      "Identity key may only contain letters, numbers, and underscores",
+    ).should("be.visible");
+  });
+
+  it("should hide manual key input when switching away from Other", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.wait("@getPrivacyRequestFields");
+
+    // Enter manual entry mode by searching and selecting Other
+    cy.getByTestId("privacy-request-field-select").find("input").type("Other");
+    cy.getAntSelectOption("Other (enter custom key)")
+      .should("be.visible")
+      .click();
+    cy.getByTestId("manual-identity-key-input").should("exist");
+
+    // Switch to a different field by searching and selecting Customer id
+    cy.getByTestId("privacy-request-field-select")
+      .find("input")
+      .clear()
+      .type("Customer");
+    cy.getAntSelectOption("Customer id").should("be.visible").click();
+
+    // Manual key input should disappear
+    cy.getByTestId("manual-identity-key-input").should("not.exist");
+  });
+});
+
+describe("Integration Management - Mixed Manual Task Conditions", () => {
+  beforeEach(() => {
+    cy.login();
+    stubPlus(true);
+    stubLocations();
+    stubPrivacyRequestsConfigurationCrud();
+    stubManualTaskConfig();
+    stubSystemIntegrations();
+    stubPrivacyRequests();
+
+    // Mock manual fields endpoint with MIXED tasks (both consent and access)
+    cy.intercept("GET", "/api/v1/plus/connection/*/manual-fields", {
+      fixture: "integration-management/manual-tasks/mixed-manual-fields.json",
+    }).as("getMixedManualFields");
+
+    // Navigate directly to conditions tab
+    cy.visitWithLanguage(
+      `${INTEGRATION_MANAGEMENT_ROUTE}/demo_manual_task_integration#conditions`,
+      "en-US",
+    );
+    cy.wait("@getConnection");
+    cy.wait("@getMixedManualFields");
+  });
+
+  it("should show warning banner when both consent and access/erasure tasks exist", () => {
+    cy.getByTestId("consent-conditions-warning").should("be.visible");
+    cy.getByTestId("consent-conditions-warning").should(
+      "contain",
+      "Consent task limitations",
+    );
+    cy.getByTestId("consent-conditions-warning").should(
+      "contain",
+      "Dataset field conditions and some privacy request fields",
+    );
+  });
+
+  it("should allow adding all field types including dataset fields in mixed configuration", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.getByTestId("field-source-dataset").should("exist");
+    cy.getByTestId("field-source-privacy-request").should("exist");
+  });
+});
+
+describe("Integration Management - Consent-Only Manual Task Conditions", () => {
+  beforeEach(() => {
+    cy.login();
+    stubPlus(true);
+    stubLocations();
+    stubPrivacyRequestsConfigurationCrud();
+    stubManualTaskConfig();
+    stubSystemIntegrations();
+    stubPrivacyRequests();
+
+    cy.intercept("GET", "/api/v1/plus/connection/*/manual-fields", {
+      fixture:
+        "integration-management/manual-tasks/consent-only-manual-fields.json",
+    }).as("getConsentOnlyManualFields");
+
+    cy.visitWithLanguage(
+      `${INTEGRATION_MANAGEMENT_ROUTE}/demo_manual_task_integration#conditions`,
+      "en-US",
+    );
+    cy.wait("@getConnection");
+    cy.wait("@getConsentOnlyManualFields");
+  });
+
+  it("should hide dataset field source option when only consent tasks are configured", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.getByTestId("field-source-dataset").should("not.exist");
+    cy.getByTestId("field-source-privacy-request").should("not.exist");
+    cy.getByTestId("privacy-request-field-select").should("exist");
+  });
+
+  it("should not show due_date field for consent-only configurations", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.wait("@getPrivacyRequestFields");
+    cy.getByTestId("privacy-request-field-select").click();
+    cy.get(".ant-select-dropdown").should("be.visible");
+    cy.get(".ant-select-dropdown").should("not.contain", "Due date");
+    cy.get(".ant-select-dropdown").should("contain", "Location");
+  });
+
+  it("should show consent-appropriate modal description", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.contains(
+      "Select a privacy request field to create the condition",
+    ).should("be.visible");
+    cy.contains("Select a field from your datasets").should("not.exist");
+  });
+
+  it("should successfully add condition with consent-available fields", () => {
+    cy.getByTestId("add-condition-btn").click();
+    cy.getByTestId("privacy-request-field-select").antSelect("Location");
+    cy.getByTestId("operator-select").antSelect("Equals");
+    cy.getByTestId("value-location-input").type("New York");
+    cy.contains("New York").click();
+    cy.getByTestId("save-btn").click();
+
+    cy.wait("@updateDependencyConditions").then((interception) => {
+      const conditions = interception.request.body[0].conditions;
+      const newCondition = conditions[conditions.length - 1];
+      expect(newCondition.field_address).to.equal("privacy_request.location");
+    });
+
+    cy.contains("Condition added successfully!").should("be.visible");
+  });
+});

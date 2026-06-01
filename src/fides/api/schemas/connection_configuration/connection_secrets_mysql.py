@@ -1,4 +1,5 @@
-from typing import List, Optional
+from enum import Enum, StrEnum
+from typing import ClassVar, List, Optional
 
 from pydantic import Field
 
@@ -6,6 +7,13 @@ from fides.api.schemas.base_class import NoValidationSchema
 from fides.api.schemas.connection_configuration.connection_secrets import (
     ConnectionConfigSecretsSchema,
 )
+
+
+class MySQLSSLMode(StrEnum):
+    preferred = "preferred"
+    required = "required"
+    disabled = "disabled"
+    none = ""
 
 
 class MySQLSchema(ConnectionConfigSecretsSchema):
@@ -16,7 +24,7 @@ class MySQLSchema(ConnectionConfigSecretsSchema):
         description="The hostname or IP address of the server where the database is running.",
     )
     port: int = Field(
-        3306,
+        default=3306,
         title="Port",
         description="The network port number on which the server is listening for incoming connections (default: 3306).",
     )
@@ -29,19 +37,24 @@ class MySQLSchema(ConnectionConfigSecretsSchema):
         None,
         title="Password",
         description="The password used to authenticate and access the database.",
-        sensitive=True,
+        json_schema_extra={"sensitive": True},
     )
     dbname: str = Field(
-        description="The name of the specific database within the database server that you want to connect to.",
         title="Database",
+        description="The name of the specific database within the database server that you want to connect to.",
     )
     ssh_required: bool = Field(
         False,
         title="SSH required",
         description="Indicates whether an SSH tunnel is required for the connection. Enable this option if your MySQL server is behind a firewall and requires SSH tunneling for remote connections.",
     )
+    ssl_mode: Optional[MySQLSSLMode] = Field(
+        None,  # TODO: support for verify-ca and verify-full
+        title="SSL Mode",
+        description="The SSL mode to use for the connection. Accepted values are: 'required', 'preferred', 'disabled', or an empty value.",
+    )
 
-    _required_components: List[str] = ["host", "dbname"]
+    _required_components: ClassVar[List[str]] = ["host", "dbname"]
 
 
 class MySQLDocsSchema(MySQLSchema, NoValidationSchema):

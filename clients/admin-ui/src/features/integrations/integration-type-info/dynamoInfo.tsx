@@ -1,4 +1,4 @@
-import { Code, ListItem } from "fidesui";
+import { ChakraCode as Code, ChakraListItem as ListItem } from "fidesui";
 
 import {
   InfoHeading,
@@ -9,8 +9,9 @@ import {
   InfoUnorderedList,
 } from "~/features/common/copy/components";
 import ShowMoreContent from "~/features/common/copy/ShowMoreContent";
-import { ConnectionCategory } from "~/features/integrations/ConnectionCategory";
 import { AccessLevel, ConnectionType } from "~/types/api";
+import { ConnectionCategory } from "~/types/api/models/ConnectionCategory";
+import { IntegrationFeature } from "~/types/api/models/IntegrationFeature";
 
 export const DYNAMO_PLACEHOLDER = {
   name: "DynamoDB",
@@ -20,7 +21,7 @@ export const DYNAMO_PLACEHOLDER = {
   created_at: "",
 };
 
-export const DYNAMO_TAGS = ["Database", "DynamoDB", "Discovery", "Inventory"];
+export const DYNAMO_TAGS = ["DSR Automation", "Discovery", "Detection"];
 
 export const DynamoOverview = () => (
   <>
@@ -132,6 +133,7 @@ const DYNAMO_TYPE_INFO = {
   overview: <DynamoOverview />,
   instructions: <DynamoInstructions />,
   tags: DYNAMO_TAGS,
+  enabledFeatures: [IntegrationFeature.DATA_DISCOVERY],
 };
 
 export default DYNAMO_TYPE_INFO;

@@ -10,7 +10,6 @@ import {
 } from "~/features/dataset/dataset.slice";
 import { CreateSaasConnectionConfig } from "~/features/datastore-connections";
 import { CreateSaasConnectionConfigResponse } from "~/features/datastore-connections/types";
-import { selectSystemsToClassify } from "~/features/system";
 import {
   AllowList,
   AllowListUpdate,
@@ -27,19 +26,24 @@ import {
   ClassifySystem,
   CloudConfig,
   ConnectionConfigurationResponse,
+  ConnectionDatahubSyncResponse,
+  ConsentableItem,
   CustomAssetType,
   CustomFieldDefinition,
   CustomFieldDefinitionWithId,
   CustomFieldWithId,
   GenerateTypes,
   HealthCheck,
+  JiraCredentialLinkStatus,
+  JiraLinkSaasRequest,
+  JiraLinkSaasResponse,
+  JiraPreviewRequest,
+  JiraSaasConnectionInfo,
+  JiraTicketData,
+  JiraUnlinkSaasResponse,
   Page_SystemHistoryResponse_,
   Page_SystemSummary_,
-  ResourceTypes,
   SystemPurposeSummary,
-  SystemScannerStatus,
-  SystemScanResponse,
-  SystemsDiff,
   TCFPurposeOverrideSchema,
 } from "~/types/api";
 import {
@@ -48,13 +52,35 @@ import {
   Page_Vendor_,
 } from "~/types/dictionary-api";
 
-interface ScanParams {
-  classify?: boolean;
-}
-
 interface ClassifyInstancesParams {
   fides_keys?: string[];
   resource_type: GenerateTypes;
+}
+
+export interface JiraProject {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface JiraIssueType {
+  id: string;
+  name: string;
+  description?: string;
+  subtask: boolean;
+}
+
+export interface JiraStatus {
+  id: string;
+  name: string;
+  category_key: string;
+  category_name: string | null;
+}
+
+export interface JiraTemplateVariable {
+  name: string;
+  description: string;
+  example_value?: string;
 }
 
 const plusApi = baseApi.injectEndpoints({
@@ -134,24 +160,6 @@ const plusApi = baseApi.injectEndpoints({
       providesTags: ["Classify Instances Systems"],
     }),
 
-    // Kubernetes Cluster Scanner
-    updateScan: build.mutation<SystemScanResponse, ScanParams>({
-      query: (params: ScanParams) => ({
-        url: `plus/scan`,
-        params,
-        method: "PUT",
-      }),
-      invalidatesTags: ["Classify Instances Systems", "Latest Scan"],
-    }),
-    getLatestScanDiff: build.query<SystemsDiff, void>({
-      query: () => ({
-        url: `plus/scan/latest`,
-        params: { diff: true },
-        method: "GET",
-      }),
-      providesTags: ["Latest Scan"],
-    }),
-
     // Custom Metadata Allow List
     getAllAllowList: build.query<AllowList[], boolean>({
       query: (show_values: boolean) => ({
@@ -222,6 +230,15 @@ const plusApi = baseApi.injectEndpoints({
       }),
       providesTags: ["Custom Field Definition"],
     }),
+    getCustomFieldDefinitionById: build.query<
+      CustomFieldDefinitionWithId,
+      { id: string }
+    >({
+      query: ({ id }) => ({
+        url: `plus/custom-metadata/custom-field-definition/${id}`,
+      }),
+      providesTags: ["Custom Field Definition"],
+    }),
     // Custom Metadata Custom Field Definition
     addCustomFieldDefinition: build.mutation<
       CustomFieldDefinitionWithId,
@@ -232,38 +249,90 @@ const plusApi = baseApi.injectEndpoints({
         method: "POST",
         body: params,
       }),
-      invalidatesTags: ["Custom Field Definition", "Datamap"],
+      invalidatesTags: (result, error, { resource_type, field_type }) => [
+        { type: "Custom Field Definition" },
+        { type: "Datamap" },
+        { type: "Taxonomy History", id: resource_type },
+        { type: "Taxonomy History", id: field_type },
+      ],
     }),
     updateCustomFieldDefinition: build.mutation<
       CustomFieldDefinitionWithId,
-      CustomFieldDefinition
+      CustomFieldDefinitionWithId
     >({
       query: (params) => ({
         url: `plus/custom-metadata/custom-field-definition`,
         method: "PUT",
         body: params,
       }),
-      invalidatesTags: ["Custom Field Definition", "Datamap"],
+      invalidatesTags: (result, error, { resource_type, field_type }) => [
+        { type: "Custom Field Definition" },
+        { type: "Datamap" },
+        { type: "Taxonomy History", id: resource_type },
+        { type: "Taxonomy History", id: field_type },
+      ],
     }),
-    deleteCustomFieldDefinition: build.mutation<void, { id: string }>({
+    deleteCustomFieldDefinition: build.mutation<
+      void,
+      { id: string; resource_type: string; field_type: string }
+    >({
       query: ({ id }) => ({
         url: `plus/custom-metadata/custom-field-definition/${id}`,
         method: "DELETE",
       }),
-      invalidatesTags: ["Custom Field Definition", "Datamap"],
+      invalidatesTags: (result, error, { resource_type, field_type }) => [
+        { type: "Custom Field Definition" },
+        { type: "Datamap" },
+        { type: "Taxonomy History", id: resource_type },
+        { type: "Taxonomy History", id: field_type },
+      ],
     }),
 
-    // Custom Metadata Custom Field Definition By Resource Type
+    // Custom Metadata Custom Field Definition By Resource Type (supports taxonomy:<key>)
     getCustomFieldDefinitionsByResourceType: build.query<
-      CustomFieldDefinitionWithId[],
-      ResourceTypes
+      (CustomFieldDefinitionWithId & { created_at: string })[],
+      string
     >({
-      query: (resource_type: ResourceTypes) => ({
-        url: `plus/custom-metadata/custom-field-definition/resource-type/${resource_type}`,
+      async queryFn(resource_type, _queryApi, _extraOptions, fetchWithBQ) {
+        const result = await fetchWithBQ({
+          url: `plus/custom-metadata/custom-field-definition/resource-type/${encodeURIComponent(resource_type)}`,
+        });
+
+        // the API will 404 if there are no fields for the given resource
+        // type; we want to return an empty array in this case so that the last
+        // result doesn't remain cached
+        if (
+          result.error &&
+          "status" in result.error &&
+          result.error.status === 404
+        ) {
+          return { data: [] };
+        }
+
+        // any other errors should error as normal
+        if (result.error) {
+          return { error: result.error };
+        }
+
+        const response = result.data as (CustomFieldDefinitionWithId & {
+          created_at: string;
+        })[];
+        return {
+          data: response.sort((a, b) =>
+            (a.name ?? "").localeCompare(b.name ?? ""),
+          ),
+        };
+      },
+      providesTags: ["Custom Field Definition"],
+    }),
+    // Custom Fields: dynamic locations (legacy + custom taxonomies)
+    getCustomFieldLocations: build.query<string[], void>({
+      query: () => ({
+        url: `plus/custom-fields/locations`,
       }),
       providesTags: ["Custom Field Definition"],
-      transformResponse: (list: CustomFieldDefinitionWithId[]) =>
-        list.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")),
+      transformResponse: (data: string[]) =>
+        data.sort((a, b) => a.localeCompare(b)),
     }),
     getAllDictionaryEntries: build.query<Page_Vendor_, void>({
       query: () => ({
@@ -448,6 +517,123 @@ const plusApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["TCF Purpose Override"],
     }),
+    getConsentableItems: build.query<ConsentableItem[], string>({
+      query: (connectionKey) => ({
+        url: `plus${CONNECTION_ROUTE}/${connectionKey}/consentable-items`,
+      }),
+      providesTags: () => ["Consentable Items"],
+    }),
+    updateConsentableItems: build.mutation<
+      ConsentableItem[],
+      { connectionKey: string; consentableItems: ConsentableItem[] }
+    >({
+      query: ({ connectionKey, consentableItems }) => ({
+        url: `plus${CONNECTION_ROUTE}/${connectionKey}/consentable-items`,
+        method: "PUT",
+        body: consentableItems,
+      }),
+      invalidatesTags: ["Consentable Items"],
+    }),
+    syncDatahubConnection: build.mutation<
+      ConnectionDatahubSyncResponse,
+      { connectionKey: string; datasetIds: string[] }
+    >({
+      query: ({ connectionKey, datasetIds }) => ({
+        url: `plus/connection/datahub/${connectionKey}/sync`,
+        method: "POST",
+        body: { dataset_ids: datasetIds },
+      }),
+    }),
+    initiateJiraOAuth: build.mutation<
+      { authorization_url: string },
+      { connection_key: string }
+    >({
+      query: (body) => ({
+        url: `plus/oauth/jira/initiate`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["Datastore Connection"],
+    }),
+    getJiraProjects: build.query<JiraProject[], { connectionKey: string }>({
+      query: ({ connectionKey }) => ({
+        url: `plus/connection/${connectionKey}/jira/projects`,
+      }),
+    }),
+    getJiraIssueTypes: build.query<
+      JiraIssueType[],
+      { connectionKey: string; projectKey: string }
+    >({
+      query: ({ connectionKey, projectKey }) => ({
+        url: `plus/connection/${connectionKey}/jira/projects/${projectKey}/issuetypes`,
+      }),
+    }),
+    getJiraStatuses: build.query<
+      JiraStatus[],
+      { connectionKey: string; projectKey: string; issueType: string }
+    >({
+      query: ({ connectionKey, projectKey, issueType }) => ({
+        url: `plus/connection/${connectionKey}/jira/statuses`,
+        params: { project_key: projectKey, issue_type: issueType },
+      }),
+    }),
+    getJiraTemplateVariables: build.query<
+      JiraTemplateVariable[],
+      { connectionKey: string }
+    >({
+      query: ({ connectionKey }) => ({
+        url: `plus/connection/${connectionKey}/jira/template-variables`,
+      }),
+    }),
+    previewJiraTicket: build.mutation<
+      JiraTicketData,
+      { connectionKey: string } & JiraPreviewRequest
+    >({
+      query: ({ connectionKey, ...body }) => ({
+        url: `plus/connection/${connectionKey}/jira/preview`,
+        method: "POST",
+        body,
+      }),
+    }),
+    getJiraSaasConnections: build.query<
+      JiraSaasConnectionInfo[],
+      { connectionKey: string }
+    >({
+      query: ({ connectionKey }) => ({
+        url: `plus/connection/${connectionKey}/jira/available-saas-connections`,
+      }),
+      providesTags: ["Jira Credentials"],
+    }),
+    getJiraCredentialLinkStatus: build.query<
+      JiraCredentialLinkStatus,
+      { connectionKey: string }
+    >({
+      query: ({ connectionKey }) => ({
+        url: `plus/connection/${connectionKey}/jira/link-saas-credentials`,
+      }),
+      providesTags: ["Jira Credentials"],
+    }),
+    linkJiraSaasCredentials: build.mutation<
+      JiraLinkSaasResponse,
+      { connectionKey: string } & JiraLinkSaasRequest
+    >({
+      query: ({ connectionKey, ...body }) => ({
+        url: `plus/connection/${connectionKey}/jira/link-saas-credentials`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["Jira Credentials", "Datastore Connection"],
+    }),
+    unlinkJiraSaasCredentials: build.mutation<
+      JiraUnlinkSaasResponse,
+      { connectionKey: string }
+    >({
+      query: ({ connectionKey }) => ({
+        url: `plus/connection/${connectionKey}/jira/link-saas-credentials`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["Jira Credentials", "Datastore Connection"],
+    }),
   }),
 });
 
@@ -462,19 +648,18 @@ export const {
   useGetVendorReportQuery,
   useGetClassifySystemQuery,
   useGetCustomFieldDefinitionsByResourceTypeQuery,
+  useGetCustomFieldDefinitionByIdQuery,
   useGetCustomFieldsForResourceQuery,
   useGetHealthQuery,
-  useGetLatestScanDiffQuery,
-  useLazyGetLatestScanDiffQuery,
   useUpdateClassifyInstanceMutation,
   useUpdateCustomFieldDefinitionMutation,
-  useUpdateScanMutation,
   useUpsertAllowListMutation,
   useUpsertCustomFieldMutation,
   useBulkUpdateCustomFieldsMutation,
   useGetAllCustomFieldDefinitionsQuery,
   useGetAllowListQuery,
   useGetAllDictionaryEntriesQuery,
+  useGetCustomFieldLocationsQuery,
   useGetFidesCloudConfigQuery,
   useGetDictionaryDataUsesQuery,
   useLazyGetDictionaryDataUsesQuery,
@@ -487,16 +672,27 @@ export const {
   useCreatePlusSaasConnectionConfigMutation,
   useGetTcfPurposeOverridesQuery,
   usePatchTcfPurposeOverridesMutation,
+  useGetConsentableItemsQuery,
+  useUpdateConsentableItemsMutation,
+  useSyncDatahubConnectionMutation,
+  useInitiateJiraOAuthMutation,
+  useGetJiraProjectsQuery,
+  useGetJiraIssueTypesQuery,
+  useGetJiraStatusesQuery,
+  useGetJiraTemplateVariablesQuery,
+  usePreviewJiraTicketMutation,
+  useGetJiraSaasConnectionsQuery,
+  useGetJiraCredentialLinkStatusQuery,
+  useLinkJiraSaasCredentialsMutation,
+  useUnlinkJiraSaasCredentialsMutation,
 } = plusApi;
 
 export const selectHealth: (state: RootState) => HealthCheck | undefined =
   createSelector(plusApi.endpoints.getHealth.select(), ({ data }) => data);
 
-export const selectDataFlowScannerStatus: (
-  state: RootState
-) => SystemScannerStatus | undefined = createSelector(
-  plusApi.endpoints.getHealth.select(),
-  ({ data }) => data?.system_scanner
+export const selectRbacEnabled: (state: RootState) => boolean = createSelector(
+  selectHealth,
+  (health) => !!health?.rbac?.enabled,
 );
 
 const emptyClassifyInstances: ClassifyInstanceResponseValues[] = [];
@@ -504,16 +700,7 @@ export const selectDatasetClassifyInstances = createSelector(
   plusApi.endpoints.getAllClassifyInstances.select({
     resource_type: GenerateTypes.DATASETS,
   }),
-  ({ data: instances }) => instances ?? emptyClassifyInstances
-);
-
-export const selectSystemClassifyInstances = createSelector(
-  [(state) => state, selectSystemsToClassify],
-  (state, systems) =>
-    plusApi.endpoints.getAllClassifyInstances.select({
-      resource_type: GenerateTypes.SYSTEMS,
-      fides_keys: systems?.map((s) => s.fides_key),
-    })(state)?.data ?? emptyClassifyInstances
+  ({ data: instances }) => instances ?? emptyClassifyInstances,
 );
 
 const emptyClassifyInstanceMap: Map<string, ClassifyInstanceResponseValues> =
@@ -534,12 +721,7 @@ const instancesToMap = (instances: ClassifyInstanceResponseValues[]) => {
 
 export const selectDatasetClassifyInstanceMap = createSelector(
   selectDatasetClassifyInstances,
-  (instances) => instancesToMap(instances)
-);
-
-export const selectSystemClassifyInstanceMap = createSelector(
-  selectSystemClassifyInstances,
-  (instances) => instancesToMap(instances)
+  (instances) => instancesToMap(instances),
 );
 
 /**
@@ -554,7 +736,7 @@ export const selectActiveClassifyDataset = createSelector(
     fidesKey
       ? plusApi.endpoints.getClassifyDataset.select(fidesKey)(state)?.data
           ?.datasets?.[0]
-      : undefined
+      : undefined,
 );
 
 const emptyCollectionMap: Map<string, ClassifyCollection> = new Map();
@@ -563,12 +745,12 @@ export const selectClassifyInstanceCollectionMap = createSelector(
   (classifyInstance) =>
     classifyInstance?.collections
       ? new Map(classifyInstance.collections.map((c) => [c.name, c]))
-      : emptyCollectionMap
+      : emptyCollectionMap,
 );
 export const selectClassifyInstanceCollection = createSelector(
   [selectClassifyInstanceCollectionMap, selectActiveCollection],
   (collectionMap, active) =>
-    active ? collectionMap.get(active.name) : undefined
+    active ? collectionMap.get(active.name) : undefined,
 );
 
 const emptyFieldMap: Map<string, ClassifyField> = new Map();
@@ -577,7 +759,7 @@ export const selectClassifyInstanceFieldMap = createSelector(
   (collection) =>
     collection?.fields
       ? new Map(collection.fields.map((f) => [f.name, f]))
-      : emptyFieldMap
+      : emptyFieldMap,
 );
 /**
  * Note that this selects the field that is currently active in the editor. Fields that are shown in
@@ -585,13 +767,13 @@ export const selectClassifyInstanceFieldMap = createSelector(
  */
 export const selectClassifyInstanceField = createSelector(
   [selectClassifyInstanceFieldMap, selectActiveField],
-  (fieldMap, active) => (active ? fieldMap.get(active.name) : undefined)
+  (fieldMap, active) => (active ? fieldMap.get(active.name) : undefined),
 );
 
 const emptySelectAllCustomFields: CustomFieldDefinitionWithId[] = [];
 export const selectAllCustomFieldDefinitions = createSelector(
   plusApi.endpoints.getAllCustomFieldDefinitions.select(),
-  ({ data }) => data || emptySelectAllCustomFields
+  ({ data }) => data || emptySelectAllCustomFields,
 );
 
 export type DictOption = {
@@ -615,7 +797,7 @@ export const selectAllDictEntries = createSelector(
             description: d.description ? d.description : undefined,
           }))
           .sort((a, b) => (a.label > b.label ? 1 : -1))
-      : EMPTY_DICT_ENTRIES
+      : EMPTY_DICT_ENTRIES,
 );
 
 const EMPTY_DICT_ENTRY = undefined;
@@ -626,7 +808,7 @@ export const selectDictEntry = (vendorId: string) =>
       const dictEntry = data?.items.find((d) => d.vendor_id === vendorId);
 
       return dictEntry || EMPTY_DICT_ENTRY;
-    }
+    },
   );
 
 const EMPTY_DATA_USES: DataUseDeclaration[] = [];
@@ -637,7 +819,7 @@ export const selectDictDataUses = (vendorId: string) =>
       (state) => state,
       plusApi.endpoints.getDictionaryDataUses.select({ vendor_id: vendorId }),
     ],
-    (state, { data }) => (data ? data.items : EMPTY_DATA_USES)
+    (state, { data }) => (data ? data.items : EMPTY_DATA_USES),
   );
 
 export type DictSystems = {
@@ -660,7 +842,7 @@ export const selectAllDictSystems = createSelector(
                   ? `(${word.charAt(1).toUpperCase()}${word
                       .slice(2)
                       .toLowerCase()}`
-                  : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                  : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
               )
               .join(" ");
             return {
@@ -669,5 +851,5 @@ export const selectAllDictSystems = createSelector(
             };
           })
           .sort((a, b) => a.name.localeCompare(b.name))
-      : EMPTY_DICT_SYSTEMS
+      : EMPTY_DICT_SYSTEMS,
 );

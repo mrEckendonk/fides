@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { h } from "preact";
+
 import { chunkItems, PAGE_SIZE } from "../lib/paging";
 
 interface PagingData<T> {

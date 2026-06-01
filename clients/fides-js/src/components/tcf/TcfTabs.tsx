@@ -1,38 +1,64 @@
-import { h } from "preact";
 import { useCallback, useRef } from "preact/hooks";
-import { I18n } from "../../lib/i18n";
-import { PrivacyExperience } from "../../lib/consent-types";
-import { EnabledIds } from "../../lib/tcf/types";
-import TcfPurposes from "./TcfPurposes";
-import type { UpdateEnabledIds } from "./TcfOverlay";
-import TcfFeatures from "./TcfFeatures";
-import TcfVendors from "./TcfVendors";
+
+import {
+  PrivacyExperience,
+  PrivacyExperienceMinimal,
+} from "../../lib/consent-types";
+import { FidesEventDetailsPreference } from "../../lib/events";
+import { FetchState } from "../../lib/hooks";
+import { useI18n } from "../../lib/i18n/i18n-context";
+import { PAGE_SIZE } from "../../lib/paging";
+import {
+  EnabledIds,
+  PrivacyNoticeWithBestTranslation,
+} from "../../lib/tcf/types";
 import InfoBox from "../InfoBox";
+import { RecordsListSkeletons } from "./RecordsListSkeletons";
+import TcfFeatures from "./TcfFeatures";
+import { TcfLoadingErrorMessage } from "./TcfLoadingErrorMessage";
+import TcfPurposes from "./TcfPurposes";
+import TcfVendors from "./TcfVendors";
 
 const KEY_ARROW_RIGHT = "ArrowRight";
 const KEY_ARROW_LEFT = "ArrowLeft";
 
+export interface UpdateEnabledIds {
+  newEnabledIds: string[];
+  modelType: keyof EnabledIds;
+}
+
 const TcfTabs = ({
-  i18n,
   experience,
+  customNotices,
   enabledIds,
   onChange,
   activeTabIndex,
   onTabChange,
+  fullExperienceState,
+  attDenied = false,
 }: {
-  i18n: I18n;
-  experience: PrivacyExperience;
+  experience: PrivacyExperience | PrivacyExperienceMinimal;
+  customNotices: PrivacyNoticeWithBestTranslation[] | undefined;
   enabledIds: EnabledIds;
-  onChange: (payload: EnabledIds) => void;
+  onChange: (
+    payload: EnabledIds,
+    preferenceDetails: FidesEventDetailsPreference,
+  ) => void;
   activeTabIndex: number;
   onTabChange: (tabIndex: number) => void;
+  fullExperienceState: FetchState;
+  attDenied?: boolean;
 }) => {
+  const { i18n } = useI18n();
   const handleUpdateDraftState = useCallback(
-    ({ newEnabledIds, modelType }: UpdateEnabledIds) => {
+    (
+      { newEnabledIds, modelType }: UpdateEnabledIds,
+      preferenceDetails: FidesEventDetailsPreference,
+    ) => {
       const updated = { ...enabledIds, [modelType]: newEnabledIds };
-      onChange(updated);
+      onChange(updated, preferenceDetails);
     },
-    [enabledIds, onChange]
+    [enabledIds, onChange],
   );
 
   const tcfTabs = [
@@ -41,17 +67,42 @@ const TcfTabs = ({
       type: "purposes",
       content: (
         <div>
-          <InfoBox>{i18n.t("static.tcf.purposes.description")}</InfoBox>
-          <TcfPurposes
-            i18n={i18n}
-            allPurposesConsent={experience.tcf_purpose_consents}
-            allPurposesLegint={experience.tcf_purpose_legitimate_interests}
-            allSpecialPurposes={experience.tcf_special_purposes}
-            enabledPurposeConsentIds={enabledIds.purposesConsent}
-            enabledPurposeLegintIds={enabledIds.purposesLegint}
-            enabledSpecialPurposeIds={enabledIds.specialPurposes}
-            onChange={handleUpdateDraftState}
-          />
+          {fullExperienceState !== FetchState.Error && (
+            <InfoBox>{i18n.t("static.tcf.purposes.description")}</InfoBox>
+          )}
+          {fullExperienceState === FetchState.Error && (
+            <TcfLoadingErrorMessage
+              generalLabel="purposes and special features for which your data can be processed"
+              specificLabel="specific purposes"
+            />
+          )}
+          {fullExperienceState === FetchState.Loading && (
+            <RecordsListSkeletons
+              rows={
+                ((experience as PrivacyExperienceMinimal)
+                  .tcf_purpose_consent_ids?.length ?? 0) +
+                (customNotices?.length ?? 0)
+              }
+            />
+          )}
+          {fullExperienceState === FetchState.Success && (
+            <TcfPurposes
+              allPurposesConsent={
+                (experience as PrivacyExperience).tcf_purpose_consents
+              }
+              allCustomPurposesConsent={customNotices}
+              allPurposesLegint={
+                (experience as PrivacyExperience)
+                  .tcf_purpose_legitimate_interests
+              }
+              allSpecialPurposes={
+                (experience as PrivacyExperience).tcf_special_purposes
+              }
+              enabledIds={enabledIds}
+              onChange={handleUpdateDraftState}
+              attDenied={attDenied}
+            />
+          )}
         </div>
       ),
     },
@@ -60,15 +111,35 @@ const TcfTabs = ({
       type: "features",
       content: (
         <div>
-          <InfoBox>{i18n.t("static.tcf.features.description")}</InfoBox>
-          <TcfFeatures
-            i18n={i18n}
-            allFeatures={experience.tcf_features}
-            allSpecialFeatures={experience.tcf_special_features}
-            enabledFeatureIds={enabledIds.features}
-            enabledSpecialFeatureIds={enabledIds.specialFeatures}
-            onChange={handleUpdateDraftState}
-          />
+          {fullExperienceState !== FetchState.Error && (
+            <InfoBox>{i18n.t("static.tcf.features.description")}</InfoBox>
+          )}
+          {fullExperienceState === FetchState.Error && (
+            <TcfLoadingErrorMessage
+              generalLabel="features for which your data can be processed"
+              specificLabel="special features"
+            />
+          )}
+          {fullExperienceState === FetchState.Loading && (
+            <RecordsListSkeletons
+              rows={
+                ((experience as PrivacyExperienceMinimal).tcf_feature_ids
+                  ?.length ?? 0) +
+                ((experience as PrivacyExperienceMinimal)
+                  .tcf_special_feature_ids?.length ?? 0)
+              }
+            />
+          )}
+          {fullExperienceState === FetchState.Success && (
+            <TcfFeatures
+              allFeatures={(experience as PrivacyExperience).tcf_features}
+              allSpecialFeatures={
+                (experience as PrivacyExperience).tcf_special_features
+              }
+              enabledIds={enabledIds}
+              onChange={handleUpdateDraftState}
+            />
+          )}
         </div>
       ),
     },
@@ -77,14 +148,32 @@ const TcfTabs = ({
       type: "vendors",
       content: (
         <div>
-          <InfoBox>{i18n.t("static.tcf.vendors.description")}</InfoBox>
-          <TcfVendors
-            i18n={i18n}
-            experience={experience}
-            enabledVendorConsentIds={enabledIds.vendorsConsent}
-            enabledVendorLegintIds={enabledIds.vendorsLegint}
-            onChange={handleUpdateDraftState}
-          />
+          {fullExperienceState !== FetchState.Error && (
+            <InfoBox>{i18n.t("static.tcf.vendors.description")}</InfoBox>
+          )}
+          {fullExperienceState === FetchState.Error && (
+            <TcfLoadingErrorMessage
+              generalLabel="vendors who can process your data and the purposes or features of processing they declare"
+              specificLabel="each vendor based on the legal basis they assert"
+            />
+          )}
+          {fullExperienceState === FetchState.Loading && (
+            <RecordsListSkeletons
+              rows={Math.min(
+                (experience as PrivacyExperienceMinimal).tcf_vendor_consent_ids
+                  ?.length ?? 0,
+                PAGE_SIZE,
+              )}
+            />
+          )}
+          {fullExperienceState === FetchState.Success && (
+            <TcfVendors
+              experience={experience as PrivacyExperience}
+              enabledIds={enabledIds}
+              onChange={handleUpdateDraftState}
+              attDenied={attDenied}
+            />
+          )}
         </div>
       ),
     },

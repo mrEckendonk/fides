@@ -1,0 +1,18 @@
+.monitor-result {
+  :global(.ant-list-item-action-split) {
+    display: block;
+  }
+
+  &:global(.ant-list-item) :global(.ant-list-item-action) {
+    display: flex;
+    flex: 11rem;
+    flex-grow: initial;
+    justify-content: end;
+    margin-inline-start: 0px;
+    padding-left: var(--fidesui-padding-xs);
+  }
+
+  &:global(.ant-list-item) :global(.ant-list-item-action) li {
+    padding-left: var(--fidesui-padding-xs);
+  }
+}

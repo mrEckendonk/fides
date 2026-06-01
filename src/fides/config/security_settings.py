@@ -1,20 +1,32 @@
 """This module handles finding and parsing fides configuration files."""
 
 # pylint: disable=C0115,C0116, E0213
-from typing import Dict, List, Optional, Pattern, Tuple, Union
+from enum import Enum
+from typing import List, Literal, Optional, Pattern, Tuple, Union
 
-import validators
-from pydantic import Field, validator
+from pydantic import Field, SerializeAsAny, ValidationInfo, field_validator
+from pydantic_settings import SettingsConfigDict
 from slowapi.wrappers import parse_many  # type: ignore
 
-from fides.api.cryptography.cryptographic_util import generate_salt, hash_with_salt
-from fides.api.custom_types import URLOrigin
+from fides.api.cryptography.cryptographic_util import (
+    generate_salt,
+    hash_credential_with_salt,
+)
+from fides.api.custom_types import URLOriginString
 from fides.api.oauth.roles import OWNER
-from fides.common.api.scope_registry import SCOPE_REGISTRY
+from fides.common.scope_registry import SCOPE_REGISTRY
 
 from .fides_settings import FidesSettings
 
 ENV_PREFIX = "FIDES__SECURITY__"
+
+
+class DomainValidationMode(str, Enum):
+    """Controls how domain validation behaves for SaaS connector params."""
+
+    enabled = "enabled"
+    disabled = "disabled"
+    monitor = "monitor"
 
 
 class SecuritySettings(FidesSettings):
@@ -31,7 +43,20 @@ class SecuritySettings(FidesSettings):
     app_encryption_key: str = Field(
         default="", description="The key used to sign Fides API access tokens."
     )
-    cors_origins: List[URLOrigin] = Field(
+    key_provider: Literal["none", "local"] = Field(
+        default="none",
+        description="Envelope encryption provider. 'none' disables envelope encryption and uses app_encryption_key directly (legacy). "
+        "'local' enables envelope encryption, wrapping the DEK with a KEK via in-process AES-256-GCM.",
+    )
+    key_encryption_key: Optional[str] = Field(
+        default=None,
+        description="The Key Encryption Key (KEK) for the local envelope encryption provider. Must be exactly 32 characters.",
+    )
+    key_encryption_key_previous: Optional[str] = Field(
+        default=None,
+        description="Previous KEK, used during key rotation. Set this to the old KEK when rotating to a new one.",
+    )
+    cors_origins: SerializeAsAny[List[URLOriginString]] = Field(
         default_factory=list,
         description="A list of client addresses allowed to communicate with the Fides webserver.",
     )
@@ -47,7 +72,7 @@ class SecuritySettings(FidesSettings):
         default="UTF-8", description="Text encoding to use for the application."
     )
     env: str = Field(
-        default="dev",
+        default="prod",
         description="The default, `dev`, does not apply authentication to endpoints typically used by the CLI. The other option, `prod`, requires authentication for _all_ endpoints that may contain sensitive information.",
     )
     identity_verification_attempt_limit: int = Field(
@@ -86,17 +111,29 @@ class SecuritySettings(FidesSettings):
         default=None,
         description="When using a parent/child Fides deployment, this username will be used by the child server to access the parent server.",
     )
-    public_request_rate_limit: str = Field(
-        default="2000/minute",
-        description="The number of requests from a single IP address allowed to hit a public endpoint within the specified time period",
-    )
     rate_limit_prefix: str = Field(
-        default="fides-",
+        default="rate-limit",
         description="The prefix given to keys in the Redis cache used by the rate limiter.",
     )
+    rate_limit_client_ip_header: Optional[str] = Field(
+        default=None,
+        description="The header used to determine the client IP address for rate limiting. If not set or set to empty string, rate limiting will be disabled.",
+    )
+    headers_mode: Union[Literal["none"], Literal["recommended"]] = Field(
+        default="none",
+        description="Controls what security headers are included in Fides server responses.",
+    )
     request_rate_limit: str = Field(
-        default="1000/minute",
+        default="2000/minute",
         description="The number of requests from a single IP address allowed to hit an endpoint within a rolling 60 second period.",
+    )
+    auth_rate_limit: str = Field(
+        default="10/minute",
+        description="The number of authentication requests from a single IP address allowed to hit authentication endpoints (login, OAuth token) within the specified time period.",
+    )
+    privacy_request_attachment_rate_limit: str = Field(
+        default="30/minute",
+        description="Per-IP rate limit for the unauthenticated privacy-request attachment upload endpoint. Tighter than the global limit because the endpoint accepts large multipart bodies.",
     )
     root_user_scopes: List[str] = Field(
         default=SCOPE_REGISTRY,
@@ -115,13 +152,36 @@ class SecuritySettings(FidesSettings):
         default=None,
         description="If set, this can be used in conjunction with root_password to log in without first creating a user in the database.",
     )
+    subject_request_download_ui_enabled: bool = Field(
+        default=False,
+        description="If set to True, the user interface will display a download button for subject requests.",
+    )
+    dsr_testing_tools_enabled: bool = Field(
+        default=False,
+        description="If set to True, contributor and owner roles will be able to run test privacy requests.",
+    )
     subject_request_download_link_ttl_seconds: int = Field(
         default=432000,
         description="The number of seconds that a pre-signed download URL when using S3 storage will be valid. The default is equal to 5 days.",
     )
+    domain_validation_mode: DomainValidationMode = Field(
+        default=DomainValidationMode.enabled,
+        description="Controls domain validation for SaaS connector params globally. "
+        "'enabled' enforces validation and blocks disallowed domains. "
+        "'monitor' validates but only logs warnings instead of blocking. "
+        "'disabled' skips validation entirely. "
+        "Set via FIDES__SECURITY__DOMAIN_VALIDATION_MODE.",
+    )
     enable_audit_log_resource_middleware: Optional[bool] = Field(
         default=False,
         description="Either enables the collection of audit log resource data or bypasses the middleware",
+    )
+
+    password_reset_token_ttl_minutes: int = Field(
+        default=30,
+        description="The time in minutes for which a self-service password reset token is valid. Must be between 15 and 60.",
+        ge=15,
+        le=60,
     )
 
     bastion_server_host: Optional[str] = Field(
@@ -144,74 +204,119 @@ class SecuritySettings(FidesSettings):
         description="The timeout in seconds for tunnel connection (open_channel timeout)",
     )
 
-    @validator("app_encryption_key")
+    @field_validator("domain_validation_mode", mode="before")
+    @classmethod
+    def lowercase_domain_validation_mode(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.lower()
+        return v
+
+    @field_validator("app_encryption_key", mode="before")
     @classmethod
     def validate_encryption_key_length(
-        cls, v: Optional[str], values: Dict[str, str]
+        cls, v: Optional[str], info: ValidationInfo
     ) -> Optional[str]:
-        """Validate the encryption key is exactly 32 characters"""
+        """Validate the encryption key is exactly 32 characters.
+
+        When a key_provider is configured, app_encryption_key is only needed
+        for initial bootstrap (wrapping), so an empty value is allowed.
+        """
 
         # If the value is the default value, return immediately to prevent unwanted errors
         if v == "":
             return v
 
-        if v is None or len(v.encode(values.get("encoding", "UTF-8"))) != 32:
+        if v is None or len(v.encode(info.data.get("encoding", "UTF-8"))) != 32:
             raise ValueError(
                 "APP_ENCRYPTION_KEY value must be exactly 32 characters long"
             )
         return v
 
-    @validator("cors_origins", pre=True)
+    @field_validator("key_encryption_key", "key_encryption_key_previous", mode="before")
+    @classmethod
+    def validate_kek_length(
+        cls, v: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
+        """Validate the KEK is exactly 32 characters when provided."""
+        if not v:
+            return None
+
+        if len(v.encode(info.data.get("encoding", "UTF-8"))) != 32:
+            raise ValueError(
+                f"{(info.field_name or '').upper()} value must be exactly 32 characters long"
+            )
+        return v
+
+    @field_validator("cors_origins", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
-        """Return a list of valid origins for CORS requests"""
+        """
+        Return a list of origins for CORS requests.
 
-        def validate(values: List[str]) -> None:
-            for value in values:
-                if value != "*":
-                    if not validators.url(value):
-                        raise ValueError(f"{value} is not a valid url")
-
+        This validator allows us to parse a comma-separated string of origins
+        into a list of origins, since the `cors_origins` field can be set
+        as a comma-separated string or a list of strings.
+        """
         if isinstance(v, str) and not v.startswith("["):
             values = [i.strip() for i in v.split(",")]
-            validate(values)
-
             return values
-        if isinstance(v, (list, str)):
-            validate(v)  # type: ignore
-
+        if isinstance(v, list):
             return v
         raise ValueError(v)
 
-    @validator("oauth_root_client_secret_hash")
+    @field_validator("oauth_root_client_secret_hash", mode="before")
     @classmethod
     def assemble_root_access_token(
-        cls, v: Optional[str], values: Dict[str, str]
+        cls, v: Optional[str], info: ValidationInfo
     ) -> Optional[Tuple]:
         """
         Sets a hashed value of the root access key.
         This is hashed as it is not wise to return a plaintext for of the
         root credential anywhere in the system.
         """
-        value = values.get("oauth_root_client_secret", "")
+        value = info.data.get("oauth_root_client_secret", "")
 
         if not value:
             return None
 
-        encoding = values.get("encoding", "UTF-8")
+        encoding = info.data.get("encoding", "UTF-8")
 
         salt = generate_salt()
-        hashed_client_id = hash_with_salt(value.encode(encoding), salt.encode(encoding))
+        hashed_client_id = hash_credential_with_salt(
+            value.encode(encoding), salt.encode(encoding)
+        )
         oauth_root_client_secret_hash = (hashed_client_id, salt.encode(encoding))  # type: ignore
         return oauth_root_client_secret_hash
 
-    @validator("request_rate_limit")
+    @field_validator("rate_limit_client_ip_header")
     @classmethod
-    def validate_request_rate_limit(
+    def validate_rate_limit_client_ip_header(
+        cls,
+        v: str,
+    ) -> Optional[str]:
+        """Validate supported `rate_limit_client_ip_header`"""
+        insecure_headers = ["x-forwarded-for"]
+
+        if not v:
+            return None
+
+        if v.lower() in insecure_headers:
+            raise ValueError(
+                "The rate_limit_client_ip_header cannot be set to a header that is not secure."
+            )
+        return v
+
+    @field_validator(
+        "request_rate_limit",
+        "auth_rate_limit",
+        "privacy_request_attachment_rate_limit",
+    )
+    @classmethod
+    def validate_rate_limits(
         cls,
         v: str,
     ) -> str:
-        """Validate the formatting of `request_rate_limit`"""
+        """Validate the formatting of rate limit fields"""
         try:
             # Defer to `limits.parse_many` https://limits.readthedocs.io/en/stable/api.html#limits.parse_many
             parse_many(v)
@@ -226,7 +331,7 @@ class SecuritySettings(FidesSettings):
             raise ValueError(message)
         return v
 
-    @validator("env")
+    @field_validator("env")
     @classmethod
     def validate_env(
         cls,
@@ -238,5 +343,4 @@ class SecuritySettings(FidesSettings):
             raise ValueError(message)
         return v
 
-    class Config:
-        env_prefix = ENV_PREFIX
+    model_config = SettingsConfigDict(env_prefix=ENV_PREFIX)

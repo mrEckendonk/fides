@@ -1,4 +1,4 @@
-import { Box, Link } from "fidesui";
+import { ChakraBox as Box, ChakraLink as Link } from "fidesui";
 
 import EmptyTableState from "~/features/common/table/EmptyTableState";
 
@@ -8,8 +8,8 @@ const GVLNotice = () => (
       title="This system is part of the TCF Global Vendor List (GVL)"
       description={
         <>
-          As a result, the system fields are not editable as they come directly
-          from Fides Compass and the Global Vendor List (GVL). In some cases
+          As a result, certain fields are not editable as they come directly
+          from Fides Compass and the Global Vendor List (GVL). In some cases,
           where the legal basis has been declared to be flexible, you may update
           the legal basis for particular data uses.{" "}
           <Link
@@ -17,7 +17,7 @@ const GVLNotice = () => (
             isExternal
             color="complimentary.500"
           >
-            For more information on the Global Vendor List, click here.
+            More information on the Global Vendor List.
           </Link>
         </>
       }

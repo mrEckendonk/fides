@@ -1,23 +1,19 @@
-import { Stack } from "fidesui";
-import { Form, Formik } from "formik";
-import { useMemo, useState } from "react";
+import { Flex, Form, Input } from "fidesui";
+import { useState } from "react";
 import { useSelector } from "react-redux";
 
-import { CustomTextInput } from "~/features/common/form/inputs";
-import { initialDataCategories } from "~/features/plus/helpers";
-import { selectClassifyInstanceField } from "~/features/plus/plus.slice";
-import { selectDataCategories } from "~/features/taxonomy/taxonomy.slice";
+import { InfoTooltip } from "~/features/common/InfoTooltip";
+import { selectDataCategories } from "~/features/taxonomy/data-category.slice";
 import { DatasetCollection, DatasetField } from "~/types/api";
 
 import { COLLECTION, FIELD } from "./constants";
-import DataCategoryInput from "./DataCategoryInput";
-import { DataCategoryWithConfidence } from "./types";
+import { DataCategoryInput } from "./DataCategoryInput";
 
 export const FORM_ID = "edit-collection-or-field-form";
 
 type FormValues =
-  | Pick<DatasetField, "description" | "data_categories">
-  | Pick<DatasetCollection, "description" | "data_categories">;
+  | Pick<DatasetField, "name" | "description" | "data_categories">
+  | Pick<DatasetCollection, "name" | "description" | "data_categories">;
 
 interface Props {
   values: FormValues;
@@ -25,48 +21,22 @@ interface Props {
   // NOTE: If you're adding more checks on dataType, refactor this into two
   // components instead and remove this prop.
   dataType: "collection" | "field";
+  showDataCategories?: boolean;
 }
 
-const EditCollectionOrFieldForm = ({ values, onSubmit, dataType }: Props) => {
-  const initialValues: FormValues = {
-    description: values.description ?? "",
-    data_categories: values.data_categories,
-  };
+export const EditCollectionOrFieldForm = ({
+  values,
+  onSubmit,
+  dataType,
+  showDataCategories = true,
+}: Props) => {
+  const [form] = Form.useForm<{ description: string }>();
   const allEnabledDataCategories = useSelector(selectDataCategories).filter(
-    (category) => category.active
+    (category) => category.active,
   );
 
-  // This data is only relevant for editing a field. Maybe another reason to split the field/
-  // collection cases into two components.
-  const classifyField = useSelector(selectClassifyInstanceField);
-  const mostLikelyCategories: DataCategoryWithConfidence[] | undefined =
-    useMemo(() => {
-      if (!(allEnabledDataCategories && classifyField)) {
-        return undefined;
-      }
-
-      const dataCategoryMap = new Map(
-        allEnabledDataCategories.map((dc) => [dc.fides_key, dc])
-      );
-      return classifyField.classifications.map(
-        ({ label, aggregated_score }) => {
-          const dc = dataCategoryMap.get(label);
-
-          return {
-            fides_key: label,
-            confidence: aggregated_score,
-            ...dc,
-          };
-        }
-      );
-    }, [allEnabledDataCategories, classifyField]);
-
   const [checkedDataCategories, setCheckedDataCategories] = useState<string[]>(
-    () =>
-      initialDataCategories({
-        dataCategories: initialValues.data_categories,
-        mostLikelyCategories,
-      })
+    values.data_categories || [],
   );
 
   const descriptionTooltip =
@@ -78,36 +48,46 @@ const EditCollectionOrFieldForm = ({ values, onSubmit, dataType }: Props) => {
       ? COLLECTION.data_categories.tooltip
       : FIELD.data_categories.tooltip;
 
-  const handleSubmit = (formValues: FormValues) => {
+  const handleFinish = (formValues: { description: string }) => {
     // data categories need to be handled separately since they are not a typical form element
-    const newValues = {
+    const newValues: FormValues = {
+      name: values.name,
       ...formValues,
-      ...{ data_categories: checkedDataCategories },
+      data_categories: checkedDataCategories,
     };
     onSubmit(newValues);
   };
 
   return (
-    <Formik initialValues={initialValues} onSubmit={handleSubmit}>
-      <Form id={FORM_ID}>
-        <Stack>
-          <CustomTextInput
-            name="description"
-            label="Description"
-            tooltip={descriptionTooltip}
-            data-testid="description-input"
-          />
-          <DataCategoryInput
-            dataCategories={allEnabledDataCategories}
-            mostLikelyCategories={mostLikelyCategories}
-            checked={checkedDataCategories}
-            onChecked={setCheckedDataCategories}
-            tooltip={dataCategoryTooltip}
-          />
-        </Stack>
-      </Form>
-    </Formik>
+    <Form
+      form={form}
+      id={FORM_ID}
+      layout="vertical"
+      initialValues={{
+        description: values.description ?? "",
+      }}
+      onFinish={handleFinish}
+      key={values.name}
+    >
+      <Form.Item
+        name="description"
+        label={
+          <Flex align="center" gap="small">
+            Description
+            <InfoTooltip label={descriptionTooltip} />
+          </Flex>
+        }
+      >
+        <Input data-testid="input-description" />
+      </Form.Item>
+      {showDataCategories && (
+        <DataCategoryInput
+          dataCategories={allEnabledDataCategories}
+          checked={checkedDataCategories}
+          onChecked={setCheckedDataCategories}
+          tooltip={dataCategoryTooltip}
+        />
+      )}
+    </Form>
   );
 };
-
-export default EditCollectionOrFieldForm;

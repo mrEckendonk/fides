@@ -1,18 +1,14 @@
 import {
   Button,
-  MenuItem,
+  ChakraStack as Stack,
+  ChakraText as Text,
   Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  Stack,
-  Text,
-  useDisclosure,
+  useChakraDisclosure as useDisclosure,
 } from "fidesui";
+import { useRouter } from "next/router";
 import React from "react";
+
+import { INTEGRATION_MANAGEMENT_ROUTE } from "~/features/common/nav/routes";
 
 import { useDeleteDatastoreConnectionMutation } from "./datastore-connection.slice";
 
@@ -20,16 +16,16 @@ type DataConnectionProps = {
   connection_key: string;
 };
 
-const DeleteConnectionModal: React.FC<DataConnectionProps> = ({
-  connection_key,
-}) => {
+const DeleteConnectionModal = ({ connection_key }: DataConnectionProps) => {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [deleteConnection, deleteConnectionResult] =
     useDeleteDatastoreConnectionMutation();
+  const router = useRouter();
 
   const handleDeleteConnection = () => {
     if (connection_key) {
       deleteConnection(connection_key);
+      router.push(INTEGRATION_MANAGEMENT_ROUTE);
     }
   };
 
@@ -41,64 +37,41 @@ const DeleteConnectionModal: React.FC<DataConnectionProps> = ({
 
   return (
     <>
-      <MenuItem
-        _focus={{ color: "complimentary.500", bg: "gray.100" }}
-        onClick={onOpen}
-      >
-        <Text fontSize="sm">Delete</Text>
-      </MenuItem>
-      <Modal isCentered isOpen={isOpen} onClose={closeIfComplete}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Delete Connection</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
-            <Stack direction="column" spacing="15px">
-              <Text
-                color="gray.600"
-                fontSize="sm"
-                fontWeight="sm"
-                lineHeight="20px"
-              >
-                Deleting a connection may impact any privacy request that is
-                currently in progress. Do you wish to proceed?
-              </Text>
-            </Stack>
-          </ModalBody>
+      <Button onClick={onOpen}>Delete integration</Button>
 
-          <ModalFooter>
-            <Button
-              onClick={closeIfComplete}
-              marginRight="10px"
-              size="sm"
-              variant="solid"
-              bg="white"
-              width="50%"
-            >
+      <Modal
+        centered
+        destroyOnHidden
+        open={isOpen}
+        onCancel={closeIfComplete}
+        title="Delete integration"
+        footer={
+          <div className="flex gap-4">
+            <Button onClick={closeIfComplete} className="w-1/2">
               Cancel
             </Button>
             <Button
               onClick={handleDeleteConnection}
-              isLoading={deleteConnectionResult.isLoading}
-              mr={3}
-              size="sm"
-              variant="solid"
-              bg="primary.800"
-              color="white"
-              width="50%"
-              _loading={{
-                opacity: 1,
-                div: { opacity: 0.4 },
-              }}
-              _hover={{
-                bg: "gray.100",
-                color: "gray.600",
-              }}
+              loading={deleteConnectionResult.isLoading}
+              type="primary"
+              className="w-1/2"
             >
-              Delete connection
+              Delete integration
             </Button>
-          </ModalFooter>
-        </ModalContent>
+          </div>
+        }
+      >
+        <Stack direction="column" spacing="15px">
+          <Text
+            color="gray.600"
+            fontSize="sm"
+            fontWeight="sm"
+            lineHeight="20px"
+          >
+            Deleting an integration may impact any privacy request that is
+            currently in progress. Do you wish to proceed?
+          </Text>
+        </Stack>
       </Modal>
     </>
   );

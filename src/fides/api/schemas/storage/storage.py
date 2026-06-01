@@ -1,8 +1,15 @@
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Dict, List, Optional, Union
 
 from fideslang.validation import FidesKey
-from pydantic import Extra, ValidationError, root_validator, validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic.main import BaseModel
 
 from fides.api.schemas.api import BulkResponse, BulkUpdateFailed
@@ -30,25 +37,19 @@ class StorageDetails(Enum):
     NAMING = "naming"
     MAX_RETRIES = "max_retries"
     AUTH_METHOD = "auth_method"
-
-    class Config:
-        """Restrict adding other fields through this schema."""
-
-        extra = Extra.forbid
+    ENABLE_STREAMING = "enable_streaming"
+    ENABLE_ACCESS_PACKAGE_REDIRECT = "enable_access_package_redirect"
+    model_config = ConfigDict(extra="forbid")
 
 
 class FileBasedStorageDetails(BaseModel):
     """A base class for all storage configuration that uses a file system."""
 
     naming: str = FileNaming.request_id.value  # How to name the uploaded file
-
-    class Config:
-        """Restrict adding other fields through this schema."""
-
-        extra = Extra.forbid
+    model_config = ConfigDict(extra="forbid")
 
 
-class AWSAuthMethod(str, Enum):
+class AWSAuthMethod(StrEnum):
     AUTOMATIC = "automatic"
     SECRET_KEYS = "secret_keys"
 
@@ -59,9 +60,23 @@ class StorageDetailsS3(FileBasedStorageDetails):
     auth_method: AWSAuthMethod
     bucket: str
     max_retries: Optional[int] = 0
+    enable_streaming: Optional[bool] = False
+    enable_access_package_redirect: Optional[bool] = False
+    model_config = ConfigDict(use_enum_values=True)
 
-    class Config:
-        use_enum_values = True
+
+class GCSAuthMethod(StrEnum):
+    ADC = "adc"  # Application Default Credentials
+    SERVICE_ACCOUNT_KEYS = "service_account_keys"
+
+
+class StorageDetailsGCS(FileBasedStorageDetails):
+    """The details required to represent a Google Cloud Storage bucket."""
+
+    auth_method: GCSAuthMethod
+    bucket: str
+    max_retries: Optional[int] = 0
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class StorageDetailsLocal(FileBasedStorageDetails):
@@ -74,27 +89,39 @@ class StorageSecrets(Enum):
     # s3-specific
     AWS_ACCESS_KEY_ID = "aws_access_key_id"
     AWS_SECRET_ACCESS_KEY = "aws_secret_access_key"
+    REGION_NAME = "region_name"
+    AWS_ASSUME_ROLE = "assume_role_arn"
 
 
 class StorageSecretsLocal(BaseModel):
     """A dummy schema for allowing any / no secrets for local filestorage."""
 
-    class Config:
-        """Restrict adding other fields through this schema."""
-
-        extra = Extra.allow
+    model_config = ConfigDict(extra="allow")
 
 
 class StorageSecretsS3(BaseModel):
-    """The secrets required to connect to an S3 bucket."""
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    region_name: Optional[str] = None
+    assume_role_arn: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
 
-    aws_access_key_id: str
-    aws_secret_access_key: str
 
-    class Config:
-        """Restrict adding other fields through this schema."""
+class StorageSecretsGCS(BaseModel):
+    """The secrets required to connect to a Google Cloud Storage bucket."""
 
-        extra = Extra.forbid
+    type: str = "service_account"
+    project_id: str
+    private_key_id: str
+    private_key: str
+    client_email: str
+    client_id: str
+    auth_uri: str
+    token_uri: str
+    auth_provider_x509_cert_url: str
+    client_x509_cert_url: str
+    universe_domain: str
+    model_config = ConfigDict(extra="forbid")
 
 
 class StorageType(Enum):
@@ -109,6 +136,7 @@ class StorageType(Enum):
 
 FULLY_CONFIGURED_STORAGE_TYPES = (
     StorageType.s3,
+    StorageType.gcs,
 )  # storage types that are considered "fully configured"
 
 
@@ -118,26 +146,25 @@ class StorageDestinationBase(BaseModel):
     type: StorageType
     details: Union[
         StorageDetailsS3,
+        StorageDetailsGCS,
         StorageDetailsLocal,
-    ]
+    ] = Field(validate_default=True)
     format: Optional[ResponseFormat] = ResponseFormat.json.value  # type: ignore
+    model_config = ConfigDict(
+        use_enum_values=True, from_attributes=True, extra="forbid"
+    )
 
-    class Config:
-        use_enum_values = True
-        orm_mode = True
-        extra = Extra.forbid
-
-    @validator("details", pre=True, always=True)
+    @field_validator("details", mode="before")
     @classmethod
     def validate_details_validator(
         cls,
         v: Dict[str, str],
-        values: Dict[str, Any],
+        info: ValidationInfo,
     ) -> Dict[str, str]:
         """
         Custom validation logic for the `details` field.
         """
-        storage_type = values.get("type")
+        storage_type = info.data.get("type")
         if not storage_type:
             raise ValueError("A `type` field must be specified.")
 
@@ -157,6 +184,7 @@ class StorageDestinationBase(BaseModel):
         try:
             schema = {
                 StorageType.s3.value: StorageDetailsS3,
+                StorageType.gcs.value: StorageDetailsGCS,
                 StorageType.local.value: StorageDetailsLocal,
             }[storage_type]
         except KeyError:
@@ -164,7 +192,7 @@ class StorageDestinationBase(BaseModel):
                 f"`storage_type` {storage_type} has no supported `details` validation."
             )
         try:
-            schema.parse_obj(details)  # type: ignore
+            schema.model_validate(details)  # type: ignore
         except ValidationError as exc:
             # Pydantic requires validators raise either a ValueError, TypeError, or AssertionError
             # so this exception is cast into a `ValueError`.
@@ -173,15 +201,14 @@ class StorageDestinationBase(BaseModel):
 
         return details
 
-    @root_validator
-    @classmethod
-    def format_validator(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    @model_validator(mode="after")
+    def format_validator(self) -> "StorageDestinationBase":
         """
         Custom validation to ensure that local destination formats are valid.
         """
         restricted_destinations = [StorageType.local.value]
-        storage_type = values.get("type")
-        response_format = values.get("format")
+        storage_type = self.type
+        response_format = self.format
         if (
             storage_type in restricted_destinations
             and response_format
@@ -192,18 +219,15 @@ class StorageDestinationBase(BaseModel):
                 "Only JSON or HTML upload format are supported for local storage destinations."
             )
 
-        return values
+        return self
 
 
 class StorageDestination(StorageDestinationBase):
     """Storage Destination Schema"""
 
     name: str
-    key: Optional[FidesKey]
-
-    class Config:
-        use_enum_values = True
-        orm_mode = True
+    key: Optional[FidesKey] = None
+    model_config = ConfigDict(use_enum_values=True, from_attributes=True)
 
 
 class StorageDestinationResponse(BaseModel):
@@ -215,20 +239,17 @@ class StorageDestinationResponse(BaseModel):
     key: FidesKey
     format: ResponseFormat
     is_default: bool = False
-
-    class Config:
-        orm_mode = True
-        use_enum_values = True
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class BulkPutStorageConfigResponse(BulkResponse):
     """Schema with mixed success/failure responses for Bulk Create/Update of StorageConfig."""
 
-    succeeded: List[StorageDestinationResponse]
-    failed: List[BulkUpdateFailed]
+    succeeded: List[StorageDestinationResponse] = []
+    failed: List[BulkUpdateFailed] = []
 
 
-SUPPORTED_STORAGE_SECRETS = StorageSecretsS3
+SUPPORTED_STORAGE_SECRETS = Union[StorageSecretsS3, StorageSecretsGCS]
 
 
 class StorageConfigStatus(Enum):

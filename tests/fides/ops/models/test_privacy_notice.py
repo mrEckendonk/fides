@@ -1,0 +1,1930 @@
+from typing import Generator
+
+import pytest
+from fideslang.validation import FidesValidationError
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from fides.api.models.asset import Asset
+from fides.api.models.experience_notices import ExperienceNotices
+from fides.api.models.location_regulation_selections import DeprecatedNoticeRegion
+from fides.api.models.privacy_notice import (
+    ConsentMechanism,
+    EnforcementLevel,
+    NoticeTranslation,
+    PrivacyNotice,
+    PrivacyNoticeFramework,
+    PrivacyNoticeHistory,
+    UserConsentPreference,
+)
+from fides.api.models.sql_models import PrivacyDeclaration, System
+from fides.api.schemas.language import SupportedLanguage
+
+
+class TestPrivacyNoticeModel:
+    def test_configured_regions(
+        self,
+        db,
+        privacy_notice,
+        privacy_experience_overlay,
+        privacy_experience_privacy_center_france,
+        privacy_experience_france_tcf_overlay,
+    ):
+        assert privacy_notice.configured_regions_for_notice == []
+
+        privacy_experience_overlay.experience_config.privacy_notices.append(
+            privacy_notice
+        )
+        privacy_experience_overlay.experience_config.save(db)
+
+        assert privacy_notice.configured_regions_for_notice == ["us_ca"]
+
+        privacy_experience_privacy_center_france.experience_config.privacy_notices.append(
+            privacy_notice
+        )
+        privacy_experience_privacy_center_france.experience_config.save(db)
+
+        assert privacy_notice.configured_regions_for_notice == [
+            "fr",
+            "us_ca",
+        ]
+
+        privacy_experience_france_tcf_overlay.experience_config.privacy_notices.append(
+            privacy_notice
+        )
+        privacy_experience_france_tcf_overlay.experience_config.save(db)
+
+        # no duplicates
+        assert privacy_notice.configured_regions_for_notice == [
+            "fr",
+            "us_ca",
+        ]
+
+    def test_calculate_systems_applicable(
+        self, db, privacy_notice, system_with_no_uses
+    ):
+        # No data uses on systems
+        assert privacy_notice.calculated_systems_applicable is False
+
+        pd = PrivacyDeclaration.create(
+            db=db,
+            data={
+                "name": "Third Party Sharing",
+                "system_id": system_with_no_uses.id,
+                "data_categories": ["marketing.advertising"],
+                "data_use": "third_party_sharing",
+                "data_subjects": ["customer"],
+                "dataset_references": None,
+                "legal_basis_for_processing": "Consent",
+                "egress": None,
+                "ingress": None,
+                "retention_period": "3",
+            },
+        )
+
+        # Data use on system matches data use on privacy notice exactly
+        assert privacy_notice.calculated_systems_applicable is True
+
+        # Parent data use of system matches privacy notice data use
+        pd.data_use = "marketing.advertising.first_party"
+        pd.save(db)
+        assert privacy_notice.calculated_systems_applicable is True
+
+        # System data use is too broad- doesn't apply to privacy notice
+        pd.data_use = "marketing"
+        pd.save(db)
+        assert privacy_notice.calculated_systems_applicable is False
+
+    def test_create(self, db: Session, privacy_notice: PrivacyNotice):
+        """
+        Ensure our create override works as expected to create a translation and a history object
+        """
+        # our fixture should have created a privacy notice and therefore a similar translation and history object
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        # make sure our create method still auto-populates as needed
+        assert privacy_notice.created_at is not None
+        assert privacy_notice.updated_at is not None
+        assert privacy_notice.id is not None
+        assert privacy_notice.consent_mechanism == ConsentMechanism.opt_in
+        assert privacy_notice.default_preference == UserConsentPreference.opt_out
+        assert privacy_notice.notice_key == "example_privacy_notice_1"
+
+        assert len(privacy_notice.translations) == 1
+        translation = privacy_notice.translations[0]
+        assert (
+            privacy_notice.get_translation_by_language(db, SupportedLanguage.english)
+            == translation
+        )
+
+        history_object = PrivacyNoticeHistory.all(db)[0]
+        assert history_object.name == privacy_notice.name
+        assert history_object.data_uses == privacy_notice.data_uses
+        assert history_object.version == 1.0
+        assert history_object.translation_id == translation.id
+        assert history_object.notice_key == privacy_notice.notice_key
+
+        translation.delete(db)
+        db.refresh(history_object)
+
+        # Deleting a translation just sets this FK to null, historical record is kept for auditing
+        assert history_object.translation_id is None
+
+    def test_default_preference_property(self, privacy_notice):
+        assert privacy_notice.consent_mechanism == ConsentMechanism.opt_in
+        assert privacy_notice.default_preference == UserConsentPreference.opt_out
+
+        privacy_notice.consent_mechanism = ConsentMechanism.opt_out
+        assert privacy_notice.default_preference == UserConsentPreference.opt_in
+
+        privacy_notice.consent_mechanism = ConsentMechanism.notice_only
+        assert privacy_notice.default_preference == UserConsentPreference.acknowledge
+
+    def test_update_no_updates_no_history(
+        self, db: Session, privacy_notice: PrivacyNotice
+    ):
+        """
+        Ensure updating with no real updates doesn't actually add a history record.
+
+        Note that translations have to be supplied, otherwise they are removed.
+        """
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        old_name = privacy_notice.name
+        old_data_uses = privacy_notice.data_uses
+
+        orig_translations = {
+            "language": SupportedLanguage.english,
+            "title": "Example privacy notice",
+            "description": "user&#x27;s description &lt;script /&gt;",
+        }
+
+        # Nothing on the privacy notice itself is changing, and the patched translations are identical
+        updated_privacy_notice = privacy_notice.update(
+            db, data={"translations": [orig_translations]}
+        )
+
+        # assert our returned object isn't updated
+        assert updated_privacy_notice.name == old_name
+        assert updated_privacy_notice.data_uses == old_data_uses
+        assert len(updated_privacy_notice.translations) == 1
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        db.refresh(privacy_notice)
+        assert privacy_notice.name == old_name
+        assert privacy_notice.data_uses == old_data_uses
+
+        # and let's run thru the same with a "no-op" update rather than empty data at the privacy notice level
+        # Translations are identical
+        updated_privacy_notice = privacy_notice.update(
+            db, data={"name": old_name, "translations": [orig_translations]}
+        )
+
+        db.refresh(updated_privacy_notice)
+
+        # assert our returned object isn't updated
+        assert updated_privacy_notice.name == old_name
+        assert updated_privacy_notice.data_uses == old_data_uses
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        db.refresh(privacy_notice)
+        assert privacy_notice.name == old_name
+        assert privacy_notice.data_uses == old_data_uses
+
+    def test_update_notice_level(self, db: Session, privacy_notice: PrivacyNotice):
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        old_name = privacy_notice.name
+        old_data_uses = privacy_notice.data_uses
+
+        orig_count = db.query(PrivacyNotice).count()
+        original_translations_count = db.query(NoticeTranslation).count()
+
+        dry_update_data = {
+            "name": "updated name",
+            "translations": [
+                {
+                    "language": SupportedLanguage.english,
+                    "title": "Example privacy notice",
+                    "description": "user&#x27;s description &lt;script /&gt;",
+                }
+            ],
+        }
+
+        privacy_notice.dry_update(data=dry_update_data)
+
+        updated_privacy_notice = privacy_notice.update(
+            db,
+            data={
+                "name": "updated name",
+                "translations": [
+                    {
+                        "language": SupportedLanguage.english,
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+            },
+        )
+
+        assert db.query(PrivacyNotice).count() == orig_count
+        assert db.query(NoticeTranslation).count() == original_translations_count
+
+        # assert our returned object is updated as we expect
+        assert updated_privacy_notice.name == "updated name" != old_name
+        assert updated_privacy_notice.data_uses == old_data_uses
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 2
+
+        db.refresh(privacy_notice)
+        assert privacy_notice.name == "updated name"
+        assert privacy_notice.data_uses == old_data_uses
+
+        assert len(privacy_notice.translations) == 1
+
+        # make sure our latest entry in history table corresponds to current record
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.version == 2.0)
+            .first()
+        )
+        assert notice_history.name == "updated name"
+        assert notice_history.data_uses == old_data_uses
+        assert notice_history.version == 2.0
+
+        # and that previous record hasn't changed
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.version == 1.0)
+            .first()
+        )
+        assert notice_history.name == old_name
+        assert notice_history.data_uses == old_data_uses
+        assert notice_history.version == 1.0
+
+        # now try another update to test that subsequent updates work
+        # also try specifying two fields on the update, to make sure that works
+        updated_privacy_notice = privacy_notice.update(
+            db,
+            data={
+                "name": "updated name again",
+                "data_uses": ["data_use_1", "data_use_2"],
+                "translations": [
+                    {
+                        "language": SupportedLanguage.english,
+                        "title": "Example privacy notice",
+                    }
+                ],
+            },
+        )
+
+        # assert our returned object is updated as we expect
+        assert updated_privacy_notice.name == "updated name again"
+        assert updated_privacy_notice.data_uses == ["data_use_1", "data_use_2"]
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 3
+
+        db.refresh(privacy_notice)
+        assert privacy_notice.name == "updated name again"
+        assert privacy_notice.data_uses == ["data_use_1", "data_use_2"]
+        assert len(privacy_notice.translations) == 1
+        translation = privacy_notice.translations[0]
+        assert translation.description == "user&#x27;s description &lt;script /&gt;"
+
+        assert translation.privacy_notice_history.version == 3.0
+
+        # make sure our latest entry in history table corresponds to current record
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.version == 3.0)
+            .first()
+        )
+        assert notice_history.name == "updated name again"
+        assert notice_history.data_uses == ["data_use_1", "data_use_2"]
+        assert notice_history.version == 3.0
+        assert notice_history.description == "user&#x27;s description &lt;script /&gt;"
+
+        # and that previous record hasn't changed
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.version == 2.0)
+            .first()
+        )
+        assert notice_history.name == "updated name"
+        assert notice_history.data_uses == old_data_uses
+        assert notice_history.version == 2.0
+
+    def test_update_translations_added(
+        self, db: Session, privacy_notice: PrivacyNotice
+    ):
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+        privacy_notice_updated_at = privacy_notice.updated_at
+
+        dry_update_data = {
+            "translations": [
+                {
+                    "language": SupportedLanguage.english,
+                    "title": "Example privacy notice",
+                    "description": "user&#x27;s description &lt;script /&gt;",
+                },
+                {
+                    "language": SupportedLanguage.spanish,
+                    "title": "¡Ejemplo de aviso de privacidad!",
+                },
+            ]
+        }
+        privacy_notice.dry_update(data=dry_update_data)
+
+        privacy_notice.update(
+            db,
+            data=dry_update_data,
+        )
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 2
+        assert len(PrivacyNoticeHistory.all(db)) == 2
+
+        db.refresh(privacy_notice)
+        # Privacy notice itself unchanged
+        assert privacy_notice.updated_at == privacy_notice_updated_at
+
+        assert len(privacy_notice.translations) == 2
+
+        translation = privacy_notice.translations[0]
+
+        # English translation unchanged
+        assert translation.language == SupportedLanguage.english
+        assert translation.title == "Example privacy notice"
+        assert translation.histories.count() == 1
+        assert (
+            privacy_notice.get_translation_by_language(db, SupportedLanguage.english)
+            == translation
+        )
+
+        # "Spanish" translation translation added
+        translation_es = privacy_notice.translations[1]
+        assert translation_es.language == SupportedLanguage.spanish
+        assert translation_es.title == "¡Ejemplo de aviso de privacidad!"
+        assert translation.histories.count() == 1
+        assert (
+            privacy_notice.get_translation_by_language(db, SupportedLanguage.spanish)
+            == translation_es
+        )
+        assert privacy_notice.get_translation_by_language(db, None) is None
+
+        # make sure our latest spanish entry in history table corresponds to current record
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(
+                PrivacyNoticeHistory.version == 1.0,
+                PrivacyNoticeHistory.translation_id == translation_es.id,
+            )
+            .first()
+        )
+        assert notice_history.title == "¡Ejemplo de aviso de privacidad!"
+        assert notice_history.version == 1.0
+
+        # and that other record hasn't changed
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(
+                PrivacyNoticeHistory.version == 1.0,
+                PrivacyNoticeHistory.translation_id == translation.id,
+            )
+            .first()
+        )
+        assert notice_history.title == "Example privacy notice"
+        assert notice_history.version == 1.0
+
+    def test_update_translations_modified(
+        self, db: Session, privacy_notice: PrivacyNotice
+    ):
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+        privacy_notice_updated_at = privacy_notice.updated_at
+
+        privacy_notice.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": SupportedLanguage.english,
+                        "title": "Example privacy notice with updated title",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+            },
+        )
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 2
+
+        db.refresh(privacy_notice)
+        # Privacy notice itself unchanged
+        assert privacy_notice.updated_at == privacy_notice_updated_at
+
+        assert len(privacy_notice.translations) == 1
+        translation = privacy_notice.translations[0]
+        # Translation was updated though
+        assert translation.title == "Example privacy notice with updated title"
+
+        # make sure our latest entry in history table corresponds to current record
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.version == 2.0)
+            .first()
+        )
+        assert notice_history.title == "Example privacy notice with updated title"
+        assert notice_history.version == 2.0
+
+    def test_history_excludes_cached_properties(
+        self, db: Session, privacy_notice: PrivacyNotice
+    ):
+        """Access cached property, trigger history creation, assert no forbidden attributes on history."""
+        # Access cached property to ensure it would be cached on the instance
+        _ = privacy_notice.cookies
+
+        # Trigger a history-creating update
+        privacy_notice.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": SupportedLanguage.english,
+                        "title": "Updated title for cached test",
+                    }
+                ]
+            },
+        )
+
+        # Fetch latest history and ensure it does not have forbidden attributes
+        latest_history = (
+            PrivacyNoticeHistory.query(db)
+            .order_by(PrivacyNoticeHistory.created_at.desc())
+            .first()
+        )
+        assert latest_history is not None
+        assert not hasattr(latest_history, "cookies")
+
+        # and that previous record hasn't changed
+        notice_history = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.version == 1.0)
+            .first()
+        )
+        assert notice_history.title == "Example privacy notice"
+        assert notice_history.version == 1.0
+
+    def test_update_translations_removed(
+        self, db: Session, privacy_notice: PrivacyNotice
+    ):
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+        privacy_notice_updated_at = privacy_notice.updated_at
+        history = db.query(PrivacyNoticeHistory).first()
+        assert history.translation_id == NoticeTranslation.all(db)[0].id
+
+        privacy_notice.update(
+            db,
+            data={"name": "New name"},
+        )
+
+        # assert we have expected db records
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 0
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        db.refresh(privacy_notice)
+        assert privacy_notice.name == "New name"
+        assert privacy_notice.updated_at != privacy_notice_updated_at
+
+        assert not len(privacy_notice.translations) == 1
+
+        db.refresh(history)
+        # Translation id just removed, so it can stay linked to the Privacy Preference History record if applicable
+        assert history.translation_id is None
+
+    def test_dry_update(self, privacy_notice: PrivacyNotice):
+        old_name = privacy_notice.name
+        old_data_uses = privacy_notice.data_uses
+
+        updated_notice = privacy_notice.dry_update(data={"name": "updated name"})
+        # ensure our updated field got updated in-memory
+        assert updated_notice.name == "updated name" != old_name
+        # ensure non-updated fields are present and unchanged
+        assert updated_notice.data_uses == old_data_uses
+
+        # now try a list/array field
+        updated_notice = privacy_notice.dry_update(
+            data={"data_uses": ["data_use_1", "data_use_2"]}
+        )
+        # ensure our updated field got updated in-memory
+        assert updated_notice.data_uses == ["data_use_1", "data_use_2"] != old_data_uses
+        # ensure non-updated fields are present and unchanged
+        assert updated_notice.name == old_name
+
+        # try more than one field
+        updated_notice = privacy_notice.dry_update(
+            data={"name": "updated name", "data_uses": ["data_use_1", "data_use_2"]}
+        )
+        assert updated_notice.name == "updated name" != old_name
+        assert updated_notice.data_uses == ["data_use_1", "data_use_2"] != old_data_uses
+
+        # try an empty field
+        updated_notice = privacy_notice.dry_update(data={"name": None})
+        assert updated_notice.name is None
+
+        # try an empty string
+        updated_notice = privacy_notice.dry_update(data={"name": ""})
+        assert updated_notice.name == ""
+
+        # try an empty field alongside another field
+        updated_notice = privacy_notice.dry_update(
+            data={"name": None, "data_uses": ["data_use_1", "data_use_2"]}
+        )
+        assert updated_notice.name is None
+        assert updated_notice.data_uses == ["data_use_1", "data_use_2"]
+
+        # try just passing in an empty object
+        updated_notice = privacy_notice.dry_update(data={})
+        assert updated_notice.name == old_name
+        assert updated_notice.data_uses == old_data_uses
+
+    def test_dry_update_copies_cleanly(
+        self, db: Session, privacy_notice: PrivacyNotice
+    ):
+        """
+        Ensure the dry_update method cleanly provides a "copied" object
+        that mimics the update, but does not actually impact the object being operated on
+        """
+
+        assert len(PrivacyNotice.all(db)) == 1
+        assert len(NoticeTranslation.all(db)) == 1
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+        old_name = privacy_notice.name
+
+        updated_notice = privacy_notice.dry_update(data={"name": "updated name"})
+        # ensure our updated field got updated in-memory
+        assert updated_notice.name == "updated name" != old_name
+
+        # ensure we still only have one privacy notice in the DB
+        assert len(PrivacyNotice.all(db)) == 1
+        db.refresh(privacy_notice)
+        # and ensure it hasn't been impacted by the update
+        assert privacy_notice.name == old_name
+
+        assert len(NoticeTranslation.all(db)) == 1
+
+        # ensure no PrivacyNoticeHistory entries were created
+        assert len(PrivacyNoticeHistory.all(db)) == 1
+
+        # ensure our dry update object is totally dissociated from the original object
+        updated_notice.name = "another updated name"
+        assert privacy_notice.name == old_name
+        db.refresh(privacy_notice)
+        assert privacy_notice.name == old_name
+
+    def test_dry_update_excludes_cached_properties(self, privacy_notice: PrivacyNotice):
+        """Access cached property, run dry_update, and ensure 'cookies' is not passed/stored."""
+        # Prime cached property on the source instance
+        _ = privacy_notice.cookies
+
+        # Should not raise and should not carry 'cookies' into the constructed copy
+        updated = privacy_notice.dry_update(data={"name": "updated via dry"})
+        assert updated.name == "updated via dry"
+        assert "cookies" not in updated.__dict__
+
+    @pytest.mark.parametrize(
+        "privacy_notice_data_use,declaration_cookies,expected_cookies,description",
+        [
+            (
+                ["marketing.advertising", "third_party_sharing"],
+                [{"name": "test_cookie", "domain": "example.com"}],
+                [
+                    {
+                        "name": "test_cookie",
+                        "domain": "example.com",
+                        "asset_type": "Cookie",
+                    }
+                ],
+                "Data uses overlap exactly",
+            ),
+            (
+                ["marketing.advertising.first_party", "third_party_sharing"],
+                [{"name": "test_cookie", "domain": "example.com"}],
+                [],
+                "Privacy notice use more specific than system's.  Too big a leap to assume system should be adjusted here.",
+            ),
+            (
+                ["marketing", "third_party_sharing"],
+                [{"name": "test_cookie", "domain": "example.com"}],
+                [
+                    {
+                        "name": "test_cookie",
+                        "domain": "example.com",
+                        "asset_type": "Cookie",
+                    }
+                ],
+                "Privacy notice use more general than system's, so system's data use is under the scope of the notice",
+            ),
+            (
+                ["marketing.advertising", "third_party_sharing"],
+                [
+                    {"name": "test_cookie", "domain": "example.com"},
+                    {"name": "another_cookie", "domain": "example.com"},
+                ],
+                [
+                    {
+                        "name": "test_cookie",
+                        "domain": "example.com",
+                        "asset_type": "Cookie",
+                    },
+                    {
+                        "name": "another_cookie",
+                        "domain": "example.com",
+                        "asset_type": "Cookie",
+                    },
+                ],
+                "Test multiple cookies",
+            ),
+            (["marketing.advertising"], [], [], "No cookies returns an empty set"),
+        ],
+    )
+    def test_relevant_cookies(
+        self,
+        privacy_notice_data_use,
+        declaration_cookies,
+        expected_cookies,
+        description,
+        privacy_notice,
+        db,
+        system,
+    ):
+        """Test different combinations of data uses and cookies between the Privacy Notice and the Privacy Declaration"""
+        # Clean up any existing cookie assets first
+        db.query(Asset).filter(Asset.asset_type == "Cookie").delete()
+        db.commit()
+
+        privacy_notice.data_uses = privacy_notice_data_use
+        privacy_notice.save(db)
+
+        privacy_declaration = system.privacy_declarations[0]
+        assert privacy_declaration.data_use == "marketing.advertising"
+
+        # Create test assets
+        created_assets = []
+        for cookie in declaration_cookies:
+            asset = Asset.create(
+                db,
+                data={
+                    "name": cookie["name"],
+                    "asset_type": "Cookie",
+                    "domain": cookie["domain"],
+                    "system_id": system.id,
+                    "data_uses": [privacy_declaration.data_use],
+                },
+                check_name=False,
+            )
+            created_assets.append(asset)
+
+        try:
+            assert [
+                {
+                    "name": cookie.name,
+                    "domain": cookie.domain,
+                    "asset_type": cookie.asset_type,
+                }
+                for cookie in privacy_notice.cookies
+            ] == expected_cookies, description
+        finally:
+            # Clean up created assets
+            for asset in created_assets:
+                db.delete(asset)
+            db.commit()
+
+    def test_generate_privacy_notice_key(self, privacy_notice):
+        assert (
+            PrivacyNotice.generate_notice_key("Example Privacy Notice")
+            == "example_privacy_notice"
+        )
+
+        assert (
+            privacy_notice.generate_notice_key(" Name of My Privacy   Notice  ")
+            == "name_of_my_privacy_notice"
+        )
+
+        with pytest.raises(FidesValidationError):
+            privacy_notice.generate_notice_key("Dawn's Bookstore")
+
+        with pytest.raises(FidesValidationError):
+            privacy_notice.generate_notice_key("")
+
+        with pytest.raises(Exception):
+            privacy_notice.generate_notice_key(1)
+
+    def test_is_gpp(self):
+        assert (
+            PrivacyNotice(
+                name="pn_1",
+                notice_key="pn_1",
+                data_uses=["marketing.advertising"],
+                framework=PrivacyNoticeFramework.gpp_us_national.value,
+            ).is_gpp
+            is True
+        )
+
+        assert (
+            PrivacyNotice(
+                name="pn_1",
+                notice_key="pn_1",
+                data_uses=["marketing.advertising"],
+                framework=PrivacyNoticeFramework.gpp_us_state.value,
+            ).is_gpp
+            is True
+        )
+
+        assert (
+            PrivacyNotice(
+                name="pn_1",
+                notice_key="pn_1",
+                data_uses=["marketing.advertising"],
+                framework="bogus_framework",
+            ).is_gpp
+            is False
+        )
+
+        assert (
+            PrivacyNotice(
+                name="pn_1",
+                notice_key="pn_1",
+                data_uses=["marketing.advertising"],
+            ).is_gpp
+            is False
+        )
+
+    def test_deprecated_privacy_notice_region_fields(self, db):
+        historic_privacy_notice = PrivacyNoticeHistory.create(
+            db,
+            data={
+                "name": "Deprecated Notice History",
+                "description": "old_description",
+                "regions": ["gb_eng"],  # deprecated field with deprecated region
+                "displayed_in_overlay": True,  # deprecated field
+                "displayed_in_privacy_center": True,  # deprecated field
+                "displayed_in_api": None,  # deprecated field
+                "consent_mechanism": ConsentMechanism.opt_in,
+                "data_uses": ["marketing"],
+                "version": 1.0,
+                "disabled": True,
+                "has_gpc_flag": False,
+                "enforcement_level": EnforcementLevel.system_wide,
+                "notice_key": "test_key",
+                "language": None,  # New field, not required for early records
+                "title": "Test title",
+                "translation_id": None,  # New concept, not required for early records
+            },
+        )
+
+        assert historic_privacy_notice.regions == [DeprecatedNoticeRegion.gb_eng]
+        assert not historic_privacy_notice.language
+        assert historic_privacy_notice.displayed_in_privacy_center
+        assert historic_privacy_notice.displayed_in_overlay
+        assert (
+            historic_privacy_notice.displayed_in_api is None
+        )  # displayed_in fields are deprecated and not required
+
+    def test_duplicate_notice_translations_prevented(
+        self, db, privacy_notice, privacy_experience_overlay
+    ):
+        config = privacy_experience_overlay.experience_config
+        ExperienceNotices.create(
+            db, data={"notice_id": privacy_notice.id, "experience_config_id": config.id}
+        )
+
+        with pytest.raises(IntegrityError):
+            ExperienceNotices.create(
+                db,
+                data={
+                    "notice_id": privacy_notice.id,
+                    "experience_config_id": config.id,
+                },
+            )
+
+    def test_language_must_be_unique(self, db, privacy_notice):
+        nt = NoticeTranslation.create(
+            db,
+            data={
+                "language": SupportedLanguage.german,
+                "title": "new",
+                "privacy_notice_id": privacy_notice.id,
+            },
+        )
+
+        with pytest.raises(IntegrityError):
+            nt = NoticeTranslation.create(
+                db,
+                data={
+                    "language": SupportedLanguage.german,
+                    "title": "new",
+                    "privacy_notice_id": privacy_notice.id,
+                },
+            )
+
+        nt.delete(db)
+
+    def test_cookies_property(self, privacy_notice):
+        assert len(privacy_notice.cookies) == 2
+
+    def test_cookies_property_with_multiple_data_uses(
+        self, privacy_notice_targeted_advertising, multi_data_use_cookie_asset
+    ):
+        """Test that assets with multiple data uses are matched correctly.
+
+        This reproduces the issue where an asset has multiple data uses and
+        the matching data use appears in the middle of the comma-separated string,
+        not at the beginning.
+        """
+        # This should find the _gcl_au cookie since it has matching data uses
+        cookies = privacy_notice_targeted_advertising.cookies
+
+        # Verify we found exactly one cookie (the _gcl_au cookie)
+        assert len(cookies) == 1
+        assert cookies[0].name == multi_data_use_cookie_asset.name
+
+    def test_cookies_property_hierarchical_matching_edge_cases(
+        self, privacy_notice_targeted_advertising, db, system
+    ):
+        """Test edge cases for hierarchical data use matching.
+
+        Ensures that substring matches don't create false positives when:
+        1. One data use is a substring of another (e.g., 'fun' vs 'funding')
+        2. The data use appears as a substring in a longer custom data use
+        """
+        # Clean up any existing assets to avoid interference
+        db.query(Asset).filter(Asset.asset_type == "Cookie").delete()
+        db.commit()
+
+        # Create assets that should NOT match our targeted advertising notice
+        # (which looks for 'marketing.advertising.first_party.targeted'
+        # and 'marketing.advertising.third_party.targeted')
+
+        # Case 1: Substring data use names
+        funding_asset = Asset(
+            name="funding_cookie",
+            asset_type="Cookie",
+            domain="example.com",
+            system_id=system.id,
+            data_uses=["funding.advertising.campaigns"],  # Contains 'funding' not 'fun'
+        )
+        funding_asset.save(db)
+
+        # Case 2: Data use as substring in custom data use
+        custom_marketing_asset = Asset(
+            name="custom_marketing_cookie",
+            asset_type="Cookie",
+            domain="example.com",
+            system_id=system.id,
+            data_uses=[
+                "custom_data_use.custom_marketing"
+            ],  # Contains 'marketing' but not as proper hierarchy
+        )
+        custom_marketing_asset.save(db)
+
+        # Case 3: Asset that SHOULD match (proper hierarchical child)
+        proper_hierarchy_asset = Asset(
+            name="proper_hierarchy_cookie",
+            asset_type="Cookie",
+            domain="example.com",
+            system_id=system.id,
+            data_uses=[
+                "marketing.advertising.first_party.targeted.behavioral"
+            ],  # Child of our target data use
+        )
+        proper_hierarchy_asset.save(db)
+
+        try:
+            privacy_notice = privacy_notice_targeted_advertising
+            cookies = privacy_notice.cookies
+            cookie_names = [cookie.name for cookie in cookies]
+
+            # Should only find the proper hierarchical match, not the false positives
+            assert len(cookies) == 1, (
+                f"Expected exactly 1 cookie, but found {len(cookies)}: {cookie_names}. "
+                f"Privacy notice data uses: {privacy_notice.data_uses}"
+            )
+            assert "proper_hierarchy_cookie" in cookie_names, (
+                f"Expected 'proper_hierarchy_cookie', but found: {cookie_names}"
+            )
+
+            # Verify we didn't get false positives
+            assert "funding_cookie" not in cookie_names, (
+                "Should not match 'funding' data use"
+            )
+            assert "custom_marketing_cookie" not in cookie_names, (
+                "Should not match custom data use containing 'marketing'"
+            )
+
+        finally:
+            # Clean up
+            try:
+                funding_asset.delete(db)
+                custom_marketing_asset.delete(db)
+                proper_hierarchy_asset.delete(db)
+            except:
+                pass  # Ignore cleanup errors
+            db.commit()
+
+    def test_cookies_property_fun_vs_funding_edge_case(
+        self, privacy_notice_fun_data_use, db, system
+    ):
+        """Test specific edge case: 'fun' data use should not match 'funding' asset.
+
+        This is a classic substring false positive case where one data use name
+        is contained within another unrelated data use name.
+        """
+        # Clean up any existing assets
+        db.query(Asset).filter(Asset.asset_type == "Cookie").delete()
+        db.commit()
+
+        # Create asset with 'funding' data use (should NOT match 'fun' notice)
+        funding_asset = Asset(
+            name="funding_cookie",
+            asset_type="Cookie",
+            domain="example.com",
+            system_id=system.id,
+            data_uses=[
+                "funding"
+            ],  # Contains 'fun' as substring but is different data use
+        )
+        funding_asset.save(db)
+
+        # Create asset with 'fun' data use (SHOULD match 'fun' notice)
+        fun_asset = Asset(
+            name="fun_cookie",
+            asset_type="Cookie",
+            domain="example.com",
+            system_id=system.id,
+            data_uses=["fun.activities"],  # Proper hierarchical child of 'fun'
+        )
+        fun_asset.save(db)
+
+        try:
+            privacy_notice = privacy_notice_fun_data_use
+            cookies = privacy_notice.cookies
+            cookie_names = [cookie.name for cookie in cookies]
+
+            # Should only find the 'fun' asset, not the 'funding' asset
+            assert len(cookies) == 1, (
+                f"Expected exactly 1 cookie, but found {len(cookies)}: {cookie_names}. "
+                f"Privacy notice data uses: {privacy_notice.data_uses}"
+            )
+            assert "fun_cookie" in cookie_names, (
+                f"Expected 'fun_cookie', but found: {cookie_names}"
+            )
+
+            # Critical: should not match 'funding' even though it contains 'fun' substring
+            assert "funding_cookie" not in cookie_names, (
+                "Should not match 'funding' asset when looking for 'fun' data use"
+            )
+
+        finally:
+            # Clean up
+            try:
+                funding_asset.delete(db)
+                fun_asset.delete(db)
+            except:
+                pass  # Ignore cleanup errors
+            db.commit()
+
+    def test_cookies_property_empty_data_uses(
+        self, privacy_notice_empty_data_uses, multi_data_use_cookie_asset
+    ) -> None:
+        """Test that a privacy notice with no data uses returns an empty list of cookies."""
+        # Privacy notice with empty data uses should return no cookies,
+        # even when cookie assets exist that would normally match
+        cookies = privacy_notice_empty_data_uses.cookies
+        assert len(cookies) == 0, (
+            f"Expected no cookies for privacy notice with empty data uses, "
+            f"but found {len(cookies)}: {[c.name for c in cookies]}. "
+        )
+
+    def test_group_cookies_by_data_use(self):
+        """Ensure cookies are grouped under each of their data uses accurately."""
+        # Create unsaved assets sufficient for grouping logic
+        a1 = Asset(
+            name="a1",
+            asset_type="Cookie",
+            data_uses=["analytics", "marketing.advertising"],
+        )  # type: ignore[arg-type]
+        a2 = Asset(name="a2", asset_type="Cookie", data_uses=["analytics.reporting"])  # type: ignore[arg-type]
+        a3 = Asset(name="a3", asset_type="Cookie", data_uses=["marketing"])  # type: ignore[arg-type]
+
+        grouped = PrivacyNotice._group_cookies_by_data_use([a1, a2, a3])
+
+        # Assert keys and contents precisely
+        assert set(grouped.keys()) == {
+            "analytics",
+            "marketing.advertising",
+            "analytics.reporting",
+            "marketing",
+        }
+        assert grouped["analytics"] == [a1]
+        assert grouped["marketing.advertising"] == [a1]
+        assert grouped["analytics.reporting"] == [a2]
+        assert grouped["marketing"] == [a3]
+
+    def test_select_cookies_for_notice_data_uses_dedup_and_hierarchy(self):
+        """Selecting supports exact + hierarchical matches and dedupes the same Asset instance."""
+        # Same asset appears under both an exact and a hierarchical child data_use
+        shared = Asset(
+            name="shared",
+            asset_type="Cookie",
+            data_uses=["analytics", "analytics.reporting"],
+        )  # type: ignore[arg-type]
+        child_only = Asset(
+            name="child",
+            asset_type="Cookie",
+            data_uses=["analytics.reporting.dashboard"],
+        )  # type: ignore[arg-type]
+        other = Asset(
+            name="other", asset_type="Cookie", data_uses=["functional.storage"]
+        )  # type: ignore[arg-type]
+
+        cookies_by_data_use = {
+            "analytics": [shared],
+            "analytics.reporting": [shared],
+            "analytics.reporting.dashboard": [child_only],
+            "functional.storage": [other],
+        }
+
+        # Notice asks for parent "analytics"; should include shared and child_only (hierarchical), but not other.
+        selected = PrivacyNotice._select_cookies_for_notice_data_uses(
+            ["analytics"], cookies_by_data_use
+        )
+        names = sorted([c.name for c in selected])
+        assert names == ["child", "shared"]
+
+        # No matches
+        assert (
+            PrivacyNotice._select_cookies_for_notice_data_uses(
+                ["marketing"], cookies_by_data_use
+            )
+            == []
+        )
+
+    def test_query_cookie_assets_for_data_uses_hierarchy_and_exclusions(
+        self, db: Session, system: System, system_third_party_sharing: System
+    ):
+        """Querying finds exact and hierarchical matches, and can exclude by System fides_key."""
+        # Clean slate
+        db.query(Asset).filter(Asset.asset_type == "Cookie").delete()
+        db.commit()
+
+        # Create cookies on two different systems and one without a system
+        asset_exact_parent = Asset.create(
+            db,
+            data={
+                "name": "parent_marketing",
+                "asset_type": "Cookie",
+                "domain": "example.com",
+                "system_id": system.id,
+                "data_uses": ["marketing"],
+            },
+            check_name=False,
+        )
+        asset_child = Asset.create(
+            db,
+            data={
+                "name": "child_marketing_advertising",
+                "asset_type": "Cookie",
+                "domain": "example.com",
+                "system_id": system_third_party_sharing.id,
+                "data_uses": ["marketing.advertising.reporting"],
+            },
+            check_name=False,
+        )
+        asset_nonmatch = Asset.create(
+            db,
+            data={
+                "name": "analytics_only",
+                "asset_type": "Cookie",
+                "domain": "example.com",
+                "data_uses": ["analytics.reporting"],
+            },
+            check_name=False,
+        )
+
+        try:
+            # Query with parent data_use should include exact and hierarchical children
+            results = PrivacyNotice._query_cookie_assets_for_data_uses(
+                db, {"marketing"}
+            )
+            result_names = {r.name for r in results}
+            assert result_names == {"parent_marketing", "child_marketing_advertising"}
+
+            # Exclude cookies from the first system only
+            excluded = PrivacyNotice._query_cookie_assets_for_data_uses(
+                db,
+                {"marketing"},
+                exclude_cookies_from_systems={system.fides_key},
+            )
+            excluded_names = {r.name for r in excluded}
+            assert excluded_names == {"child_marketing_advertising"}
+
+            # Excluding both systems yields none for this data_use
+            excluded_all = PrivacyNotice._query_cookie_assets_for_data_uses(
+                db,
+                {"marketing"},
+                exclude_cookies_from_systems={
+                    system.fides_key,
+                    system_third_party_sharing.fides_key,
+                },
+            )
+            assert excluded_all == []
+        finally:
+            for asset in (asset_exact_parent, asset_child, asset_nonmatch):
+                db.delete(asset)
+            db.commit()
+
+    def test_load_cookie_data_for_notices_bulk_preload_and_exclusions(
+        self,
+        db: Session,
+        privacy_notice: PrivacyNotice,
+        privacy_notice_2: PrivacyNotice,
+        system: System,
+        system_third_party_sharing: System,
+    ):
+        """Bulk loader should pre-populate `cookies` for each notice and honor exclusions."""
+        # Clear any existing cookie assets
+        db.query(Asset).filter(Asset.asset_type == "Cookie").delete()
+        db.commit()
+
+        # Set distinct data_uses across notices
+        privacy_notice.data_uses = ["marketing"]
+        privacy_notice.save(db)
+        privacy_notice_2.data_uses = ["third_party_sharing"]
+        privacy_notice_2.save(db)
+
+        # Cookies for both notices
+        cookie_marketing_sys1 = Asset.create(
+            db,
+            data={
+                "name": "mkting_s1",
+                "asset_type": "Cookie",
+                "domain": "example.com",
+                "system_id": system.id,
+                "data_uses": ["marketing.advertising"],
+            },
+            check_name=False,
+        )
+        cookie_marketing_sys2 = Asset.create(
+            db,
+            data={
+                "name": "mkting_s2",
+                "asset_type": "Cookie",
+                "domain": "example.com",
+                "system_id": system_third_party_sharing.id,
+                "data_uses": ["marketing.advertising.first_party"],
+            },
+            check_name=False,
+        )
+        cookie_tps_sys2 = Asset.create(
+            db,
+            data={
+                "name": "tps_s2",
+                "asset_type": "Cookie",
+                "domain": "example.com",
+                "system_id": system_third_party_sharing.id,
+                "data_uses": ["third_party_sharing"],
+            },
+            check_name=False,
+        )
+
+        try:
+            # Preload with exclusion of system_third_party_sharing; notice 1 should only see mkting_s1
+            PrivacyNotice.load_cookie_data_for_notices(
+                db,
+                [privacy_notice, privacy_notice_2],
+                exclude_cookies_from_systems={system_third_party_sharing.fides_key},
+            )
+
+            names_notice_1 = sorted([c.name for c in privacy_notice.cookies])
+            assert names_notice_1 == ["mkting_s1"]
+
+            # Notice 2 should have no cookies due to exclusion
+            assert [c.name for c in privacy_notice_2.cookies] == []
+
+            # Now preload again without exclusions; both notices should be populated
+            PrivacyNotice.load_cookie_data_for_notices(
+                db,
+                [privacy_notice, privacy_notice_2],
+                exclude_cookies_from_systems=None,
+            )
+
+            names_notice_1 = sorted([c.name for c in privacy_notice.cookies])
+            assert names_notice_1 == ["mkting_s1", "mkting_s2"]
+            assert sorted([c.name for c in privacy_notice_2.cookies]) == ["tps_s2"]
+        finally:
+            for asset in (
+                cookie_marketing_sys1,
+                cookie_marketing_sys2,
+                cookie_tps_sys2,
+            ):
+                db.delete(asset)
+            db.commit()
+
+
+class TestHierarchicalNotices:
+    @pytest.fixture(scope="function")
+    def child_privacy_notice(self, db: Session) -> Generator:
+        privacy_notice = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "Weekly Ads",
+                "notice_key": "weekly_ads_privacy_notice",
+                "consent_mechanism": ConsentMechanism.opt_in,
+                "data_uses": ["marketing.advertising", "third_party_sharing"],
+                "enforcement_level": EnforcementLevel.system_wide,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Weekly Ads",
+                        "description": "Weekly specials",
+                    }
+                ],
+            },
+        )
+
+        yield privacy_notice
+
+        for translation in privacy_notice.translations:
+            for history in translation.histories:
+                history.delete(db)
+            translation.delete(db)
+        privacy_notice.delete(db)
+
+    @pytest.fixture(scope="function")
+    def second_child_privacy_notice(self, db: Session) -> Generator:
+        privacy_notice = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "Daily Ads",
+                "notice_key": "daily_ads_privacy_notice",
+                "consent_mechanism": ConsentMechanism.opt_in,
+                "data_uses": ["marketing.advertising", "third_party_sharing"],
+                "enforcement_level": EnforcementLevel.system_wide,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Daily Ads",
+                        "description": "Daily specials",
+                    }
+                ],
+            },
+        )
+
+        yield privacy_notice
+
+        for translation in privacy_notice.translations:
+            for history in translation.histories:
+                history.delete(db)
+            translation.delete(db)
+        privacy_notice.delete(db)
+
+    @pytest.fixture(scope="function")
+    def privacy_notice_with_child(
+        self, db, child_privacy_notice: PrivacyNotice
+    ) -> Generator:
+        privacy_notice = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "example privacy notice",
+                "notice_key": "example_privacy_notice_1",
+                "consent_mechanism": ConsentMechanism.opt_in,
+                "data_uses": ["marketing.advertising", "third_party_sharing"],
+                "enforcement_level": EnforcementLevel.system_wide,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name}
+                ],
+            },
+        )
+
+        yield privacy_notice
+
+        for translation in privacy_notice.translations:
+            for history in translation.histories:
+                history.delete(db)
+            translation.delete(db)
+        privacy_notice.delete(db)
+
+    def test_create_with_child_notice(self, db, child_privacy_notice: PrivacyNotice):
+        privacy_notice = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "example privacy notice",
+                "notice_key": "example_privacy_notice_1",
+                "consent_mechanism": ConsentMechanism.opt_in,
+                "data_uses": ["marketing.advertising", "third_party_sharing"],
+                "enforcement_level": EnforcementLevel.system_wide,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name}
+                ],
+            },
+        )
+        assert privacy_notice.children == [child_privacy_notice]
+
+    def test_create_with_multiple_child_notices(
+        self,
+        db,
+        child_privacy_notice: PrivacyNotice,
+        second_child_privacy_notice: PrivacyNotice,
+    ):
+        privacy_notice = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "example privacy notice",
+                "notice_key": "example_privacy_notice_1",
+                "consent_mechanism": ConsentMechanism.opt_in,
+                "data_uses": ["marketing.advertising", "third_party_sharing"],
+                "enforcement_level": EnforcementLevel.system_wide,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name},
+                    {
+                        "id": second_child_privacy_notice.id,
+                        "name": second_child_privacy_notice.name,
+                    },
+                ],
+            },
+        )
+        assert set(privacy_notice.children) == {
+            child_privacy_notice,
+            second_child_privacy_notice,
+        }
+
+    @pytest.mark.usefixtures("privacy_notice_with_child")
+    def test_create_with_already_linked_child_notice(
+        self, db, child_privacy_notice: PrivacyNotice
+    ):
+        with pytest.raises(ValueError) as exc:
+            PrivacyNotice.create(
+                db=db,
+                data={
+                    "name": "example privacy notice",
+                    "notice_key": "example_privacy_notice_1",
+                    "consent_mechanism": ConsentMechanism.opt_in,
+                    "data_uses": ["marketing.advertising", "third_party_sharing"],
+                    "enforcement_level": EnforcementLevel.system_wide,
+                    "translations": [
+                        {
+                            "language": "en",
+                            "title": "Example privacy notice",
+                            "description": "user&#x27;s description &lt;script /&gt;",
+                        }
+                    ],
+                    "children": [
+                        {
+                            "id": child_privacy_notice.id,
+                            "name": child_privacy_notice.name,
+                        }
+                    ],
+                },
+            )
+        assert (
+            f"The following notices are already linked to another notice: {child_privacy_notice.name}"
+            in str(exc)
+        )
+
+    def test_create_with_missing_child_notice(self, db):
+        with pytest.raises(ValueError) as exc:
+            PrivacyNotice.create(
+                db=db,
+                data={
+                    "name": "example privacy notice",
+                    "notice_key": "example_privacy_notice_1",
+                    "consent_mechanism": ConsentMechanism.opt_in,
+                    "data_uses": ["marketing.advertising", "third_party_sharing"],
+                    "enforcement_level": EnforcementLevel.system_wide,
+                    "translations": [
+                        {
+                            "language": "en",
+                            "title": "Example privacy notice",
+                            "description": "user&#x27;s description &lt;script /&gt;",
+                        }
+                    ],
+                    "children": [{"id": "1", "name": "Daily Ads"}],
+                },
+            )
+        assert "The following notices do not exist: Daily Ads" in str(exc)
+
+    def test_update_with_child_notice(
+        self, db, privacy_notice: PrivacyNotice, child_privacy_notice: PrivacyNotice
+    ):
+        privacy_notice.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name}
+                ],
+            },
+        )
+        assert privacy_notice.children == [child_privacy_notice]
+
+    def test_update_with_multiple_child_notices(
+        self,
+        db,
+        privacy_notice: PrivacyNotice,
+        child_privacy_notice: PrivacyNotice,
+        second_child_privacy_notice: PrivacyNotice,
+    ):
+        privacy_notice.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name},
+                    {
+                        "id": second_child_privacy_notice.id,
+                        "name": second_child_privacy_notice.name,
+                    },
+                ],
+            },
+        )
+        assert set(privacy_notice.children) == {
+            child_privacy_notice,
+            second_child_privacy_notice,
+        }
+
+    @pytest.mark.usefixtures("privacy_notice_with_child")
+    def test_update_with_already_linked_child_notice(
+        self, db, privacy_notice: PrivacyNotice, child_privacy_notice: PrivacyNotice
+    ):
+        with pytest.raises(ValueError) as exc:
+            privacy_notice.update(
+                db,
+                data={
+                    "translations": [
+                        {
+                            "language": "en",
+                            "title": "Example privacy notice",
+                            "description": "user&#x27;s description &lt;script /&gt;",
+                        }
+                    ],
+                    "children": [
+                        {
+                            "id": child_privacy_notice.id,
+                            "name": child_privacy_notice.name,
+                        }
+                    ],
+                },
+            )
+        assert (
+            f"The following notices are already linked to another notice: {child_privacy_notice.name}"
+            in str(exc)
+        )
+
+    def test_update_with_missing_child_notice(self, db, privacy_notice):
+        with pytest.raises(ValueError) as exc:
+            privacy_notice.update(
+                db,
+                data={
+                    "translations": [
+                        {
+                            "language": "en",
+                            "title": "Example privacy notice",
+                            "description": "user&#x27;s description &lt;script /&gt;",
+                        }
+                    ],
+                    "children": [
+                        {
+                            "id": "1",
+                            "name": "Daily Ads",
+                        }
+                    ],
+                },
+            )
+        assert "The following notices do not exist: Daily Ads" in str(exc)
+
+    def test_unlink_single_child_notice(
+        self,
+        db,
+        privacy_notice_with_child: PrivacyNotice,
+        child_privacy_notice: PrivacyNotice,
+        second_child_privacy_notice: PrivacyNotice,
+    ):
+        privacy_notice_with_child.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name},
+                    {
+                        "id": second_child_privacy_notice.id,
+                        "name": second_child_privacy_notice.name,
+                    },
+                ],
+            },
+        )
+        assert set(privacy_notice_with_child.children) == {
+            child_privacy_notice,
+            second_child_privacy_notice,
+        }
+
+        privacy_notice_with_child.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [
+                    {"id": child_privacy_notice.id, "name": child_privacy_notice.name}
+                ],
+            },
+        )
+        assert privacy_notice_with_child.children == [child_privacy_notice]
+
+    def test_unlink_all_child_notices(
+        self,
+        db,
+        privacy_notice_with_child: PrivacyNotice,
+        child_privacy_notice: PrivacyNotice,
+    ):
+        privacy_notice_with_child.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Example privacy notice",
+                        "description": "user&#x27;s description &lt;script /&gt;",
+                    }
+                ],
+                "children": [],
+            },
+        )
+        assert privacy_notice_with_child.children == []
+
+        # verify child privacy notice is just unlinked, not deleted
+        assert (
+            db.query(PrivacyNotice)
+            .filter(PrivacyNotice.id == child_privacy_notice.id)
+            .first()
+        )
+
+    def test_delete_child_notice(
+        self,
+        db,
+        privacy_notice_with_child: PrivacyNotice,
+        child_privacy_notice: PrivacyNotice,
+    ):
+        # delete the child privacy notice
+        for translation in child_privacy_notice.translations:
+            for history in translation.histories:
+                history.delete(db)
+            translation.delete(db)
+        child_privacy_notice.delete(db)
+
+        # verify it's removed from the parent
+        db.refresh(privacy_notice_with_child)
+        assert privacy_notice_with_child.children == []
+
+    def test_delete_parent_notice(
+        self,
+        db,
+        privacy_notice_with_child: PrivacyNotice,
+        child_privacy_notice: PrivacyNotice,
+    ):
+        # delete the parent privacy notice
+        for translation in privacy_notice_with_child.translations:
+            for history in translation.histories:
+                history.delete(db)
+            translation.delete(db)
+        privacy_notice_with_child.delete(db)
+
+        # verify the child is unlinked but not deleted
+        db.refresh(child_privacy_notice)
+        assert child_privacy_notice.parent_id is None
+
+
+class TestChildNoticeDisplayOrder:
+    """Tests for child notice display order functionality"""
+
+    def test_creating_notice_with_children_sets_display_order(
+        self,
+        db: Session,
+        privacy_notice: PrivacyNotice,
+        privacy_notice_us_ca_provide: PrivacyNotice,
+        privacy_notice_us_co_third_party_sharing: PrivacyNotice,
+    ):
+        """Test that creating a notice with children sets display_order correctly"""
+        # Create a parent notice with children in a specific order
+        parent = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "Parent Notice",
+                "notice_key": "parent_notice_display_order",
+                "consent_mechanism": ConsentMechanism.opt_in.value,
+                "data_uses": ["marketing"],
+                "enforcement_level": EnforcementLevel.frontend.value,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Parent Notice Title",
+                        "description": "Parent Notice Description",
+                    }
+                ],
+                "children": [
+                    {
+                        "id": privacy_notice_us_co_third_party_sharing.id,
+                        "name": privacy_notice_us_co_third_party_sharing.name,
+                    },
+                    {"id": privacy_notice.id, "name": privacy_notice.name},
+                    {
+                        "id": privacy_notice_us_ca_provide.id,
+                        "name": privacy_notice_us_ca_provide.name,
+                    },
+                ],
+            },
+        )
+
+        # Refresh to load the children relationship
+        db.refresh(parent)
+
+        # Verify each child has correct display_order value
+        assert len(parent.children) == 3
+        assert parent.children[0].id == privacy_notice_us_co_third_party_sharing.id
+        assert parent.children[0].display_order == 0
+        assert parent.children[1].id == privacy_notice.id
+        assert parent.children[1].display_order == 1
+        assert parent.children[2].id == privacy_notice_us_ca_provide.id
+        assert parent.children[2].display_order == 2
+
+    def test_updating_notice_children_changes_display_order(
+        self,
+        db: Session,
+        privacy_notice: PrivacyNotice,
+        privacy_notice_us_ca_provide: PrivacyNotice,
+        privacy_notice_us_co_third_party_sharing: PrivacyNotice,
+    ):
+        """Test that updating notice children changes display_order"""
+        # Create parent with children in order X, Y, Z
+        parent = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "Parent Notice",
+                "notice_key": "parent_notice_reorder",
+                "consent_mechanism": ConsentMechanism.opt_in.value,
+                "data_uses": ["marketing"],
+                "enforcement_level": EnforcementLevel.frontend.value,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Parent Notice Title",
+                        "description": "Parent Notice Description",
+                    }
+                ],
+                "children": [
+                    {"id": privacy_notice.id, "name": privacy_notice.name},
+                    {
+                        "id": privacy_notice_us_ca_provide.id,
+                        "name": privacy_notice_us_ca_provide.name,
+                    },
+                    {
+                        "id": privacy_notice_us_co_third_party_sharing.id,
+                        "name": privacy_notice_us_co_third_party_sharing.name,
+                    },
+                ],
+            },
+        )
+
+        db.refresh(parent)
+
+        # Verify initial order
+        assert parent.children[0].id == privacy_notice.id
+        assert parent.children[0].display_order == 0
+        assert parent.children[1].id == privacy_notice_us_ca_provide.id
+        assert parent.children[1].display_order == 1
+        assert parent.children[2].id == privacy_notice_us_co_third_party_sharing.id
+        assert parent.children[2].display_order == 2
+
+        # Update with new order (Z, X, Y)
+        parent.update(
+            db,
+            data={
+                "children": [
+                    {
+                        "id": privacy_notice_us_co_third_party_sharing.id,
+                        "name": privacy_notice_us_co_third_party_sharing.name,
+                    },
+                    {"id": privacy_notice.id, "name": privacy_notice.name},
+                    {
+                        "id": privacy_notice_us_ca_provide.id,
+                        "name": privacy_notice_us_ca_provide.name,
+                    },
+                ],
+            },
+        )
+
+        # Refresh to reload the children relationship
+        db.refresh(parent)
+
+        # Verify display_order values are updated and children returns them in new order
+        assert len(parent.children) == 3
+        assert parent.children[0].id == privacy_notice_us_co_third_party_sharing.id
+        assert parent.children[0].display_order == 0
+        assert parent.children[1].id == privacy_notice.id
+        assert parent.children[1].display_order == 1
+        assert parent.children[2].id == privacy_notice_us_ca_provide.id
+        assert parent.children[2].display_order == 2
+
+    def test_children_relationship_ordering_with_null_values(
+        self,
+        db: Session,
+        privacy_notice: PrivacyNotice,
+        privacy_notice_us_ca_provide: PrivacyNotice,
+        privacy_notice_us_co_third_party_sharing: PrivacyNotice,
+    ):
+        """Test that children with NULL display_order appear last"""
+        # Create parent with children
+        parent = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "Parent Notice",
+                "notice_key": "parent_notice_null_order",
+                "consent_mechanism": ConsentMechanism.opt_in.value,
+                "data_uses": ["marketing"],
+                "enforcement_level": EnforcementLevel.frontend.value,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Parent Notice Title",
+                        "description": "Parent Notice Description",
+                    }
+                ],
+                "children": [
+                    {"id": privacy_notice.id, "name": privacy_notice.name},
+                    {
+                        "id": privacy_notice_us_ca_provide.id,
+                        "name": privacy_notice_us_ca_provide.name,
+                    },
+                    {
+                        "id": privacy_notice_us_co_third_party_sharing.id,
+                        "name": privacy_notice_us_co_third_party_sharing.name,
+                    },
+                ],
+            },
+        )
+
+        # Manually set some child display_order to NULL
+        privacy_notice.display_order = None
+        privacy_notice.save(db)
+        privacy_notice_us_ca_provide.display_order = 0
+        privacy_notice_us_ca_provide.save(db)
+        privacy_notice_us_co_third_party_sharing.display_order = 1
+        privacy_notice_us_co_third_party_sharing.save(db)
+
+        db.refresh(parent)
+
+        # Verify children with NULL display_order appear last
+        assert len(parent.children) == 3
+        assert parent.children[0].id == privacy_notice_us_ca_provide.id
+        assert parent.children[0].display_order == 0
+        assert parent.children[1].id == privacy_notice_us_co_third_party_sharing.id
+        assert parent.children[1].display_order == 1
+        assert parent.children[2].id == privacy_notice.id
+        assert parent.children[2].display_order is None
+
+        # Verify no errors occur
+        assert parent.children is not None
+
+    def test_display_order_not_saved_to_historical_records(
+        self,
+        db: Session,
+        privacy_notice: PrivacyNotice,
+        privacy_notice_us_ca_provide: PrivacyNotice,
+    ):
+        """Test that display_order field is not saved to historical records"""
+        # Create a notice with children
+        parent = PrivacyNotice.create(
+            db=db,
+            data={
+                "name": "Parent Notice",
+                "notice_key": "parent_notice_history",
+                "consent_mechanism": ConsentMechanism.opt_in.value,
+                "data_uses": ["marketing"],
+                "enforcement_level": EnforcementLevel.frontend.value,
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Parent Notice Title",
+                        "description": "Parent Notice Description",
+                    }
+                ],
+                "children": [
+                    {"id": privacy_notice.id, "name": privacy_notice.name},
+                    {
+                        "id": privacy_notice_us_ca_provide.id,
+                        "name": privacy_notice_us_ca_provide.name,
+                    },
+                ],
+            },
+        )
+
+        # Update the notice to create a new version
+        parent.update(
+            db,
+            data={
+                "translations": [
+                    {
+                        "language": "en",
+                        "title": "Updated Parent Notice Title",
+                        "description": "Updated Parent Notice Description",
+                    }
+                ],
+            },
+        )
+
+        # Query PrivacyNoticeHistory records
+        histories = (
+            PrivacyNoticeHistory.query(db)
+            .filter(PrivacyNoticeHistory.notice_key == parent.notice_key)
+            .all()
+        )
+
+        # Should have 2 history records (v1.0 and v2.0)
+        assert len(histories) == 2
+
+        # Verify display_order is not in the serialized history data
+        for history in histories:
+            # The PrivacyNoticeHistory model shouldn't have a display_order column
+            assert not hasattr(history, "display_order")

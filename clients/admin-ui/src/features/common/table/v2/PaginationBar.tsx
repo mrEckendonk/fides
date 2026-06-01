@@ -1,22 +1,22 @@
 import { Table as TableInstance, Updater } from "@tanstack/react-table";
 import {
   Button,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  HStack,
-  IconButton,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  Text,
+  ChakraHStack as HStack,
+  ChakraMenu as Menu,
+  ChakraMenuButton as MenuButton,
+  ChakraMenuItem as MenuItem,
+  ChakraMenuList as MenuList,
+  ChakraText as Text,
+  Icons,
 } from "fidesui";
 import { useCallback, useMemo, useState } from "react";
 
-export const PAGE_SIZES = [25, 50, 100];
+import { DEFAULT_PAGE_SIZES } from "../constants";
+
+export const PAGE_SIZES = DEFAULT_PAGE_SIZES;
 
 export const useClientSidePagination = <T,>(
-  tableInstance: TableInstance<T>
+  tableInstance: TableInstance<T>,
 ) => {
   const totalRows = tableInstance.getFilteredRowModel().rows.length;
   const { pageIndex } = tableInstance.getState().pagination;
@@ -45,7 +45,7 @@ export const useServerSidePagination = () => {
   const defaultPageIndex = 1;
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [pageIndex, setPageIndex] = useState<number>(defaultPageIndex);
-  const [totalPages, setTotalPages] = useState<number>();
+  const [totalPages, setTotalPages] = useState<number | null | undefined>(1);
   const onPreviousPageClick = useCallback(() => {
     setPageIndex((prev) => prev - 1);
   }, [setPageIndex]);
@@ -53,17 +53,31 @@ export const useServerSidePagination = () => {
   const onNextPageClick = useCallback(() => {
     setPageIndex((prev) => prev + 1);
   }, [setPageIndex]);
-  const isNextPageDisabled = useMemo(
-    () => pageIndex === totalPages,
-    [pageIndex, totalPages]
-  );
 
-  const startRange =
-    (pageIndex - 1) * pageSize === 0 ? 1 : (pageIndex - 1) * pageSize;
-  const endRange = (pageIndex - 1) * pageSize + pageSize;
+  const isNextPageDisabled = useMemo(() => {
+    const noPages = !totalPages;
+    const lastPage = !!totalPages && pageIndex === totalPages;
+    return noPages || lastPage;
+  }, [pageIndex, totalPages]);
 
-  const resetPageIndexToDefault = () => {
+  let startRange;
+  let endRange;
+  if (totalPages) {
+    const pageStartIndex = (pageIndex - 1) * pageSize;
+    startRange = pageStartIndex + 1;
+    endRange = pageStartIndex + pageSize;
+  } else {
+    startRange = 0;
+    endRange = 0;
+  }
+
+  const resetPageIndexToDefault = useCallback(() => {
     setPageIndex(defaultPageIndex);
+  }, []);
+
+  const updatePageSize = (newPageSize: Updater<number>) => {
+    setPageSize(newPageSize);
+    resetPageIndexToDefault();
   };
 
   return {
@@ -72,7 +86,7 @@ export const useServerSidePagination = () => {
     onNextPageClick,
     isNextPageDisabled,
     pageSize,
-    setPageSize,
+    setPageSize: updatePageSize,
     PAGE_SIZES,
     startRange,
     endRange,
@@ -107,12 +121,7 @@ export const PaginationBar = ({
 }: PaginationBarProps) => (
   <HStack ml={1} mt={3} mb={1}>
     <Menu>
-      <MenuButton
-        as={Button}
-        size="xs"
-        variant="ghost"
-        data-testid="pagination-btn"
-      >
+      <MenuButton as={Button} size="small" data-testid="pagination-btn">
         <Text
           fontSize="xs"
           lineHeight={4}
@@ -144,25 +153,19 @@ export const PaginationBar = ({
         ))}
       </MenuList>
     </Menu>
-    <IconButton
-      icon={<ChevronLeftIcon />}
-      size="xs"
-      variant="outline"
+    <Button
+      icon={<Icons.ChevronLeft />}
+      size="small"
       aria-label="previous page"
       onClick={onPreviousPageClick}
-      isDisabled={isPreviousPageDisabled}
-    >
-      previous
-    </IconButton>
-    <IconButton
-      icon={<ChevronRightIcon />}
-      size="xs"
-      variant="outline"
+      disabled={isPreviousPageDisabled}
+    />
+    <Button
+      icon={<Icons.ChevronRight />}
+      size="small"
       aria-label="next page"
       onClick={onNextPageClick}
-      isDisabled={isNextPageDisabled}
-    >
-      next
-    </IconButton>
+      disabled={isNextPageDisabled}
+    />
   </HStack>
 );

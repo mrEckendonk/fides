@@ -1,25 +1,36 @@
-import { Box, Flex, Heading, Text } from "fidesui";
+import { Typography } from "fidesui";
 import type { NextPage } from "next";
 
+import ErrorPage from "~/features/common/errors/ErrorPage";
 import Layout from "~/features/common/Layout";
-import { PropertiesTable } from "~/features/properties/PropertiesTable";
+import PageHeader from "~/features/common/PageHeader";
+import PropertiesTable from "~/features/properties/PropertiesTable";
+import usePropertiesTable from "~/features/properties/usePropertiesTable";
 
-const PropertiesPage: NextPage = () => (
-  <Layout title="Properties">
-    <Box mb={4}>
-      <Heading fontSize="2xl" fontWeight="semibold" mb={2} data-testid="header">
-        Properties
-      </Heading>
-    </Box>
-    <Flex>
-      <Text fontSize="sm" mb={8} width={{ base: "100%", lg: "60%" }}>
-        Review and manage your properties below. Properties are the locations
-        you have configured for consent management such as a website or mobile
-        app.
-      </Text>
-    </Flex>
-    <PropertiesTable />
-  </Layout>
-);
+const PropertiesPage: NextPage = () => {
+  const { error } = usePropertiesTable();
+
+  if (error) {
+    return (
+      <ErrorPage
+        error={error}
+        defaultMessage="A problem occurred while fetching properties"
+      />
+    );
+  }
+
+  return (
+    <Layout title="Properties">
+      <PageHeader heading="Properties">
+        <Typography.Text>
+          Review and manage your properties below. Properties are the locations
+          you have configured for consent management such as a website or mobile
+          app.
+        </Typography.Text>
+      </PageHeader>
+      <PropertiesTable />
+    </Layout>
+  );
+};
 
 export default PropertiesPage;

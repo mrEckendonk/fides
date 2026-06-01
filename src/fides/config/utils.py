@@ -40,7 +40,6 @@ def get_dev_mode() -> bool:
 # NOTE: allowlist additions should be made with care!
 # Any updates to this list _need_ to be reviewed by the Ethyca security team
 CONFIG_KEY_ALLOWLIST = {
-    "user": ["analytics_opt_out"],
     "logging": ["level"],
     "notifications": [
         "send_request_completion_notification",
@@ -61,9 +60,18 @@ CONFIG_KEY_ALLOWLIST = {
         "task_retry_backoff",
         "require_manual_request_approval",
         "subject_identity_verification_required",
+        "memory_watchdog_enabled",
+        "sql_dry_run",
     ],
     "storage": [
         "active_default_storage_type",
     ],
     "consent": ["override_vendor_purposes"],
+    "admin_ui": ["enabled", "url", "error_notification_mode", "consent_module_enabled"],
+    "privacy_center": ["url"],
+    "privacy_request_duplicate_detection": [
+        "enabled",
+        "time_window_days",
+        "match_identity_fields",
+    ],
 }

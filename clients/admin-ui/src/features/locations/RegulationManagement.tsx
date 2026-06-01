@@ -1,22 +1,19 @@
 import {
-  Box,
   Button,
-  SimpleGrid,
-  Text,
-  useDisclosure,
-  useToast,
-  VStack,
-  WarningIcon,
+  ChakraBox as Box,
+  ChakraSimpleGrid as SimpleGrid,
+  ChakraVStack as VStack,
+  useMessage,
+  useModal,
+  useNotification,
 } from "fidesui";
 import _ from "lodash";
 import { useRouter } from "next/router";
 import { useMemo, useState } from "react";
 
 import { getErrorMessage } from "~/features/common/helpers";
-import ConfirmationModal from "~/features/common/modals/ConfirmationModal";
-import { LOCATIONS_ROUTE } from "~/features/common/nav/v2/routes";
-import SearchBar from "~/features/common/SearchBar";
-import { errorToastParams, successToastParams } from "~/features/common/toast";
+import { LOCATIONS_ROUTE } from "~/features/common/nav/routes";
+import SearchInput from "~/features/common/SearchInput";
 import ToastLink from "~/features/common/ToastLink";
 import {
   LocationRegulationBase,
@@ -37,10 +34,11 @@ const RegulationManagement = ({
 }: {
   data: LocationRegulationResponse;
 }) => {
-  const toast = useToast();
-  const confirmationDisclosure = useDisclosure();
+  const message = useMessage();
+  const notification = useNotification();
+  const modal = useModal();
   const [draftSelections, setDraftSelections] = useState<Array<Selection>>(
-    data.regulations ?? []
+    data.regulations ?? [],
   );
   const [search, setSearch] = useState("");
   const [patchLocationsRegulationsMutationTrigger, { isLoading: isSaving }] =
@@ -56,7 +54,7 @@ const RegulationManagement = ({
   const router = useRouter();
   const goToLocations = () => {
     router.push(LOCATIONS_ROUTE).then(() => {
-      toast.closeAll();
+      notification.destroy();
     });
   };
 
@@ -70,24 +68,21 @@ const RegulationManagement = ({
       locations: [],
     });
     if (isErrorResult(result)) {
-      toast(errorToastParams(getErrorMessage(result.error)));
+      message.error(getErrorMessage(result.error));
     } else {
-      toast(
-        successToastParams(
-          <Text display="inline">
-            Fides has automatically associated the relevant locations with your
-            regulation choices.
-            <ToastLink onClick={goToLocations}>View locations here.</ToastLink>
-          </Text>
-        )
-      );
+      notification.success({
+        message: "Regulation saved",
+        description:
+          "Fides has automatically associated the relevant locations with your regulation choices.",
+        actions: <ToastLink onClick={goToLocations}>View locations</ToastLink>,
+      });
     }
   };
 
   const handleDraftChange = (updatedSelections: Array<Selection>) => {
     const updated = draftSelections.map((draftSelection) => {
       const updatedSelection = updatedSelections.find(
-        (s) => s.id === draftSelection.id
+        (s) => s.id === draftSelection.id,
       );
       return updatedSelection ?? draftSelection;
     });
@@ -96,14 +91,13 @@ const RegulationManagement = ({
   };
 
   return (
-    <VStack alignItems="start" spacing={4}>
+    <VStack alignItems="start" spacing={4} data-testid="regulation-management">
       <Box maxWidth="510px" width="100%">
-        <SearchBar
+        <SearchInput
           onChange={setSearch}
           placeholder="Search"
-          search={search}
+          value={search}
           onClear={() => setSearch("")}
-          data-testid="search-bar"
         />
       </Box>
       <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={6} width="100%">
@@ -111,7 +105,7 @@ const RegulationManagement = ({
           ([continent, regulations]) => {
             const selected = draftSelections
               .filter(
-                (s) => regulations.find((r) => r.id === s.id) && s.selected
+                (s) => regulations.find((r) => r.id === s.id) && s.selected,
               )
               .map((s) => s.id);
             const handleChange = (newSelected: string[]) => {
@@ -132,32 +126,27 @@ const RegulationManagement = ({
                 onChange={handleChange}
               />
             );
-          }
+          },
         )}
       </SimpleGrid>
-      <ConfirmationModal
-        isOpen={confirmationDisclosure.isOpen}
-        onClose={confirmationDisclosure.onClose}
-        onConfirm={() => {
-          handleSave();
-          confirmationDisclosure.onClose();
-        }}
-        title="Location updates"
-        message="Modifications in your regulation settings may also affect your location settings to simplify management. You can override any Fides-initiated changes directly in the location settings."
-        isCentered
-        icon={<WarningIcon color="orange" />}
-      />
-      {showSave ? (
+      {showSave && (
         <Button
-          colorScheme="primary"
-          size="sm"
-          onClick={confirmationDisclosure.onOpen}
-          isLoading={isSaving}
+          type="primary"
+          onClick={() => {
+            modal.confirm({
+              title: "Location updates",
+              content:
+                "Modifications in your regulation settings may also affect your location settings to simplify management. You can override any Fides-initiated changes directly in the location settings.",
+              centered: true,
+              onOk: handleSave,
+            });
+          }}
+          loading={isSaving}
           data-testid="save-btn"
         >
           Save
         </Button>
-      ) : null}
+      )}
     </VStack>
   );
 };

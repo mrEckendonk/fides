@@ -2,160 +2,177 @@ name: Backend Code Checks
 
 on:
   pull_request:
-    # This only ignores paths if there are _no_ commits on the branch that touch other files
-    paths-ignore:
-      - "**.md"
-      - "clients/**"
-      - ".vscode/**"
+  merge_group:
+    types: [checks_requested]
   push:
     branches:
       - "main"
       - "release-**"
 
+# Merge queue strategy: only run container startup + migration checks on
+# merge_group events as a lightweight sanity check.  The full test suite
+# runs on pull_request and push to main/release branches.  This keeps the
+# queue fast while still catching migration head conflicts.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  checks: write
+  pull-requests: write
+
 env:
   IMAGE: ethyca/fides:local
-  DEFAULT_PYTHON_VERSION: "3.10.13"
+  DEFAULT_PYTHON_VERSION: "3.13.11"
+  # Docker auth with read-only permissions.
+  DOCKER_USER: ${{ secrets.DOCKER_USER }}
+  DOCKER_RO_TOKEN: ${{ secrets.DOCKER_RO_TOKEN }}
+  SAAS_OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.SAAS_OP_SERVICE_ACCOUNT_TOKEN }}
+  SAAS_SECRETS_OP_VAULT_ID: ${{ secrets.SAAS_SECRETS_OP_VAULT_ID }}
 
 jobs:
   ###############
   ## Prechecks ##
   ###############
+  Check-Backend-Changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has_backend_changes: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check for backend file changes
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          list-files: shell
+          filters: |
+            backend:
+              - '**/*.py'
+              - '**/*.pxl'
+              - 'Dockerfile'
+              - 'Makefile'
+              - 'pyproject.toml'
+              - 'noxfile.py'
+              - 'data/**'
+              - '.github/workflows/backend_checks.yml'
+
+      - name: Log changed files
+        if: steps.filter.outputs.backend == 'true'
+        run: echo "${{ steps.filter.outputs.backend_files }}"
+
   Collect-Tests:
+    needs: Check-Backend-Changes
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: Set Up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-          cache: "pip"
 
-      - name: Install Nox
-        run: pip install nox>=2022
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}
 
       - name: Run Static Check
-        run: nox -s collect_tests
+        run: uv run nox -s collect_tests
+
+  Build-Frontend-Placeholder:
+    needs: Check-Backend-Changes
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create placeholder admin-ui
+        run: |
+          mkdir -p admin-ui-out
+          echo '<h1>Placeholder</h1>' > admin-ui-out/index.html
+
+      - name: Upload admin-ui placeholder
+        uses: actions/upload-artifact@v7
+        with:
+          name: admin-ui-build
+          path: admin-ui-out/
+          retention-days: 1
 
   Build:
-    needs: Collect-Tests
-    strategy:
-      matrix:
-        # NOTE: These are the currently supported/tested Python Versions
-        python_version: ["3.8.18", "3.9.18", "3.10.13"]
+    needs: [Check-Backend-Changes, Build-Frontend-Placeholder]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Download admin-ui build
+        uses: actions/download-artifact@v8
+        with:
+          name: admin-ui-build
+          path: prebuilt/fides/clients/admin-ui/out
 
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build container
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
-          build-args: PYTHON_VERSION=${{ matrix.python_version }}
-          target: prod
-          outputs: type=docker,dest=/tmp/python-${{ matrix.python_version }}.tar
+          build-args: PYTHON_VERSION=${{ env.DEFAULT_PYTHON_VERSION }}
+          build-contexts: |
+            built_frontend=prebuilt
+          target: test
+          outputs: type=docker,dest=/tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
           push: false
           tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Upload container
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-${{ matrix.python_version }}
-          path: /tmp/python-${{ matrix.python_version }}.tar
-          retention-days: 1
-
-  ###################
-  ## Static Checks ##
-  ###################
-  Static-Checks:
-    strategy:
-      matrix:
-        session_name:
-          [
-            "isort",
-            "black",
-            "mypy",
-            "pylint",
-            "xenon",
-            "check_install",
-            '"pytest(nox)"',
-          ]
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set Up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-          cache: "pip"
-
-      - name: Install Nox
-        run: pip install nox>=2022
-
-      - name: Install Dev Requirements
-        run: pip install -r dev-requirements.txt
-
-      - name: Run Static Check
-        run: nox -s ${{ matrix.session_name }}
-
-  ##################
-  ## Performance ##
-  ##################
-  Performance-Checks:
-    needs: Check-Container-Startup
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-${{ env.DEFAULT_PYTHON_VERSION }}
-          path: /tmp/
-
-      - name: Load image
-        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set Up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-          cache: "pip"
-
-      - name: Install Rust/Cargo
-        run: curl -y https://sh.rustup.rs -sSf | sh
-
-      - name: Install Drill
-        run: cargo install drill
-
-      - name: Install Nox
-        run: pip install nox>=2022
-
-      - name: Run Performance Tests
-        run: nox -s performance_tests
+          path: /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
+          retention-days: 1
 
   #################
   ## Misc Checks ##
   #################
   Check-Container-Startup:
-    needs: Build
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Pull Docker images in background
+        run: |
+          docker pull postgres:16 > /dev/null 2>&1 &
+          docker pull redis:8.0-alpine > /dev/null 2>&1 &
+          echo "Docker pull initiated in background."
+        shell: bash
+
       - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-${{ env.DEFAULT_PYTHON_VERSION }}
           path: /tmp/
@@ -164,22 +181,105 @@ jobs:
         run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: Set Up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-          cache: "pip"
 
-      - name: Install Nox
-        run: pip install nox>=2022
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
 
-      - name: Run test suite
-        run: nox -s check_container_startup
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
+
+      - name: Run Fides webserver startup check
+        run: uv run nox -s check_container_startup
+
+      - name: Run Celery worker startup check
+        run: uv run nox -s check_worker_startup
+
+  Migration-Checks:
+    needs: [Check-Backend-Changes, Check-Container-Startup]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true'
+    strategy:
+      matrix:
+        test_selection:
+          - "check_migrations"
+          - "check_migration_downgrade"
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: false
+    steps:
+      - name: Download container
+        uses: actions/download-artifact@v8
+        with:
+          name: python-${{ env.DEFAULT_PYTHON_VERSION }}
+          path: /tmp/
+
+      - name: Load image
+        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
+
+      - name: Run migration test
+        run: uv run nox -s "${{ matrix.test_selection }}"
 
   Misc-Tests:
-    needs: Check-Container-Startup
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && github.event_name != 'merge_group'
     strategy:
       matrix:
         test_selection:
@@ -193,7 +293,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-${{ env.DEFAULT_PYTHON_VERSION }}
           path: /tmp/
@@ -202,67 +302,236 @@ jobs:
         run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: Set Up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-          cache: "pip"
 
-      - name: Install Nox
-        run: pip install nox>=2022
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-qq
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
 
       - name: Run test suite
-        run: nox -s "${{ matrix.test_selection }}"
+        run: uv run nox -s "${{ matrix.test_selection }}"
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v5
+        if: success() || failure() # always run even if the previous step fails
+        with:
+          report_paths: "**/test_report.xml"
 
   ################
   ## Safe Tests ##
   ################
   Safe-Tests:
-    needs: Check-Container-Startup
+    name: "Safe-Tests (${{ matrix.test_selection }}${{ matrix.total_splits != '1' && format(', {0}', matrix.split_group) || '' }})"
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && github.event_name != 'merge_group'
     strategy:
+      fail-fast: false
       matrix:
-        python_version: ["3.8.18", "3.9.18", "3.10.13"]
-        test_selection:
-          - "ctl-not-external"
-          - "ops-unit"
-          - "ops-integration"
-          - "lib"
+        include:
+          # Shard tiers based on .test_durations. Re-evaluate shard counts
+          # if total suite time shifts significantly.
+          # 3 shards for the slowest groups, 2 for the next tier.
+          - test_selection: "ops-unit-api"
+            total_splits: "3"
+            split_group: "1"
+          - test_selection: "ops-unit-api"
+            total_splits: "3"
+            split_group: "2"
+          - test_selection: "ops-unit-api"
+            total_splits: "3"
+            split_group: "3"
+          - test_selection: "ops-integration"
+            total_splits: "3"
+            split_group: "1"
+          - test_selection: "ops-integration"
+            total_splits: "3"
+            split_group: "2"
+          - test_selection: "ops-integration"
+            total_splits: "3"
+            split_group: "3"
+          - test_selection: "ops-unit-non-api"
+            total_splits: "3"
+            split_group: "1"
+          - test_selection: "ops-unit-non-api"
+            total_splits: "3"
+            split_group: "2"
+          - test_selection: "ops-unit-non-api"
+            total_splits: "3"
+            split_group: "3"
+          - test_selection: "ctl-not-external"
+            total_splits: "2"
+            split_group: "1"
+          - test_selection: "ctl-not-external"
+            total_splits: "2"
+            split_group: "2"
+          # Unsharded groups
+          - test_selection: "api"
+            total_splits: "1"
+            split_group: "1"
+          - test_selection: "lib"
+            total_splits: "1"
+            split_group: "1"
+          - test_selection: "misc-unit"
+            total_splits: "1"
+            split_group: "1"
+          - test_selection: "misc-integration"
+            total_splits: "1"
+            split_group: "1"
 
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    continue-on-error: true
+    timeout-minutes: 20
     steps:
+      - name: Pull Docker images in background
+        run: |
+          docker pull postgres:16 > /dev/null 2>&1 &
+          docker pull redis:8.0-alpine > /dev/null 2>&1 &
+          echo "Docker pull initiated in background."
+        shell: bash
+
       - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          name: python-${{ matrix.python_version }}
+          name: python-${{ env.DEFAULT_PYTHON_VERSION }}
           path: /tmp/
 
       - name: Load image
-        run: docker load --input /tmp/python-${{ matrix.python_version }}.tar
+        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
 
       - name: Set Up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
-          cache: "pip"
 
-      - name: Install Nox
-        run: pip install nox>=2022
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ matrix.test_selection }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ matrix.test_selection }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
 
       - name: Run test suite
-        run: nox -s "pytest(${{ matrix.test_selection }})"
+        env:
+          TOTAL_SPLITS: ${{ matrix.total_splits }}
+          SPLIT_GROUP: ${{ matrix.split_group }}
+        run: uv run nox -s "pytest(${{ matrix.test_selection }})"
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v5
+        if: success() || failure() # always run even if the previous step fails
+        with:
+          report_paths: "**/test_report.xml"
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
+          fail_ci_if_error: false
+
+  Pytest-Redis-Cluster:
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Pull Docker images in background
+        run: |
+          docker pull postgres:16 > /dev/null 2>&1 &
+          docker pull redis:8.0-alpine > /dev/null 2>&1 &
+          docker pull valkey/valkey:9.0.3-alpine > /dev/null 2>&1 &
+          echo "Docker pull initiated in background."
+        shell: bash
+
+      - name: Download container
+        uses: actions/download-artifact@v8
+        with:
+          name: python-${{ env.DEFAULT_PYTHON_VERSION }}
+          path: /tmp/
+
+      - name: Load image
+        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-pytest_redis_cluster_docker-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-pytest_redis_cluster_docker-${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
+
+      - name: Run Redis and Valkey cache tests (cluster + standalone)
+        run: uv run nox -s pytest_redis_cluster_docker
 
   ##################
   ## Unsafe Tests ##
@@ -270,137 +539,299 @@ jobs:
   # NOTE: Matrixes aren't used here due to the danger of race conditions for external resources
 
   Pytest-Ctl-External:
-    needs: Check-Container-Startup
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && (contains(github.event.pull_request.labels.*.name, 'run unsafe ci checks') || github.event_name == 'push')
     strategy:
       max-parallel: 1 # This prevents collisions in shared external resources
-      matrix:
-        python_version: ["3.8.18", "3.9.18", "3.10.13"]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # In PRs run with the "unsafe" label, or run on a "push" event to main
-    if: contains(github.event.pull_request.labels.*.name, 'run unsafe ci checks') || github.event_name == 'push'
     steps:
       - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          name: python-${{ matrix.python_version }}
+          name: python-${{ env.DEFAULT_PYTHON_VERSION }}
           path: /tmp/
 
       - name: Load image
-        run: docker load --input /tmp/python-${{ matrix.python_version }}.tar
+        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install Nox
-        run: pip install nox>=2022
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          # Export loaded secrets as environment variables
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+          # Secrets to pull from 1Password
+          AWS_ACCESS_KEY_ID: op://github-actions/ctl/AWS_ACCESS_KEY_ID
+          AWS_DEFAULT_REGION: op://github-actions/ctl/AWS_DEFAULT_REGION
+          AWS_SECRET_ACCESS_KEY: op://github-actions/ctl/AWS_SECRET_ACCESS_KEY
+          DYNAMODB_ACCESS_KEY_ID: op://github-actions/dynamodb/DYNAMODB_ACCESS_KEY_ID
+          DYNAMODB_ACCESS_KEY: op://github-actions/dynamodb/DYNAMODB_ACCESS_KEY
+          DYNAMODB_REGION: op://github-actions/dynamodb/DYNAMODB_REGION
+          OKTA_CLIENT_ID: op://github-actions/okta/OKTA_CLIENT_ID
+          OKTA_PRIVATE_KEY: op://github-actions/okta/OKTA_PRIVATE_KEY
+          REDSHIFT_FIDESCTL_PASSWORD: op://github-actions/ctl/REDSHIFT_FIDESCTL_PASSWORD
+          SNOWFLAKE_FIDESCTL_PASSWORD: op://github-actions/ctl/SNOWFLAKE_FIDESCTL_PASSWORD
 
       - name: Run external test suite
-        run: nox -s "pytest(ctl-external)"
+        run: uv run nox -s "pytest(ctl-external)"
         env:
-          SNOWFLAKE_FIDESCTL_PASSWORD: ${{ secrets.SNOWFLAKE_FIDESCTL_PASSWORD }}
-          REDSHIFT_FIDESCTL_PASSWORD: ${{ secrets.REDSHIFT_FIDESCTL_PASSWORD }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_CTL_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_CTL_SECRET_ACCESS_KEY }}
-          OKTA_CLIENT_TOKEN: ${{ secrets.OKTA_FIDESCTL_CLIENT_TOKEN }}
-          AWS_DEFAULT_REGION: us-east-1
           BIGQUERY_CONFIG: ${{ secrets.BIGQUERY_CONFIG }}
-          DYNAMODB_REGION: ${{ secrets.DYNAMODB_REGION }}
-          DYNAMODB_ACCESS_KEY_ID: ${{ secrets.DYNAMODB_ACCESS_KEY_ID }}
-          DYNAMODB_ACCESS_KEY: ${{ secrets.DYNAMODB_ACCESS_KEY }}
 
   External-Datastores:
-    needs: Check-Container-Startup
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && (contains(github.event.pull_request.labels.*.name, 'run unsafe ci checks') || github.event_name == 'push')
     strategy:
       max-parallel: 1 # This prevents collisions in shared external resources
-      matrix:
-        python_version: ["3.8.18", "3.9.18", "3.10.13"]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # In PRs run with the "unsafe" label, or run on a "push" event to main
-    if: contains(github.event.pull_request.labels.*.name, 'run unsafe ci checks') || github.event_name == 'push'
+    timeout-minutes: 45
     steps:
       - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          name: python-${{ matrix.python_version }}
+          name: python-${{ env.DEFAULT_PYTHON_VERSION }}
           path: /tmp/
 
       - name: Load image
-        run: docker load --input /tmp/python-${{ matrix.python_version }}.tar
+        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install Nox
-        run: pip install nox>=2022
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          # Export loaded secrets as environment variables
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+          # Secrets to pull from 1Password
+          BIGQUERY_DATASET: op://github-actions/bigquery/BIGQUERY_DATASET
+          BIGQUERY_KEYFILE_CREDS: op://github-actions/bigquery/BIGQUERY_KEYFILE_CREDS
+          BIGQUERY_ENTERPRISE_DATASET: op://github-actions/bigquery-enterprise/BIGQUERY_ENTERPRISE_DATASET
+          BIGQUERY_ENTERPRISE_KEYFILE_CREDS: op://github-actions/bigquery-enterprise/BIGQUERY_ENTERPRISE_KEYFILE_CREDS
+          DYNAMODB_ACCESS_KEY_ID: op://github-actions/dynamodb/DYNAMODB_ACCESS_KEY_ID
+          DYNAMODB_ACCESS_KEY: op://github-actions/dynamodb/DYNAMODB_ACCESS_KEY
+          DYNAMODB_ASSUME_ROLE_ARN: op://github-actions/dynamodb/DYNAMODB_ASSUME_ROLE_ARN
+          DYNAMODB_REGION: op://github-actions/dynamodb/DYNAMODB_REGION
+          GOOGLE_CLOUD_SQL_MYSQL_DATABASE_NAME: op://github-actions/gcp-mysql/GOOGLE_CLOUD_SQL_MYSQL_DATABASE_NAME
+          GOOGLE_CLOUD_SQL_MYSQL_DB_IAM_USER: op://github-actions/gcp-mysql/GOOGLE_CLOUD_SQL_MYSQL_DB_IAM_USER
+          GOOGLE_CLOUD_SQL_MYSQL_INSTANCE_CONNECTION_NAME: op://github-actions/gcp-mysql/GOOGLE_CLOUD_SQL_MYSQL_INSTANCE_CONNECTION_NAME
+          GOOGLE_CLOUD_SQL_MYSQL_KEYFILE_CREDS: op://github-actions/gcp-mysql/GOOGLE_CLOUD_SQL_MYSQL_KEYFILE_CREDS
+          GOOGLE_CLOUD_SQL_POSTGRES_DATABASE_NAME: op://github-actions/gcp-postgres/GOOGLE_CLOUD_SQL_POSTGRES_DATABASE_NAME
+          GOOGLE_CLOUD_SQL_POSTGRES_DATABASE_SCHEMA_NAME: op://github-actions/gcp-postgres/GOOGLE_CLOUD_SQL_POSTGRES_DATABASE_SCHEMA_NAME
+          GOOGLE_CLOUD_SQL_POSTGRES_DB_IAM_USER: op://github-actions/gcp-postgres/GOOGLE_CLOUD_SQL_POSTGRES_DB_IAM_USER
+          GOOGLE_CLOUD_SQL_POSTGRES_INSTANCE_CONNECTION_NAME: op://github-actions/gcp-postgres/GOOGLE_CLOUD_SQL_POSTGRES_INSTANCE_CONNECTION_NAME
+          GOOGLE_CLOUD_SQL_POSTGRES_KEYFILE_CREDS: op://github-actions/gcp-postgres/GOOGLE_CLOUD_SQL_POSTGRES_KEYFILE_CREDS
+          OKTA_CLIENT_ID: op://github-actions/okta/OKTA_CLIENT_ID
+          OKTA_ORG_URL: op://github-actions/okta/OKTA_ORG_URL
+          OKTA_PRIVATE_KEY: op://github-actions/okta/OKTA_PRIVATE_KEY
+          RDS_MYSQL_AWS_ACCESS_KEY_ID: op://github-actions/rds-mysql/RDS_MYSQL_AWS_ACCESS_KEY_ID
+          RDS_MYSQL_AWS_SECRET_ACCESS_KEY: op://github-actions/rds-mysql/RDS_MYSQL_AWS_SECRET_ACCESS_KEY
+          RDS_MYSQL_DB_INSTANCE: op://github-actions/rds-mysql/RDS_MYSQL_DB_INSTANCE
+          RDS_MYSQL_DB_NAME: op://github-actions/rds-mysql/RDS_MYSQL_DB_NAME
+          RDS_MYSQL_DB_USERNAME: op://github-actions/rds-mysql/RDS_MYSQL_DB_USERNAME
+          RDS_MYSQL_REGION: op://github-actions/rds-mysql/RDS_MYSQL_REGION
+          RDS_POSTGRES_AWS_ACCESS_KEY_ID: op://github-actions/rds-postgres/RDS_POSTGRES_AWS_ACCESS_KEY_ID
+          RDS_POSTGRES_AWS_SECRET_ACCESS_KEY: op://github-actions/rds-postgres/RDS_POSTGRES_AWS_SECRET_ACCESS_KEY
+          RDS_POSTGRES_DB_USERNAME: op://github-actions/rds-postgres/RDS_POSTGRES_DB_USERNAME
+          RDS_POSTGRES_REGION: op://github-actions/rds-postgres/RDS_POSTGRES_REGION
+          REDSHIFT_TEST_DATABASE: op://github-actions/redshift/REDSHIFT_TEST_DATABASE
+          REDSHIFT_TEST_DB_SCHEMA: op://github-actions/redshift/REDSHIFT_TEST_DB_SCHEMA
+          REDSHIFT_TEST_HOST: op://github-actions/redshift/REDSHIFT_TEST_HOST
+          REDSHIFT_TEST_PASSWORD: op://github-actions/redshift/REDSHIFT_TEST_PASSWORD
+          REDSHIFT_TEST_PORT: op://github-actions/redshift/REDSHIFT_TEST_PORT
+          REDSHIFT_TEST_USER: op://github-actions/redshift/REDSHIFT_TEST_USER
+          SNOWFLAKE_TEST_ACCOUNT_IDENTIFIER: op://github-actions/snowflake/SNOWFLAKE_TEST_ACCOUNT_IDENTIFIER
+          SNOWFLAKE_TEST_DATABASE_NAME: op://github-actions/snowflake/SNOWFLAKE_TEST_DATABASE_NAME
+          SNOWFLAKE_TEST_PASSWORD: op://github-actions/snowflake/SNOWFLAKE_TEST_PASSWORD
+          SNOWFLAKE_TEST_PRIVATE_KEY_PASSPHRASE: op://github-actions/snowflake/SNOWFLAKE_TEST_PRIVATE_KEY_PASSPHRASE
+          SNOWFLAKE_TEST_PRIVATE_KEY: op://github-actions/snowflake/SNOWFLAKE_TEST_PRIVATE_KEY
+          SNOWFLAKE_TEST_SCHEMA_NAME: op://github-actions/snowflake/SNOWFLAKE_TEST_SCHEMA_NAME
+          SNOWFLAKE_TEST_USER_LOGIN_NAME: op://github-actions/snowflake/SNOWFLAKE_TEST_USER_LOGIN_NAME
+          SNOWFLAKE_TEST_WAREHOUSE_NAME: op://github-actions/snowflake/SNOWFLAKE_TEST_WAREHOUSE_NAME
+          S3_AWS_ACCESS_KEY_ID: op://github-actions/s3/S3_AWS_ACCESS_KEY_ID
+          S3_AWS_SECRET_ACCESS_KEY: op://github-actions/s3/S3_AWS_SECRET_ACCESS_KEY
+          MONGODB_ATLAS_HOST: op://github-actions/mongodb-atlas/MONGODB_ATLAS_HOST
+          MONGODB_ATLAS_USERNAME: op://github-actions/mongodb-atlas/MONGODB_ATLAS_USERNAME
+          MONGODB_ATLAS_PASSWORD: op://github-actions/mongodb-atlas/MONGODB_ATLAS_PASSWORD
+          MONGODB_ATLAS_DEFAULT_AUTH_DB: op://github-actions/mongodb-atlas/MONGODB_ATLAS_DEFAULT_AUTH_DB
+          MONGODB_ATLAS_USE_SRV: op://github-actions/mongodb-atlas/MONGODB_ATLAS_USE_SRV
+          MONGODB_ATLAS_SSL_ENABLED: op://github-actions/mongodb-atlas/MONGODB_ATLAS_SSL_ENABLED
+
+      - name: Integration Tests (Misc)
+        run: uv run nox -s "pytest(misc-integration-external)"
 
       - name: Integration Tests (External)
-        env:
-          BIGQUERY_DATASET: fidesopstest
-          BIGQUERY_KEYFILE_CREDS: ${{ secrets.BIGQUERY_KEYFILE_CREDS }}
-          DYNAMODB_ACCESS_KEY_ID: ${{ secrets.DYNAMODB_ACCESS_KEY_ID }}
-          DYNAMODB_ACCESS_KEY: ${{ secrets.DYNAMODB_ACCESS_KEY }}
-          DYNAMODB_REGION: ${{ secrets.DYNAMODB_REGION }}
-          GOOGLE_CLOUD_SQL_MYSQL_DB_IAM_USER: ${{ secrets.GOOGLE_CLOUD_SQL_MYSQL_DB_IAM_USER }}
-          GOOGLE_CLOUD_SQL_MYSQL_INSTANCE_CONNECTION_NAME: ${{ secrets.GOOGLE_CLOUD_SQL_MYSQL_INSTANCE_CONNECTION_NAME }}
-          GOOGLE_CLOUD_SQL_MYSQL_DATABASE_NAME: ${{ secrets.GOOGLE_CLOUD_SQL_MYSQL_DATABASE_NAME }}
-          GOOGLE_CLOUD_SQL_MYSQL_KEYFILE_CREDS: ${{ secrets.GOOGLE_CLOUD_SQL_MYSQL_KEYFILE_CREDS }}
-          REDSHIFT_TEST_DATABASE: ${{ secrets.REDSHIFT_TEST_DATABASE }}
-          REDSHIFT_TEST_DB_SCHEMA: ${{ secrets.REDSHIFT_TEST_DB_SCHEMA }}
-          REDSHIFT_TEST_HOST: ${{ secrets.REDSHIFT_TEST_HOST }}
-          REDSHIFT_TEST_PASSWORD: ${{ secrets.REDSHIFT_TEST_PASSWORD }}
-          REDSHIFT_TEST_PORT: ${{ secrets.REDSHIFT_TEST_PORT }}
-          REDSHIFT_TEST_USER: ${{ secrets.REDSHIFT_TEST_USER }}
-          SNOWFLAKE_TEST_ACCOUNT_IDENTIFIER: ${{ secrets.SNOWFLAKE_TEST_ACCOUNT_IDENTIFIER }}
-          SNOWFLAKE_TEST_DATABASE_NAME: ${{ secrets.SNOWFLAKE_TEST_DATABASE_NAME }}
-          SNOWFLAKE_TEST_PASSWORD: ${{ secrets.SNOWFLAKE_TEST_PASSWORD }}
-          SNOWFLAKE_TEST_SCHEMA_NAME: ${{ secrets.SNOWFLAKE_TEST_SCHEMA_NAME }}
-          SNOWFLAKE_TEST_USER_LOGIN_NAME: ${{ secrets.SNOWFLAKE_TEST_USER_LOGIN_NAME }}
-          SNOWFLAKE_TEST_WAREHOUSE_NAME: ${{ secrets.SNOWFLAKE_TEST_WAREHOUSE_NAME }}
-
-        run: nox -s "pytest(ops-external-datastores)"
+        run: uv run nox -s "pytest(ops-external-datastores)"
 
   External-SaaS-Connectors:
-    needs: Check-Container-Startup
+    needs: [Check-Backend-Changes, Build]
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && (contains(github.event.pull_request.labels.*.name, 'run unsafe ci checks') || github.event_name == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # In PRs run with the "unsafe" label, or run on a "push" event to main
-    if: contains(github.event.pull_request.labels.*.name, 'run unsafe ci checks') || github.event_name == 'push'
     permissions:
       contents: read
       id-token: write
     strategy:
       max-parallel: 1 # This prevents collisions in shared external resources
-      matrix:
-        python_version: ["3.8.18", "3.9.18", "3.10.13"]
     steps:
       - name: Download container
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          name: python-${{ matrix.python_version }}
+          name: python-${{ env.DEFAULT_PYTHON_VERSION }}
           path: /tmp/
 
       - name: Load image
-        run: docker load --input /tmp/python-${{ matrix.python_version }}.tar
-
-      - name: Install Nox
-        run: pip install nox>=2022
+        run: docker load --input /tmp/python-${{ env.DEFAULT_PYTHON_VERSION }}.tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Get Vault Token
-        uses: hashicorp/vault-action@v2.5.0
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          url: ${{ secrets.VAULT_ADDR }}
-          namespace: ${{ secrets.VAULT_NAMESPACE }}
-          method: jwt
-          role: ${{ secrets.VAULT_ROLE }}
-          exportToken: True
+          version: "latest"
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ env.DEFAULT_PYTHON_VERSION }}-
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_RO_TOKEN }}
 
       - name: SaaS Connector Tests
         env:
-          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
-          VAULT_NAMESPACE: ${{ secrets.VAULT_NAMESPACE }}
-        run: nox -s "pytest(ops-saas)"
+          SAAS_OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.SAAS_OP_SERVICE_ACCOUNT_TOKEN }}
+          SAAS_SECRETS_OP_VAULT_ID: ${{ secrets.SAAS_SECRETS_OP_VAULT_ID }}
+        run: uv run nox -s "pytest(ops-saas)"
+
+  # Summary job for branch protection - passes if all jobs pass or are skipped
+  Backend-Checks-Summary:
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - Collect-Tests
+      - Build
+      - Check-Container-Startup
+      - Migration-Checks
+      - Misc-Tests
+      - Safe-Tests
+      # Unsafe tests are optional, so we don't include them in the summary
+    steps:
+      - name: Check job results
+        run: |
+          echo "Collect-Tests: ${{ needs.Collect-Tests.result }}"
+          echo "Build: ${{ needs.Build.result }}"
+          echo "Check-Container-Startup: ${{ needs.Check-Container-Startup.result }}"
+          echo "Migration-Checks: ${{ needs.Migration-Checks.result }}"
+          echo "Misc-Tests: ${{ needs.Misc-Tests.result }}"
+          echo "Safe-Tests: ${{ needs.Safe-Tests.result }}"
+
+          # Fail only if jobs failed (not if skipped)
+          if [ "${{ needs.Collect-Tests.result }}" == "failure" ] || \
+             [ "${{ needs.Build.result }}" == "failure" ] || \
+             [ "${{ needs.Check-Container-Startup.result }}" == "failure" ] || \
+             [ "${{ needs.Migration-Checks.result }}" == "failure" ] || \
+             [ "${{ needs.Misc-Tests.result }}" == "failure" ] || \
+             [ "${{ needs.Safe-Tests.result }}" == "failure" ]; then
+            echo "❌ One or more required jobs failed"
+            exit 1
+          fi
+
+          # Check for cancelled jobs (treat as failure)
+          if [ "${{ needs.Collect-Tests.result }}" == "cancelled" ] || \
+             [ "${{ needs.Build.result }}" == "cancelled" ] || \
+             [ "${{ needs.Check-Container-Startup.result }}" == "cancelled" ] || \
+             [ "${{ needs.Migration-Checks.result }}" == "cancelled" ] || \
+             [ "${{ needs.Misc-Tests.result }}" == "cancelled" ] || \
+             [ "${{ needs.Safe-Tests.result }}" == "cancelled" ]; then
+            echo "❌ One or more required jobs were cancelled"
+            exit 1
+          fi
+
+          echo "✅ All required backend checks passed or were skipped"

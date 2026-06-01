@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import json
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
-import requests
-import sendgrid
-from jinja2 import Environment
 from loguru import logger
-from sendgrid.helpers.mail import Content, Email, Mail, Personalization, TemplateId, To
+from requests.exceptions import RequestException, Timeout
 from sqlalchemy.orm import Session
 from twilio.base.exceptions import TwilioRestException
-from twilio.rest import Client
 
 from fides.api.common_exceptions import MessageDispatchException
 from fides.api.email_templates.get_email_template import get_email_template
@@ -20,10 +15,6 @@ from fides.api.models.messaging import (  # type: ignore[attr-defined]
     get_messaging_method,
 )
 from fides.api.models.messaging_template import MessagingTemplate
-from fides.api.models.privacy_request import (
-    PrivacyRequestError,
-    PrivacyRequestNotifications,
-)
 from fides.api.schemas.messaging.messaging import (
     CONFIGURABLE_MESSAGING_ACTION_TYPES,
     AccessRequestCompleteBodyParams,
@@ -31,76 +22,78 @@ from fides.api.schemas.messaging.messaging import (
     EmailForActionType,
     ErasureRequestBodyParams,
     ErrorNotificationBodyParams,
+    ExternalUserWelcomeBodyParams,
     FidesopsMessage,
+    ManualTaskDigestBodyParams,
     MessagingActionType,
     MessagingMethod,
-    MessagingServiceDetails,
-    MessagingServiceSecrets,
     MessagingServiceType,
+    PasswordResetBodyParams,
     RequestReceiptBodyParams,
     RequestReviewDenyBodyParams,
     SubjectIdentityVerificationBodyParams,
+    UserInviteBodyParams,
 )
 from fides.api.schemas.redis_cache import Identity
-from fides.api.service.connectors.base_email_connector import (
-    get_email_messaging_config_service_type,
-)
 from fides.api.service.messaging.messaging_crud_service import (
     get_basic_messaging_template_by_type_or_default,
     get_enabled_messaging_template_by_type_and_property,
 )
-from fides.api.tasks import MESSAGING_QUEUE_NAME, DatabaseTask, celery_app
-from fides.api.util.logger import Pii
+from fides.api.service.messaging.messaging_providers.aws_ses_service import (
+    AwsSesService,
+)
+from fides.api.service.messaging.messaging_providers.base import (
+    BaseEmailProviderService,
+    BaseMessageProviderService,
+    BaseSMSProviderService,
+)
+from fides.api.service.messaging.messaging_providers.mailchimp_transactional_service import (
+    MailchimpTransactionalService,
+)
+from fides.api.service.messaging.messaging_providers.mailgun_service import (
+    MailgunService,
+)
+from fides.api.service.messaging.messaging_providers.twilio_email_service import (
+    TwilioEmailService,
+)
+from fides.api.service.messaging.messaging_providers.twilio_sms_service import (
+    TwilioSmsService,
+)
+from fides.api.tasks import DatabaseTask, celery_app
 from fides.config import CONFIG
 from fides.config.config_proxy import ConfigProxy
 
 EMAIL_JOIN_STRING = ", "
-EMAIL_TEMPLATE_NAME = "fides"
 
 
-def check_and_dispatch_error_notifications(db: Session) -> None:
-    config_proxy = ConfigProxy(db)
-    privacy_request_notifications = PrivacyRequestNotifications.all(db=db)
-    if not privacy_request_notifications:
-        return None
-
-    unsent_errors = PrivacyRequestError.filter(
-        db=db, conditions=(PrivacyRequestError.message_sent.is_(False))
-    ).all()
-    if not unsent_errors:
-        return None
-
-    email_config = (
-        config_proxy.notifications.notification_service_type in EMAIL_MESSAGING_SERVICES
-    )
-
-    if (
-        email_config
-        and len(unsent_errors) >= privacy_request_notifications[0].notify_after_failures
-    ):
-        for email in privacy_request_notifications[0].email.split(EMAIL_JOIN_STRING):
-            dispatch_message_task.apply_async(
-                queue=MESSAGING_QUEUE_NAME,
-                kwargs={
-                    "message_meta": FidesopsMessage(
-                        action_type=MessagingActionType.PRIVACY_REQUEST_ERROR_NOTIFICATION,
-                        body_params=ErrorNotificationBodyParams(
-                            unsent_errors=len(unsent_errors)
-                        ),
-                    ).dict(),
-                    "service_type": config_proxy.notifications.notification_service_type,
-                    "to_identity": {"email": email},
-                    "property_id": None,
-                },
-            )
-
-        for error in unsent_errors:
-            error.update(db=db, data={"message_sent": True})
-
-    return None
+_PROVIDER_MAP: dict[MessagingServiceType, type[BaseMessageProviderService]] = {
+    MessagingServiceType.mailgun: MailgunService,
+    MessagingServiceType.mailchimp_transactional: MailchimpTransactionalService,
+    MessagingServiceType.twilio_text: TwilioSmsService,
+    MessagingServiceType.twilio_email: TwilioEmailService,
+    MessagingServiceType.aws_ses: AwsSesService,
+}
 
 
-@celery_app.task(base=DatabaseTask, bind=True)
+def get_provider_class(
+    service_type: MessagingServiceType,
+) -> type[BaseMessageProviderService] | None:
+    """Public accessor for the provider map. Returns the provider class or None."""
+    return _PROVIDER_MAP.get(service_type)
+
+
+@celery_app.task(
+    base=DatabaseTask,
+    bind=True,
+    autoretry_for=(
+        Timeout,
+        RequestException,
+        TwilioRestException,
+    ),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=2,
+    retry_jitter=True,
+)
 def dispatch_message_task(
     self: DatabaseTask,
     message_meta: Dict[str, Any],
@@ -109,17 +102,24 @@ def dispatch_message_task(
     property_id: Optional[str],
 ) -> None:
     """
-    A wrapper function to dispatch a message task into the Celery queues
+    A wrapper function to dispatch a message task into the Celery queues.
+
+    This task will automatically retry up to 3 times on transient network failures
+    (timeouts, connection errors, temporary service unavailability) with exponential
+    backoff (2s, 4s, 8s) and jitter to prevent thundering herd issues.
+
+    Permanent errors (missing config, invalid identities, etc.) will fail immediately
+    without retry to provide fast feedback and avoid wasting worker resources.
     """
-    schema = FidesopsMessage.parse_obj(message_meta)
+    schema = FidesopsMessage.model_validate(message_meta)
     with self.get_new_session() as db:
         dispatch_message(
-            db,
-            schema.action_type,
-            Identity.parse_obj(to_identity),
-            service_type,
-            schema.body_params,
-            property_id,
+            db=db,
+            action_type=schema.action_type,
+            to_identity=Identity.model_validate(to_identity),
+            service_type=service_type,
+            message_body_params=schema.body_params,
+            property_id=property_id,
         )
 
 
@@ -185,6 +185,7 @@ def message_send_enabled(
     property_specific_messaging_enabled = ConfigProxy(
         db
     ).notifications.enable_property_specific_messaging
+
     if property_specific_messaging_enabled:
         # Only email messaging method is supported when property-specific messaging is enabled.
         service_type = get_email_messaging_config_service_type(db=db)
@@ -210,6 +211,7 @@ def message_send_enabled(
 def dispatch_message(
     db: Session,
     action_type: MessagingActionType,
+    *,
     to_identity: Optional[Identity],
     service_type: Optional[str],
     message_body_params: Optional[
@@ -220,6 +222,11 @@ def dispatch_message(
             RequestReceiptBodyParams,
             RequestReviewDenyBodyParams,
             ErasureRequestBodyParams,
+            UserInviteBodyParams,
+            PasswordResetBodyParams,
+            ErrorNotificationBodyParams,
+            ExternalUserWelcomeBodyParams,
+            ManualTaskDigestBodyParams,
         ]
     ] = None,
     subject_override: Optional[str] = None,
@@ -270,8 +277,11 @@ def dispatch_message(
             db=db, template_type=action_type.value
         )
 
+    config_proxy = ConfigProxy(db=db)
+
     if messaging_method == MessagingMethod.EMAIL:
         message = _build_email(
+            config_proxy=config_proxy,
             action_type=action_type,
             body_params=message_body_params,
             messaging_template=messaging_template,
@@ -290,12 +300,25 @@ def dispatch_message(
         )
     messaging_service: MessagingServiceType = messaging_config.service_type  # type: ignore
     logger.info(
-        "Retrieving appropriate dispatcher for email service: {}", messaging_service
+        "Retrieving appropriate provider for messaging service: {}", messaging_service
     )
-    dispatcher: Optional[Callable] = _get_dispatcher_from_config_type(
-        message_service_type=messaging_service
+
+    if subject_override and isinstance(message, EmailForActionType):
+        message.subject = subject_override
+
+    to = (
+        to_identity.email
+        if messaging_method == MessagingMethod.EMAIL
+        else to_identity.phone_number
     )
-    if not dispatcher:
+
+    if not to:
+        error_message = f"No {'email' if messaging_method == MessagingMethod.EMAIL else 'phone'} identity supplied."
+        logger.error(f"Message failed to send. {error_message}")
+        raise MessageDispatchException(error_message)
+
+    provider_cls = _PROVIDER_MAP.get(messaging_service)
+    if not provider_cls:
         logger.error(
             "Dispatcher has not been implemented for message service type: {}",
             messaging_service,
@@ -303,23 +326,28 @@ def dispatch_message(
         raise MessageDispatchException(
             f"Dispatcher has not been implemented for message service type: {messaging_service}"
         )
+
+    provider = provider_cls(messaging_config)
+
     logger.info(
         "Starting message dispatch for messaging service with action type: {}",
         action_type,
     )
 
-    if subject_override and isinstance(message, EmailForActionType):
-        message.subject = subject_override
-
-    dispatcher(
-        messaging_config,
-        message,
-        (
-            to_identity.email
-            if messaging_method == MessagingMethod.EMAIL
-            else to_identity.phone_number
-        ),
-    )
+    if isinstance(provider, BaseEmailProviderService):
+        if not isinstance(message, EmailForActionType):
+            raise MessageDispatchException(
+                "Expected EmailForActionType for email provider"
+            )
+        provider.send_email(to, message)
+    elif isinstance(provider, BaseSMSProviderService):
+        if not isinstance(message, str):
+            raise MessageDispatchException("Expected str body for SMS provider")
+        provider.send_sms(to, message)
+    else:
+        raise MessageDispatchException(
+            f"Provider {type(provider).__name__} is not a recognized email or SMS provider"
+        )
 
 
 def _build_sms(  # pylint: disable=too-many-return-statements
@@ -360,6 +388,8 @@ def _build_sms(  # pylint: disable=too-many-return-statements
         )
     if action_type == MessagingActionType.PRIVACY_REQUEST_COMPLETE_DELETION:
         return "Your privacy request for deletion has been completed."
+    if action_type == MessagingActionType.PRIVACY_REQUEST_COMPLETE_CONSENT:
+        return "Your consent request has been completed."
     if action_type == MessagingActionType.PRIVACY_REQUEST_REVIEW_APPROVE:
         return "Your privacy request has been approved and is currently processing."
     if action_type == MessagingActionType.PRIVACY_REQUEST_REVIEW_DENY:
@@ -378,12 +408,15 @@ def _render(template_str: str, variables: Optional[Dict] = None) -> str:
     """Helper function to render a template string with the provided variables."""
     if variables is None:
         variables = {}
-    jinja_env = Environment()
-    template = jinja_env.from_string(template_str)
-    return template.render(variables)
+
+    for key, value in variables.items():
+        template_str = template_str.replace(f"__{key.upper()}__", str(value))
+
+    return template_str
 
 
-def _build_email(  # pylint: disable=too-many-return-statements
+def _build_email(  # pylint: disable=too-many-return-statements, too-many-branches, too-many-statements
+    config_proxy: ConfigProxy,
     action_type: MessagingActionType,
     body_params: Any,
     messaging_template: Optional[MessagingTemplate] = None,
@@ -455,6 +488,11 @@ def _build_email(  # pylint: disable=too-many-return-statements
             subject=_render(messaging_template.content["subject"]),  # type: ignore
             body=_render(messaging_template.content["body"]),  # type: ignore
         )
+    if action_type == MessagingActionType.PRIVACY_REQUEST_COMPLETE_CONSENT:
+        return EmailForActionType(
+            subject=_render(messaging_template.content["subject"]),  # type: ignore
+            body=_render(messaging_template.content["body"]),  # type: ignore
+        )
     if action_type == MessagingActionType.PRIVACY_REQUEST_ERROR_NOTIFICATION:
         # This action type does not use the default templates that are configurable in the Admin-UI.
         # They are instead hard-coded in fides, which we retrieve using get_email_template(action_type)
@@ -482,311 +520,175 @@ def _build_email(  # pylint: disable=too-many-return-statements
         return EmailForActionType(
             subject="Test message from fides", body=base_template.render()
         )
+    if action_type == MessagingActionType.USER_INVITE:
+        base_template = get_email_template(action_type)
+        return EmailForActionType(
+            subject="Welcome to Fides",
+            body=base_template.render(
+                {
+                    "admin_ui_url": config_proxy.admin_ui.url,
+                    "username": body_params.username,
+                    "invite_code": body_params.invite_code,
+                }
+            ),
+        )
+    if action_type == MessagingActionType.PASSWORD_RESET:
+        base_template = get_email_template(action_type)
+        return EmailForActionType(
+            subject="Fides Password Reset",
+            body=base_template.render(
+                {
+                    "admin_ui_url": config_proxy.admin_ui.url,
+                    "username": body_params.username,
+                    "reset_token": body_params.reset_token,
+                    "ttl_minutes": body_params.ttl_minutes,
+                }
+            ),
+        )
+    if action_type == MessagingActionType.EXTERNAL_USER_WELCOME:
+        # Generate display name for personalization
+        display_name = body_params.username
+        if body_params.first_name:
+            display_name = body_params.first_name
+            if body_params.last_name:
+                display_name = f"{body_params.first_name} {body_params.last_name}"
+
+        portal_link = (
+            f"{body_params.privacy_center_url}?access_token={body_params.access_token}"
+        )
+
+        variables = {
+            "username": body_params.username,
+            "display_name": display_name,
+            "first_name": body_params.first_name,
+            "last_name": body_params.last_name,
+            "org_name": body_params.org_name,
+            "portal_link": portal_link,
+            "privacy_center_url": body_params.privacy_center_url,
+            "access_token": body_params.access_token,
+        }
+
+        # Start with default subject
+        subject = "Welcome to our Privacy Center"
+
+        # If messaging template exists, extract customizable content
+        if messaging_template:
+            # Use custom subject if provided
+            if "subject" in messaging_template.content:
+                subject = _render(messaging_template.content["subject"], variables)
+
+            # Use custom body content to replace the intro text in HTML template
+            custom_body = messaging_template.content.get("body", "")
+            if custom_body.strip():
+                # Replace the default intro text with the custom body content
+                rendered_custom_body = _render(custom_body, variables)
+                variables["custom_intro"] = rendered_custom_body
+
+        # Always use the HTML template
+        base_template = get_email_template(action_type)
+        return EmailForActionType(
+            subject=subject,
+            body=base_template.render(variables),
+            template_variables=variables,
+        )
+
+    if action_type == MessagingActionType.MANUAL_TASK_DIGEST:
+        variables = {
+            "vendor_contact_name": body_params.vendor_contact_name,
+            "organization_name": body_params.organization_name,
+            "portal_url": body_params.portal_url,
+            "imminent_task_count": body_params.imminent_task_count,
+            "upcoming_task_count": body_params.upcoming_task_count,
+            "total_task_count": body_params.total_task_count,
+            "company_logo_url": body_params.company_logo_url,
+        }
+
+        # Start with default subject
+        subject = f"Weekly DSR Summary from {body_params.organization_name}"
+
+        # If messaging template exists, extract customizable content
+        if messaging_template:
+            # Use custom subject if provided
+            if "subject" in messaging_template.content:
+                subject = _render(messaging_template.content["subject"], variables)
+
+            # Use custom body content to replace the intro text in HTML template
+            custom_body = messaging_template.content.get("body", "")
+            if custom_body.strip():
+                # Replace the default intro text with the custom body content
+                rendered_custom_body = _render(custom_body, variables)
+                variables["intro_text"] = rendered_custom_body
+
+        # Always use the HTML template
+        base_template = get_email_template(action_type)
+        return EmailForActionType(
+            subject=subject,
+            body=base_template.render(variables),
+            template_variables=variables,
+        )
+
     logger.error("Message action type {} is not implemented", action_type)
     raise MessageDispatchException(
         f"Message action type {action_type} is not implemented"
     )
 
 
-def _get_dispatcher_from_config_type(
-    message_service_type: MessagingServiceType,
-) -> Optional[Callable]:
-    """Determines which dispatcher to use based on message service type"""
-    handler = {
-        MessagingServiceType.mailgun: _mailgun_dispatcher,
-        MessagingServiceType.mailchimp_transactional: _mailchimp_transactional_dispatcher,
-        MessagingServiceType.twilio_text: _twilio_sms_dispatcher,
-        MessagingServiceType.twilio_email: _twilio_email_dispatcher,
-    }
-    return handler.get(message_service_type)  # type: ignore
-
-
-def _mailchimp_transactional_dispatcher(
-    messaging_config: MessagingConfig,
-    message: EmailForActionType,
-    to: Optional[str],
-) -> None:
-    """Dispatches email using Mailchimp Transactional"""
-    if not to:
-        logger.error("Message failed to send. No email identity supplied.")
-        raise MessageDispatchException("No email identity supplied.")
-
-    if not messaging_config.details or not messaging_config.secrets:
-        logger.error(
-            "Message failed to send. No Mailchimp Transactional config details or secrets supplied."
-        )
-        raise MessageDispatchException(
-            "No Mailchimp Transactional config details or secrets supplied."
-        )
-
-    from_email = messaging_config.details[MessagingServiceDetails.EMAIL_FROM.value]
-    data = json.dumps(
-        {
-            "key": messaging_config.secrets[
-                MessagingServiceSecrets.MAILCHIMP_TRANSACTIONAL_API_KEY.value
-            ],
-            "message": {
-                "from_email": from_email,
-                "subject": message.subject,
-                "html": message.body,
-                # On Mailchimp Transactional's free plan `to` must be an email of the same
-                # domain as `from_email`
-                "to": [{"email": to.strip(), "type": "to"}],
-            },
-        }
-    )
-
-    response = requests.post(
-        "https://mandrillapp.com/api/1.0/messages/send",
-        headers={"Content-Type": "application/json"},
-        data=data,
-    )
-    if not response.ok:
-        logger.error("Email failed to send with status code: %s" % response.status_code)
-        raise MessageDispatchException(
-            f"Email failed to send with status code {response.status_code}"
-        )
-
-    send_data = response.json()[0]
-    email_rejected = send_data.get("status", "rejected") == "rejected"
-    if email_rejected:
-        reason = send_data.get("reject_reason", "Fides Error")
-        explanations = {
-            "soft-bounce": "A temporary error occured with the target inbox. For example, this inbox could be full. See https://mailchimp.com/developer/transactional/docs/reputation-rejections/#bounces for more info.",
-            "hard-bounce": "A permanent error occured with the target inbox. See https://mailchimp.com/developer/transactional/docs/reputation-rejections/#bounces for more info.",
-            "recipient-domain-mismatch": f"You are not authorised to send email to this domain from {from_email}.",
-            "unsigned": f"The sending domain for {from_email} has not been fully configured for Mailchimp Transactional. See https://mailchimp.com/developer/transactional/docs/authentication-delivery/#authentication/ for more info.",
-        }
-        explanation = explanations.get(reason, "")
-        raise MessageDispatchException(
-            f"Verification email unable to send due to reason: {reason}. {explanation}"
-        )
-
-
-def _mailgun_dispatcher(
-    messaging_config: MessagingConfig,
-    message: EmailForActionType,
-    to: Optional[str],
-) -> None:
-    """Dispatches email using Mailgun"""
-    if not to:
-        logger.error("Message failed to send. No email identity supplied.")
-        raise MessageDispatchException("No email identity supplied.")
-
-    if not messaging_config.details or not messaging_config.secrets:
-        logger.error(
-            "Message failed to send. No mailgun config details or secrets supplied."
-        )
-        raise MessageDispatchException("No mailgun config details or secrets supplied.")
-
-    base_url = (
-        "https://api.mailgun.net"
-        if messaging_config.details[MessagingServiceDetails.IS_EU_DOMAIN.value] is False
-        else "https://api.eu.mailgun.net"
-    )
-
-    domain = messaging_config.details[MessagingServiceDetails.DOMAIN.value]
-
-    try:
-        # Check if a fides template exists
-        template_test = requests.get(
-            f"{base_url}/{messaging_config.details[MessagingServiceDetails.API_VERSION.value]}/{domain}/templates/{EMAIL_TEMPLATE_NAME}",
-            auth=(
-                "api",
-                messaging_config.secrets[MessagingServiceSecrets.MAILGUN_API_KEY.value],
-            ),
-        )
-
-        data = {
-            "from": f"<mailgun@{domain}>",
-            "to": [to.strip()],
-            "subject": message.subject,
-        }
-
-        if template_test.status_code == 200:
-            mailgun_variables = {
-                "fides_email_body": message.body,
-                **(message.template_variables or {}),
-            }
-            data["template"] = EMAIL_TEMPLATE_NAME
-            data["h:X-Mailgun-Variables"] = json.dumps(mailgun_variables)
-            response = requests.post(
-                f"{base_url}/{messaging_config.details[MessagingServiceDetails.API_VERSION.value]}/{domain}/messages",
-                auth=(
-                    "api",
-                    messaging_config.secrets[
-                        MessagingServiceSecrets.MAILGUN_API_KEY.value
-                    ],
-                ),
-                data=data,
-            )
-
-            if not response.ok:
-                logger.error(
-                    "Email failed to send with status code: %s", response.status_code
-                )
-                raise MessageDispatchException(
-                    f"Email failed to send with status code {response.status_code}"
-                )
-        else:
-            data["html"] = message.body
-            response = requests.post(
-                f"{base_url}/{messaging_config.details[MessagingServiceDetails.API_VERSION.value]}/{domain}/messages",
-                auth=(
-                    "api",
-                    messaging_config.secrets[
-                        MessagingServiceSecrets.MAILGUN_API_KEY.value
-                    ],
-                ),
-                data=data,
-            )
-            if not response.ok:
-                logger.error(
-                    "Email failed to send with status code: %s", response.status_code
-                )
-                raise MessageDispatchException(
-                    f"Email failed to send with status code {response.status_code}"
-                )
-    except Exception as e:
-        logger.error("Email failed to send: {}", Pii(str(e)))
-        raise MessageDispatchException(f"Email failed to send due to: {Pii(e)}")
-
-
-def _twilio_email_dispatcher(
-    messaging_config: MessagingConfig,
-    message: EmailForActionType,
-    to: Optional[str],
-) -> None:
-    """Dispatches email using twilio sendgrid"""
-    if not to:
-        logger.error("Message failed to send. No email identity supplied.")
-        raise MessageDispatchException("No email identity supplied.")
-    if not messaging_config.details or not messaging_config.secrets:
-        logger.error(
-            "Message failed to send. No twilio email config details or secrets supplied."
-        )
-        raise MessageDispatchException(
-            "No twilio email config details or secrets supplied."
-        )
-
-    try:
-        sg = sendgrid.SendGridAPIClient(
-            api_key=messaging_config.secrets[
-                MessagingServiceSecrets.TWILIO_API_KEY.value
-            ]
-        )
-
-        # the pagination via the client actually doesn't work
-        # in lieu of over-engineering this we can manually call
-        # the next page if/when we hit the limit here
-        response = sg.client.templates.get(
-            query_params={"generations": "dynamic", "page_size": 200}
-        )
-        template_test = _get_template_id_if_exists(
-            json.loads(response.body), EMAIL_TEMPLATE_NAME
-        )
-
-        from_email = Email(
-            messaging_config.details[MessagingServiceDetails.TWILIO_EMAIL_FROM.value]
-        )
-        to_email = To(to.strip())
-        subject = message.subject
-        mail = _compose_twilio_mail(
-            from_email, to_email, subject, message.body, template_test
-        )
-
-        response = sg.client.mail.send.post(request_body=mail.get())
-        if response.status_code >= 400:
-            logger.error(
-                "Email failed to send: %s: %s",
-                response.status_code,
-                Pii(str(response.body)),
-            )
-            raise MessageDispatchException(
-                f"Email failed to send: {response.status_code}, {Pii(str(response.body))}"
-            )
-    except Exception as e:
-        logger.error("Email failed to send: {}", Pii(str(e)))
-        raise MessageDispatchException(f"Email failed to send due to: {Pii(e)}")
-
-
-def _twilio_sms_dispatcher(
-    messaging_config: MessagingConfig,
-    message: str,
-    to: Optional[str],
-) -> None:
-    """Dispatches SMS using Twilio"""
-    if not to:
-        logger.error("Message failed to send. No phone identity supplied.")
-        raise MessageDispatchException("No phone identity supplied.")
-    if messaging_config.secrets is None:
-        logger.error("Message failed to send. No config secrets supplied.")
-        raise MessageDispatchException("No config secrets supplied.")
-    account_sid = messaging_config.secrets[
-        MessagingServiceSecrets.TWILIO_ACCOUNT_SID.value
-    ]
-    auth_token = messaging_config.secrets[
-        MessagingServiceSecrets.TWILIO_AUTH_TOKEN.value
-    ]
-    messaging_service_id = messaging_config.secrets.get(
-        MessagingServiceSecrets.TWILIO_MESSAGING_SERVICE_SID.value
-    )
-    sender_phone_number = messaging_config.secrets.get(
-        MessagingServiceSecrets.TWILIO_SENDER_PHONE_NUMBER.value
-    )
-
-    client = Client(account_sid, auth_token)
-    try:
-        if messaging_service_id:
-            client.messages.create(
-                to=to, messaging_service_sid=messaging_service_id, body=message
-            )
-        elif sender_phone_number:
-            client.messages.create(to=to, from_=sender_phone_number, body=message)
-        else:
-            logger.error(
-                "Message failed to send. Either sender phone number or messaging service sid must be provided."
-            )
-            raise MessageDispatchException(
-                "Message failed to send. Either sender phone number or messaging service sid must be provided."
-            )
-    except TwilioRestException as e:
-        logger.error("Twilio SMS failed to send: {}", Pii(str(e)))
-        raise MessageDispatchException(f"Twilio SMS failed to send due to: {Pii(e)}")
-
-
-def _get_template_id_if_exists(
-    templates_response: Dict[str, List], template_name: str
-) -> Optional[str]:
+def get_email_messaging_config_service_type(db: Session) -> Optional[str]:
     """
-    Checks to see if a SendGrid template exists for Fides, returning the id if so
+    Email connectors require that an email messaging service has been configured.
+    Prefers Twilio if both Twilio email AND Mailgun has been configured.
     """
 
-    for template in templates_response["result"]:
-        if template["name"].lower() == template_name.lower():
-            return template["id"]
+    # if there's a specified messaging service type, and it's an email service, we use that
+    if (
+        configured_service_type := ConfigProxy(
+            db
+        ).notifications.notification_service_type
+    ) is not None and configured_service_type in EMAIL_MESSAGING_SERVICES:
+        return configured_service_type
+
+    # if no specified messaging service type, fall back to hardcoded preference hierarchy
+    messaging_configs: Optional[List[MessagingConfig]] = MessagingConfig.query(
+        db=db
+    ).all()
+    if not messaging_configs:
+        # let messaging dispatch service handle non-existent service
+        return None
+
+    twilio_email_config = next(
+        (
+            config
+            for config in messaging_configs
+            if config.service_type == MessagingServiceType.twilio_email
+        ),
+        None,
+    )
+    if twilio_email_config:
+        # First choice: use Twilio
+        return MessagingServiceType.twilio_email.value
+
+    mailgun_config = next(
+        (
+            config
+            for config in messaging_configs
+            if config.service_type == MessagingServiceType.mailgun
+        ),
+        None,
+    )
+    if mailgun_config:
+        # Second choice: use Mailgun
+        return MessagingServiceType.mailgun.value
+
+    mailchimp_transactional_config = next(
+        (
+            config
+            for config in messaging_configs
+            if config.service_type == MessagingServiceType.mailchimp_transactional
+        ),
+        None,
+    )
+    if mailchimp_transactional_config:
+        # Third choice: use Mailchimp Transactional
+        return MessagingServiceType.mailchimp_transactional.value
+
     return None
-
-
-def _compose_twilio_mail(
-    from_email: Email,
-    to_email: To,
-    subject: str,
-    message_body: str,
-    template_test: Optional[str] = None,
-) -> Mail:
-    """
-    Returns the Mail object to send, if a template is passed composes the Mail
-    appropriately with the template ID and paramaterized message body.
-    """
-    if template_test:
-        mail = Mail(from_email=from_email, subject=subject)
-        mail.template_id = TemplateId(template_test)
-        personalization = Personalization()
-        personalization.dynamic_template_data = {"fides_email_body": message_body}
-        personalization.add_email(to_email)
-        mail.add_personalization(personalization)
-    else:
-        content = Content("text/html", message_body)
-        mail = Mail(from_email, to_email, subject, content)
-    return mail

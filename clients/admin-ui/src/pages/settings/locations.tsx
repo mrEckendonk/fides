@@ -1,8 +1,10 @@
-import { Box, Heading, Spinner, Text } from "fidesui";
+import { ChakraText as Text, Spin } from "fidesui";
 import type { NextPage } from "next";
 
 import { useAppSelector } from "~/app/hooks";
+import ErrorPage from "~/features/common/errors/ErrorPage";
 import Layout from "~/features/common/Layout";
+import PageHeader from "~/features/common/PageHeader";
 import LocationManagement from "~/features/locations/LocationManagement";
 import {
   selectLocationsRegulations,
@@ -11,31 +13,32 @@ import {
 
 const LocationsPage: NextPage = () => {
   // Subscribe to locations/regulations endpoint
-  const { isLoading } = useGetLocationsRegulationsQuery();
+  const { isLoading, error } = useGetLocationsRegulationsQuery();
 
   const locationsRegulations = useAppSelector(selectLocationsRegulations);
 
+  if (error) {
+    return (
+      <ErrorPage
+        error={error}
+        defaultMessage="A problem occurred while fetching locations settings"
+      />
+    );
+  }
+
   return (
     <Layout title="Locations">
-      <Box data-testid="location-management">
-        <Heading marginBottom={2} fontSize="2xl">
-          Locations
-        </Heading>
-        <Box>
-          <Text marginBottom={4} fontSize="sm" maxWidth="720px">
-            Select the locations that you operate in and Fides will make sure
-            that you are automatically presented with the relevant regulatory
-            guidelines and global frameworks for your locations.
-          </Text>
-          <Box>
-            {isLoading ? (
-              <Spinner />
-            ) : (
-              <LocationManagement data={locationsRegulations} />
-            )}
-          </Box>
-        </Box>
-      </Box>
+      <PageHeader heading="Locations" />
+      <Text fontSize="sm" maxWidth="720px" pb={6}>
+        Select the locations that you operate in and Fides will make sure that
+        you are automatically presented with the relevant regulatory guidelines
+        and global frameworks for your locations.
+      </Text>
+      {isLoading ? (
+        <Spin />
+      ) : (
+        <LocationManagement data={locationsRegulations} />
+      )}
     </Layout>
   );
 };

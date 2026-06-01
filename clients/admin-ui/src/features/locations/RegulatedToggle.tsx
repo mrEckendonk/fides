@@ -1,6 +1,10 @@
-import { Flex, FormLabel, Switch } from "fidesui";
+import {
+  ChakraFlex as Flex,
+  ChakraFormLabel as FormLabel,
+  Switch,
+} from "fidesui";
 
-import QuestionTooltip from "~/features/common/QuestionTooltip";
+import { InfoTooltip } from "~/features/common/InfoTooltip";
 
 const RegulatedToggle = ({
   id,
@@ -13,17 +17,16 @@ const RegulatedToggle = ({
 }) => (
   <Flex alignItems="center" gap="8px">
     <Switch
-      isChecked={isChecked}
-      size="sm"
+      checked={isChecked}
+      size="small"
       onChange={onChange}
-      colorScheme="complimentary"
       id={id}
       data-testid="regulated-toggle"
     />
     <FormLabel fontSize="sm" m={0} htmlFor={id}>
       Regulated
     </FormLabel>
-    <QuestionTooltip label="Toggle on to see only locations in this region with privacy regulations supported by Fides" />
+    <InfoTooltip label="Toggle on to see only locations in this region with privacy regulations supported by Fides" />
   </Flex>
 );
 

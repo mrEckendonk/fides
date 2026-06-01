@@ -2,17 +2,37 @@
 // eslint-disable-next-line import/no-extraneous-dependencies
 import "cypress-wait-until";
 
+import type { FidesConfig, FidesEventType } from "fides-js";
+
+import {
+  getClientSettings,
+  PrivacyCenterClientSettings,
+} from "~/app/server-environment";
 import type { AppDispatch } from "~/app/store";
-import type { FidesConfig } from "fides-js";
-import type { PrivacyCenterClientSettings } from "~/app/server-environment";
 import VisitOptions = Cypress.VisitOptions;
 
+declare global {
+  interface Window {
+    config: any;
+  }
+}
+
 Cypress.Commands.add("getByTestId", (selector, ...args) =>
-  cy.get(`[data-testid='${selector}']`, ...args)
+  cy.get(`[data-testid='${selector}']`, ...args),
 );
 
-Cypress.Commands.add("getToggle", (...args) =>
-  cy.get(`input[type="checkbox"]`, ...args)
+/**
+ * Select a location in the privacy request form (Ant Design Select).
+ * @param value - ISO 3166-2 region code to type and select (default: "us-ny")
+ * @example cy.selectPrivacyRequestLocation()
+ * @example cy.selectPrivacyRequestLocation("us-ca")
+ */
+Cypress.Commands.add("selectPrivacyRequestLocation", (value = "us-ny") => {
+  cy.get("#location").clear({ force: true }).type(`${value}{enter}`);
+});
+
+Cypress.Commands.add("getToggle", (_, ...args) =>
+  cy.get(`input[type="checkbox"]`, ...args),
 );
 
 Cypress.Commands.add("dispatch", (action) => {
@@ -25,7 +45,7 @@ Cypress.Commands.add("waitUntilCookieExists", (cookieName: string, ...args) => {
       cy
         .getCookie(cookieName)
         .then((cookie) => Boolean(cookie && cookie.value)),
-    ...args
+    ...args,
   );
 });
 
@@ -37,7 +57,7 @@ Cypress.Commands.add("waitUntilFidesInitialized", (...args) => {
         .its("Fides")
         .its("initialized")
         .then(() => true),
-    ...args
+    ...args,
   );
 });
 
@@ -45,14 +65,14 @@ Cypress.Commands.add("loadConfigFixture", (fixtureName: string, ...args) => {
   cy.getByTestId("logo");
   cy.fixture(fixtureName, ...args).then((config) => {
     cy.dispatch({ type: "config/loadConfig", payload: config }).then(
-      () => config
+      () => config,
     );
   });
 });
 
 Cypress.Commands.add("overrideSettings", (settings) => {
   cy.dispatch({ type: "settings/overrideSettings", payload: settings }).then(
-    () => settings
+    () => settings,
   );
 });
 
@@ -68,64 +88,118 @@ Cypress.Commands.add("visitWithLanguage", (url: string, language: string) => {
 });
 
 Cypress.Commands.add(
+  "visitConsent",
+  ({ settingsOverride, urlParams = {}, language }) => {
+    const urlSearchParams = new URLSearchParams({
+      ...urlParams,
+      redirect: "false",
+    });
+    const url = `/consent?${urlSearchParams.toString()}`;
+
+    if (language) {
+      cy.visitWithLanguage(url, language);
+    } else {
+      cy.visit(url);
+    }
+
+    const envVariables = getClientSettings();
+    cy.dispatch({
+      type: "settings/overrideSettings",
+      payload: {
+        ...envVariables,
+        ...settingsOverride,
+      },
+    });
+    cy.fixture("config/config.css").then((config) => {
+      cy.dispatch({ type: "styles/loadStyles", payload: config }).then(
+        () => config,
+      );
+    });
+    cy.fixture("config/config_consent.json").then((config) => {
+      cy.dispatch({ type: "config/loadConfig", payload: config }).then(
+        () => config,
+      );
+    });
+  },
+);
+
+Cypress.Commands.add(
   "visitConsentDemo",
-  (
-    options?: FidesConfig,
-    queryParams?: Cypress.VisitOptions["qs"] | null,
-    windowParams?: any
-  ) => {
+  (options?: FidesConfig, queryParams?: any, windowParams?: any) => {
     const visitOptions: Partial<VisitOptions> = {
       onBeforeLoad: (win) => {
-        // eslint-disable-next-line no-param-reassign
         win.fidesConfig = options;
 
         if (windowParams) {
-          // @ts-ignore
-          // eslint-disable-next-line no-param-reassign
           if (options?.options.customOptionsPath) {
             // hard-code path for now, as dynamically assigning to win obj is challenging in Cypress
-            // @ts-ignore
-            // eslint-disable-next-line no-param-reassign
             win.config = {
               tc_info: undefined,
               overrides: windowParams,
             };
           } else {
-            // eslint-disable-next-line no-param-reassign
             win.fides_overrides = windowParams;
           }
         }
 
-        // Add event listeners for Fides.js events
-        win.addEventListener(
-          "FidesInitializing",
-          cy.stub().as("FidesInitializing")
-        );
-        win.addEventListener(
-          "FidesInitialized",
-          cy.stub().as("FidesInitialized")
-        );
-        win.addEventListener("FidesUpdating", cy.stub().as("FidesUpdating"));
-        win.addEventListener("FidesUpdated", cy.stub().as("FidesUpdated"));
-        win.addEventListener("FidesUIShown", cy.stub().as("FidesUIShown"));
-        win.addEventListener("FidesUIChanged", cy.stub().as("FidesUIChanged"));
+        // List all Fides events and stub them all in tests.
+        // NOTE: If you add a new FidesEventType but don't include it here, this
+        // will fail to compile. That's the point!
+        const fidesEvents: Record<FidesEventType, true> = {
+          FidesInitializing: true,
+          FidesInitialized: true, // deprecated
+          FidesConsentLoaded: true,
+          FidesReady: true,
+          FidesUpdating: true,
+          FidesUpdated: true,
+          FidesUIChanged: true,
+          FidesUIShown: true,
+          FidesModalClosed: true,
+        };
+
+        // Add event listeners for all Fides.js events
+        const allEventsStub = cy.stub().as("AllFidesEvents");
+        Object.keys(fidesEvents).forEach((eventName) => {
+          const eventStub = cy.stub().as(eventName);
+          win.addEventListener(eventName, (event) => {
+            eventStub(event);
+            allEventsStub(event);
+          });
+        });
 
         // Add GTM stub
-        // eslint-disable-next-line no-param-reassign
         win.dataLayer = [];
         cy.stub(win.dataLayer, "push").as("dataLayerPush");
+
+        // Add Matomo stub
+        win._paq = [];
+        cy.stub(win._paq, "push").as("paqPush");
       },
     };
+    if (!queryParams || !queryParams.disable_animations) {
+      if (!queryParams) {
+        queryParams = {};
+      }
+      queryParams.disable_animations = "true";
+    }
     if (queryParams) {
       visitOptions.qs = queryParams;
     }
     cy.visit("/fides-js-components-demo.html", visitOptions);
-  }
+  },
 );
 
 declare global {
   namespace Cypress {
     interface Chainable {
+      /**
+       * Select location in the privacy request form.
+       * @example cy.selectPrivacyRequestLocation()
+       * @example cy.selectPrivacyRequestLocation("us-ca")
+       */
+      selectPrivacyRequestLocation(
+        value?: string,
+      ): Chainable<JQuery<HTMLElement>>;
       /**
        * Custom command to select DOM element by data-testid attribute
        * @example cy.getByTestId('clear-btn')
@@ -137,7 +211,7 @@ declare global {
             Cypress.Timeoutable &
             Cypress.Withinable &
             Cypress.Shadow
-        >
+        >,
       ): Chainable<JQuery<HTMLElement>>;
       /**
        * Custom command to select a checkbox input by its value.
@@ -150,7 +224,7 @@ declare global {
             Cypress.Timeoutable &
             Cypress.Withinable &
             Cypress.Shadow
-        >
+        >,
       ): Chainable<JQuery<HTMLElement>>;
       /**
        * Call `cy.dispatch(myAction())` to directly dispatch an action on the app's Redux store.
@@ -175,7 +249,7 @@ declare global {
             Cypress.Timeoutable &
             Cypress.Withinable &
             Cypress.Shadow
-        >
+        >,
       ): Chainable<boolean>;
       /**
        * Custom command to wait until Fides consent script is fully initialized.
@@ -188,7 +262,7 @@ declare global {
             Cypress.Timeoutable &
             Cypress.Withinable &
             Cypress.Shadow
-        >
+        >,
       ): Chainable<boolean>;
       /**
        * Custom command to load a Privacy Center configuration JSON file from a fixture.
@@ -199,7 +273,7 @@ declare global {
        */
       loadConfigFixture(
         fixtureName: string,
-        options?: Partial<Cypress.Timeoutable>
+        options?: Partial<Cypress.Timeoutable>,
       ): Chainable<any>;
       /**
        * Visit the specified url with a different browser language
@@ -213,8 +287,29 @@ declare global {
       visitConsentDemo(
         options?: FidesConfig,
         queryParams?: Cypress.VisitOptions["qs"] | null,
-        windowParams?: any
+        windowParams?: any,
       ): Chainable<any>;
+
+      /**
+       * Custom command to visit the consent page with the specified settings.
+       *
+       * The consent page is client only, normally if you try accessing it directly
+       * you will get redirected to the home page.
+       *
+       * This command adds a redirect=false query parameter to the URL to prevent that.
+       * And then injects all the missing store state that the page needs to render.
+       *
+       * @example cy.visitConsent({ settingsOverride: SETTINGS });
+       */
+      visitConsent({
+        settingsOverride,
+        urlParams,
+        language,
+      }: {
+        settingsOverride: Partial<PrivacyCenterClientSettings>;
+        urlParams?: Record<string, string>;
+        language?: string;
+      }): Chainable<any>;
       /**
        * Custom command to load a Privacy Center settings object into the app
        *
@@ -224,8 +319,16 @@ declare global {
        * @example cy.overrideSettings({IS_OVERLAY_ENABLED: true})
        */
       overrideSettings(
-        settings: Partial<PrivacyCenterClientSettings>
+        settings: Partial<PrivacyCenterClientSettings>,
       ): Chainable<any>;
+      /**
+       * Custom command to handle expected "already loaded on this page" exceptions from Fides.js
+       * This sets up an uncaught exception handler that will allow the test to continue
+       * when Fides.js detects it's already loaded, but will still fail on other errors.
+       *
+       * @example cy.expectFidesAlreadyLoadedException();
+       */
+      expectFidesAlreadyLoadedException(): Chainable<any>;
     }
   }
 }
@@ -242,15 +345,25 @@ declare global {
       // DEFER: tcData should be type TCData from the IAB's TCF library.
       // Once we are importing that library, replace this `any` type.
       callback: (tcData: any, success: boolean) => void,
-      parameter?: number | string
+      parameter?: number | string,
     ) => void;
     __gpp: (
       command: string,
       callback: (data: any, success: boolean) => void,
-      parameter?: number | string
+      parameter?: number | string,
     ) => void;
   }
 }
+
+Cypress.Commands.add("expectFidesAlreadyLoadedException", () => {
+  cy.on("uncaught:exception", (e) => {
+    if (e.message.includes("already loaded on this page")) {
+      // we expected this error
+      return false;
+    }
+    // on any other error message the test fails
+  });
+});
 
 // Convert this to a module instead of script (allows import/export)
 export {};

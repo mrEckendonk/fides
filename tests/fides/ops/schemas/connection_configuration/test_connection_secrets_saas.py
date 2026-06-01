@@ -1,0 +1,281 @@
+from typing import Any, Dict
+from unittest.mock import patch
+
+import pytest
+from pydantic import ValidationError
+
+from fides.api.schemas.connection_configuration.connection_secrets_saas import (
+    SaaSSchema,
+    SaaSSchemaFactory,
+)
+from fides.api.schemas.saas.saas_config import (
+    ConnectorParam,
+    ExternalDatasetReference,
+    SaaSConfig,
+)
+from fides.config.security_settings import DomainValidationMode
+
+
+@pytest.mark.unit_saas
+class TestSaaSConnectionSecrets:
+    @pytest.fixture(scope="function")
+    def saas_config(self, saas_example_config: Dict[str, Any]) -> SaaSConfig:
+        return SaaSConfig(**saas_example_config)
+
+    def test_get_saas_schema(self, saas_config):
+        """
+        Assert the schema name is derived from the SaaS config fides key and
+        that the schema is a subclass of SaaSSchema
+        """
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        assert schema.__name__ == f"{saas_config.type}_schema"
+        assert issubclass(schema.__base__, SaaSSchema)
+
+    def test_validation(
+        self, saas_config: SaaSConfig, saas_example_secrets: Dict[str, Any]
+    ):
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        config = saas_example_secrets
+        schema.model_validate(config)
+
+    def test_missing_fields(self, saas_config: SaaSConfig):
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        config = {"domain": "domain", "username": "username"}
+        with pytest.raises(ValidationError) as exc:
+            schema.model_validate(config)
+
+        required_fields = [
+            connector_param.name
+            for connector_param in (
+                saas_config.connector_params + saas_config.external_references
+            )
+            if isinstance(
+                connector_param, ExternalDatasetReference
+            )  # external refs are required
+            or not connector_param.default_value
+        ]
+
+        errors = exc._excinfo[1].errors()
+        assert (
+            errors[0]["msg"]
+            == "Value error, custom_schema must be supplied all of: [username, api_key, api_version, page_size, account_types, customer_id]."
+        )
+
+    def test_extra_fields(
+        self, saas_config: SaaSConfig, saas_example_secrets: Dict[str, Any]
+    ):
+        # extra fields are allowed
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        config = {
+            **saas_example_secrets,
+            "extra": "extra",
+        }
+        schema.model_validate(config)
+
+    def test_default_value_fields(
+        self, saas_config: SaaSConfig, saas_example_secrets: Dict[str, Any]
+    ):
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        domain_param = next(
+            connector_param
+            for connector_param in saas_config.connector_params
+            if connector_param.name == "domain"
+        )
+        assert domain_param.default_value
+        del saas_example_secrets["domain"]
+        config = saas_example_secrets
+        schema.model_validate(config)
+
+    def test_value_in_options(self, saas_config: SaaSConfig):
+        saas_config.connector_params = [
+            ConnectorParam(name="account_type", options=["checking", "savings"])
+        ]
+        saas_config.external_references = []
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        schema.model_validate({"account_type": "checking"})
+
+    def test_value_in_options_with_multiselect(self, saas_config: SaaSConfig):
+        saas_config.connector_params = [
+            ConnectorParam(
+                name="account_type", options=["checking", "savings"], multiselect=True
+            )
+        ]
+        saas_config.external_references = []
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        schema.model_validate({"account_type": ["checking", "savings"]})
+
+    def test_value_not_in_options(self, saas_config: SaaSConfig):
+        saas_config.connector_params = [
+            ConnectorParam(name="account_type", options=["checking", "savings"])
+        ]
+        saas_config.external_references = []
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        with pytest.raises(ValidationError) as exc:
+            schema.model_validate({"account_type": "investment"})
+        assert exc.type is ValidationError
+
+    def test_value_not_in_options_with_multiselect(self, saas_config: SaaSConfig):
+        saas_config.connector_params = [
+            ConnectorParam(
+                name="account_type", options=["checking", "savings"], multiselect=True
+            )
+        ]
+        saas_config.external_references = []
+        schema = SaaSSchemaFactory(saas_config).get_saas_schema()
+        with pytest.raises(ValidationError) as exc:
+            schema.model_validate({"account_type": ["checking", "brokerage"]})
+
+
+@pytest.mark.unit_saas
+class TestSaaSConnectionSecretsDomainValidation:
+    """Tests for domain validation during secret validation."""
+
+    @pytest.fixture(scope="function")
+    def saas_config_with_allowed_values(
+        self, saas_example_config: Dict[str, Any]
+    ) -> SaaSConfig:
+        saas_example_config["connector_params"] = [
+            {
+                "name": "domain",
+                "default_value": "api.stripe.com",
+                "type": "endpoint",
+                "allowed_values": ["api.stripe.com"],
+            },
+            {"name": "api_key"},
+        ]
+        saas_example_config["external_references"] = []
+        return SaaSConfig(**saas_example_config)
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.enabled,
+    )
+    def test_allowed_domain_passes(self, mock_mode, saas_config_with_allowed_values):
+        """Setting a domain that matches allowed_values should succeed."""
+        schema = SaaSSchemaFactory(saas_config_with_allowed_values).get_saas_schema()
+        schema.model_validate({"domain": "api.stripe.com", "api_key": "sk_test_123"})
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.enabled,
+    )
+    def test_disallowed_domain_fails(self, mock_mode, saas_config_with_allowed_values):
+        """Setting a domain not in allowed_values should fail."""
+        schema = SaaSSchemaFactory(saas_config_with_allowed_values).get_saas_schema()
+        with pytest.raises(ValidationError, match="not in the list of allowed values"):
+            schema.model_validate(
+                {"domain": "evil.example.com", "api_key": "sk_test_123"}
+            )
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.disabled,
+    )
+    def test_disallowed_domain_passes_when_validation_disabled(
+        self, mock_mode, saas_config_with_allowed_values
+    ):
+        """Domain validation should be skipped when disabled."""
+        schema = SaaSSchemaFactory(saas_config_with_allowed_values).get_saas_schema()
+        schema.model_validate({"domain": "evil.example.com", "api_key": "sk_test_123"})
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.monitor,
+    )
+    def test_disallowed_domain_warns_in_monitor_mode(
+        self, mock_mode, saas_config_with_allowed_values
+    ):
+        """In monitor mode a disallowed domain should not raise but should log a warning."""
+        schema = SaaSSchemaFactory(saas_config_with_allowed_values).get_saas_schema()
+        # Should not raise in monitor mode — the warning is emitted via loguru
+        schema.model_validate({"domain": "evil.example.com", "api_key": "sk_test_123"})
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.enabled,
+    )
+    def test_empty_allowed_values_permits_any_value(
+        self, mock_mode, saas_example_config: Dict[str, Any]
+    ):
+        """Empty allowed_values list should permit any domain value."""
+        saas_example_config["connector_params"] = [
+            {
+                "name": "domain",
+                "default_value": "custom.example.com",
+                "type": "endpoint",
+                "allowed_values": [],
+            },
+            {"name": "api_key"},
+        ]
+        saas_example_config["external_references"] = []
+        config = SaaSConfig(**saas_example_config)
+        schema = SaaSSchemaFactory(config).get_saas_schema()
+        schema.model_validate(
+            {"domain": "anything.example.com", "api_key": "sk_test_123"}
+        )
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.enabled,
+    )
+    def test_none_allowed_values_no_validation(
+        self, mock_mode, saas_example_config: Dict[str, Any]
+    ):
+        """None allowed_values (omitted) should skip validation entirely."""
+        saas_example_config["connector_params"] = [
+            {"name": "domain", "default_value": "localhost"},
+            {"name": "api_key"},
+        ]
+        saas_example_config["external_references"] = []
+        config = SaaSConfig(**saas_example_config)
+        schema = SaaSSchemaFactory(config).get_saas_schema()
+        schema.model_validate(
+            {"domain": "literally-anything", "api_key": "sk_test_123"}
+        )
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.enabled,
+    )
+    def test_wildcard_allowed_values(
+        self, mock_mode, saas_example_config: Dict[str, Any]
+    ):
+        """Wildcard patterns in allowed_values should be validated."""
+        saas_example_config["connector_params"] = [
+            {
+                "name": "domain",
+                "type": "endpoint",
+                "allowed_values": ["*.salesforce.com"],
+            },
+            {"name": "api_key"},
+        ]
+        saas_example_config["external_references"] = []
+        config = SaaSConfig(**saas_example_config)
+        schema = SaaSSchemaFactory(config).get_saas_schema()
+        schema.model_validate(
+            {"domain": "na1.salesforce.com", "api_key": "sk_test_123"}
+        )
+
+    @patch(
+        "fides.api.schemas.connection_configuration.connection_secrets_saas.get_domain_validation_mode",
+        return_value=DomainValidationMode.enabled,
+    )
+    def test_wildcard_disallowed_domain(
+        self, mock_mode, saas_example_config: Dict[str, Any]
+    ):
+        """Domain not matching wildcard pattern should fail."""
+        saas_example_config["connector_params"] = [
+            {
+                "name": "domain",
+                "type": "endpoint",
+                "allowed_values": ["*.salesforce.com"],
+            },
+            {"name": "api_key"},
+        ]
+        saas_example_config["external_references"] = []
+        config = SaaSConfig(**saas_example_config)
+        schema = SaaSSchemaFactory(config).get_saas_schema()
+        with pytest.raises(ValidationError, match="not in the list of allowed values"):
+            schema.model_validate(
+                {"domain": "evil.example.com", "api_key": "sk_test_123"}
+            )

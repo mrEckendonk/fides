@@ -1,0 +1,61 @@
+import {
+  stubDatasetCrud,
+  stubPlus,
+  stubSystemCrud,
+  stubSystemIntegrations,
+  stubSystemVendors,
+  stubTaxonomyEntities,
+} from "cypress/support/stubs";
+
+import { SYSTEM_ROUTE } from "~/features/common/nav/routes";
+
+describe("System Navigation", () => {
+  beforeEach(() => {
+    cy.login();
+    stubSystemCrud();
+    stubTaxonomyEntities();
+    stubPlus(true);
+    cy.intercept("GET", "/api/v1/system", {
+      fixture: "systems/systems.json",
+    }).as("getSystems");
+    cy.intercept({ method: "POST", url: "/api/v1/system*" }).as(
+      "postDictSystem",
+    );
+    cy.intercept("/api/v1/config?api_set=false", {});
+    stubDatasetCrud();
+    stubSystemIntegrations();
+    stubSystemVendors();
+  });
+
+  it("updates URL hash when switching tabs", () => {
+    cy.visit(`${SYSTEM_ROUTE}/configure/demo_analytics_system#information`);
+    // eslint-disable-next-line cypress/no-unnecessary-waiting
+    cy.wait(500); // wait for initial tab to load
+    cy.location("hash").should("eq", "#information");
+
+    cy.clickAntTab("Data uses");
+    cy.location("hash").should("eq", "#data-uses");
+
+    cy.clickAntTab("Data flow");
+    cy.location("hash").should("eq", "#data-flow");
+
+    cy.clickAntTab("Integrations");
+    cy.location("hash").should("eq", "#integrations");
+
+    cy.clickAntTab("Assets");
+    cy.location("hash").should("eq", "#assets");
+
+    cy.clickAntTab("History");
+    cy.location("hash").should("eq", "#history");
+  });
+
+  it("loads correct tab directly based on URL hash", () => {
+    // Visit page with specific hash
+    cy.visit(`${SYSTEM_ROUTE}/configure/demo_analytics_system#data-uses`);
+    cy.wait("@getMinimalUnlinkedDatasets");
+
+    // Verify correct tab is active
+    cy.getAntTab("Data uses").should("have.attr", "aria-selected", "true");
+    cy.location("hash").should("eq", "#data-uses");
+  });
+});

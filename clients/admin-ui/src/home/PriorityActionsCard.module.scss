@@ -1,0 +1,80 @@
+.emptyActions {
+  min-height: 200px;
+}
+
+.emptyIcon {
+  font-size: 24px;
+  color: var(--fidesui-color-success);
+}
+
+.actionIcon {
+  color: var(--fidesui-color-text-secondary);
+  background-color: var(--fidesui-color-fill-quaternary);
+  border: 1px solid var(--fidesui-color-border-secondary);
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
+.actionRow {
+  display: block;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: var(--fidesui-color-fill-quaternary);
+
+    .launchIcon {
+      color: var(--fidesui-color-text);
+    }
+  }
+}
+
+.launchIcon {
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: 8px;
+  color: var(--fidesui-color-text-quaternary);
+  transition: color 0.15s ease;
+}
+
+.filterSelect {
+  :global(.ant-select-selector) {
+    background-color: var(--fidesui-color-bg-container) !important;
+  }
+
+  &:global(.ant-select:not(.ant-select-disabled):hover)
+    :global(.ant-select-selector),
+  &:global(.ant-select-focused:not(.ant-select-disabled))
+    :global(.ant-select-selector) {
+    background-color: var(--fidesui-color-fill-quaternary) !important;
+  }
+}
+
+.cardContainer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :global(.ant-card-head) {
+    flex-shrink: 0;
+  }
+
+  :global(.ant-card-body) {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  :global(.ant-list-item) {
+    align-items: flex-start;
+    padding-block: var(--fidesui-padding-sm, 12px);
+  }
+
+  :global(.ant-list-item-meta) {
+    align-items: flex-start;
+  }
+
+  :global(.ant-list-item-action) {
+    align-self: center;
+  }
+}

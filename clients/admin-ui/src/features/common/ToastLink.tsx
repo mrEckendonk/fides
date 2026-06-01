@@ -1,6 +1,8 @@
 import { Button } from "fidesui";
 import { ReactNode } from "react";
 
+import styles from "~/features/ToastLink.module.scss";
+
 // It's difficult to pass a NextLink directly into a toast, so we can use a styled button instead,
 // where the onClick can use the next router
 // https://github.com/chakra-ui/chakra-ui/issues/3690
@@ -12,16 +14,11 @@ const ToastLink = ({
   children: ReactNode;
 }) => (
   <Button
-    as="a"
     onClick={onClick}
-    variant="link"
-    textDecor="underline"
-    textColor="gray.700"
-    fontWeight="medium"
-    // allow lines to wrap
-    display="initial"
-    cursor="pointer"
-    whiteSpace="inherit"
+    type="link"
+    role="link"
+    size="small"
+    className={styles.toastLink}
   >
     {children}
   </Button>

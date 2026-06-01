@@ -1,4 +1,4 @@
-import { ListItem } from "fidesui";
+import { ChakraListItem as ListItem } from "fidesui";
 
 import {
   InfoHeading,
@@ -6,11 +6,12 @@ import {
   InfoUnorderedList,
 } from "~/features/common/copy/components";
 import ShowMoreContent from "~/features/common/copy/ShowMoreContent";
-import { ConnectionCategory } from "~/features/integrations/ConnectionCategory";
 import { AccessLevel, ConnectionType } from "~/types/api";
+import { ConnectionCategory } from "~/types/api/models/ConnectionCategory";
+import { IntegrationFeature } from "~/types/api/models/IntegrationFeature";
 
 export const GOOGLE_CLOUD_SQL_MYSQL_PLACEHOLDER = {
-  name: "Google Cloud SQL for MySQL",
+  name: "Cloud SQL - MySQL",
   key: "google_cloud_sql_for_mysql_placeholder",
   connection_type: ConnectionType.GOOGLE_CLOUD_SQL_MYSQL,
   access: AccessLevel.READ,
@@ -18,10 +19,9 @@ export const GOOGLE_CLOUD_SQL_MYSQL_PLACEHOLDER = {
 };
 
 export const GOOGLE_CLOUD_SQL_MYSQL_TAGS = [
-  "Database",
-  "Detection",
+  "DSR Automation",
   "Discovery",
-  "DSR automation",
+  "Detection",
 ];
 
 export const GoogleCloudSQLMySQLOverview = () => (
@@ -38,7 +38,7 @@ export const GoogleCloudSQLMySQLOverview = () => (
       <InfoHeading text="Categories" />
       <InfoUnorderedList>
         <ListItem>Database</ListItem>
-        <ListItem>NoSQL database</ListItem>
+        <ListItem>SQL database</ListItem>
         <ListItem>Storage system</ListItem>
         <ListItem>Data detection</ListItem>
         <ListItem>Data discovery</ListItem>
@@ -47,18 +47,19 @@ export const GoogleCloudSQLMySQLOverview = () => (
       <InfoHeading text="Permissions" />
       <InfoText>
         For detection and discovery, Fides requires a user with the SELECT
-        permission on all keyspaces. If you intend to automate governance for
-        DSR or Consent, Fides requires the role to to be granted SELECT and
-        MODIFY on all keyspaces. The permissions allow Fides to read the scema
-        of, and data stored in keyspaces, tables, and fields as well as write
-        restricted updates based on your policy configurations to tables you
-        specify as part of DSR and Consent orchestration. For a complete list of
-        permissions view the Google Cloud SQL for MySQL DB documentation.
+        permission on the database. If you intend to automate governance for DSR
+        or Consent, Fides requires a user with the SELECT, UPDATE, and DELETE
+        The permissions allow Fides to read the schema of, and data stored in
+        tables, and fields as well as write restricted updates based on your
+        policy configurations to tables you specify as part of DSR and Consent
+        orchestration. For a complete list of permissions view the Google Cloud
+        SQL for MySQL DB documentation.
       </InfoText>
       <InfoHeading text="Permissions list" />
       <InfoUnorderedList>
-        <ListItem>SELECT ALL KEYSPACES</ListItem>
-        <ListItem>MODIFY ALL KEYSPACES</ListItem>
+        <ListItem>GRANT SELECT</ListItem>
+        <ListItem>GRANT UPDATE</ListItem>
+        <ListItem>GRANT DELETE</ListItem>
       </InfoUnorderedList>
     </ShowMoreContent>
   </>
@@ -69,6 +70,7 @@ const GOOGLE_CLOUD_SQL_MYSQL_TYPE_INFO = {
   category: ConnectionCategory.DATABASE,
   overview: <GoogleCloudSQLMySQLOverview />,
   tags: GOOGLE_CLOUD_SQL_MYSQL_TAGS,
+  enabledFeatures: [IntegrationFeature.DATA_DISCOVERY],
 };
 
 export default GOOGLE_CLOUD_SQL_MYSQL_TYPE_INFO;

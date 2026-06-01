@@ -3,11 +3,11 @@ import { stubLocations, stubPlus } from "cypress/support/stubs";
 import {
   LOCATIONS_ROUTE,
   REGULATIONS_ROUTE,
-} from "~/features/common/nav/v2/routes";
+} from "~/features/common/nav/routes";
 
 const assertIsChecked = (
   name: string,
-  state: "checked" | "unchecked" | "indeterminate"
+  state: "checked" | "unchecked" | "indeterminate",
 ) => {
   cy.getByTestId(name).within(() => {
     if (state === "indeterminate") {
@@ -36,7 +36,7 @@ describe("Locations and regulations", () => {
         assertIsChecked("select-all", "indeterminate");
         assertIsChecked(
           "European Economic Area (EEA)-checkbox",
-          "indeterminate"
+          "indeterminate",
         );
       });
       cy.getByTestId("picker-card-North America").within(() => {
@@ -108,7 +108,7 @@ describe("Locations and regulations", () => {
       });
 
       // Clear search should reset to initial state
-      cy.get("button").contains("Clear").click();
+      cy.getByTestId("search-bar").clear();
       cy.getByTestId("picker-card-Europe");
       cy.getByTestId("picker-card-North America");
       cy.getByTestId("picker-card-South America");
@@ -198,7 +198,7 @@ describe("Locations and regulations", () => {
       });
 
       cy.getByTestId("save-btn").click();
-      cy.getByTestId("continue-btn").click();
+      cy.getAntModalConfirmButtons().contains("OK").click();
       cy.wait("@patchLocations").then((interception) => {
         const { body } = interception.request;
         // No changes to regulations
@@ -408,7 +408,7 @@ describe("Locations and regulations", () => {
       });
 
       cy.getByTestId("save-btn").click();
-      cy.getByTestId("continue-btn").click();
+      cy.getAntModalConfirmButtons().contains("OK").click();
       cy.wait("@patchLocations").then((interception) => {
         const { body } = interception.request;
         // No changes to locations

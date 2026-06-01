@@ -1,35 +1,19 @@
-const path = require("path");
-const { version } = require("./package.json");
-
 const withBundleAnalyzer = require("@next/bundle-analyzer")({
   enabled: process.env.ANALYZE === "true",
 });
 
-// DEFER (PROD-1981): Replace with `transpilePackages` after upgrading to 13.0.0
-// Transpile the modules needed for Swagger UI
-const withTM = require("next-transpile-modules")([
-  "react-syntax-highlighter",
-  "swagger-client",
-  "swagger-ui-react",
-  "fidesui",
-]);
+const { importFidesPackageVersion } = require("../build-utils");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  // `reactStrictMode` must be false for Chakra v2 modals to behave properly. See https://github.com/chakra-ui/chakra-ui/issues/5321#issuecomment-1219327270
+  reactStrictMode: false,
   poweredByHeader: false,
   env: {
-    version: "1.2.3",
+    version: importFidesPackageVersion(),
   },
-  webpack: (config, { isServer }) => {
-    // Provide an empty fallback for the "fs" module for the client-side bundle
-    // This is needed to ensure the dynamic import("fs") in loadConfigFromFile()
-    // doesn't attempt to import the "fs" module when the client code runs!
-    if (!isServer) {
-      config.resolve.fallback.fs = false;
-    }
-    return config;
-  },
+  transpilePackages: ["react-syntax-highlighter", "fidesui"],
+
   async rewrites() {
     return [
       {
@@ -45,8 +29,14 @@ const nextConfig = {
         source: "/:path(fides-ext-gpp.js)",
         destination: "/api/fides-ext-gpp-js",
       },
+      {
+        // Rewrite requests for "/fides-stub.js" to the static IAB TCF CMP stub
+        // in public/lib, so publishers can load it before fides.js
+        source: "/:path(fides-stub.js)",
+        destination: "/lib/fides-stub.js",
+      },
     ];
   },
 };
 
-module.exports = withTM(withBundleAnalyzer(nextConfig));
+module.exports = withBundleAnalyzer(nextConfig);

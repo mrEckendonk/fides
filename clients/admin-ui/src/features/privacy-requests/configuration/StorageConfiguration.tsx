@@ -1,23 +1,28 @@
-import { Box, Heading, Radio, RadioGroup, Stack, Text } from "fidesui";
+import { Flex, Radio, Typography, useMessage } from "fidesui";
 import { useEffect, useState } from "react";
 
 import { isErrorResult } from "~/features/common/helpers";
-import { useAlert, useAPIHelper } from "~/features/common/hooks";
+import { useAPIHelper } from "~/features/common/hooks";
 import Layout from "~/features/common/Layout";
-import BackButton from "~/features/common/nav/v2/BackButton";
-import { PRIVACY_REQUESTS_CONFIGURATION_ROUTE } from "~/features/common/nav/v2/routes";
+import {
+  PRIVACY_REQUESTS_CONFIGURATION_ROUTE,
+  PRIVACY_REQUESTS_ROUTE,
+} from "~/features/common/nav/routes";
+import PageHeader from "~/features/common/PageHeader";
+import { usePatchConfigurationSettingsMutation } from "~/features/config-settings/config-settings.slice";
 import { storageTypes } from "~/features/privacy-requests/constants";
 import {
   useCreateStorageMutation,
   useGetActiveStorageQuery,
   useGetStorageDetailsQuery,
-  usePatchConfigurationSettingsMutation,
 } from "~/features/privacy-requests/privacy-requests.slice";
+import { StorageTypeApiAccepted } from "~/types/api";
 
+import GoogleCloudStorageConfiguration from "./GoogleCloudStorageConfiguration";
 import S3StorageConfiguration from "./S3StorageConfiguration";
 
 const StorageConfiguration = () => {
-  const { successAlert } = useAlert();
+  const message = useMessage();
   const { handleError } = useAPIHelper();
   const [storageValue, setStorageValue] = useState("");
 
@@ -34,7 +39,7 @@ const StorageConfiguration = () => {
     }
   }, [activeStorage]);
 
-  const handleChange = async (value: string) => {
+  const handleChange = async (value: StorageTypeApiAccepted) => {
     if (value === storageTypes.local) {
       const storageDetailsResult = await saveStorageType({
         type: value,
@@ -44,13 +49,13 @@ const StorageConfiguration = () => {
       if (isErrorResult(storageDetailsResult)) {
         handleError(storageDetailsResult.error);
       } else {
-        successAlert(`Configured storage details successfully.`);
+        message.success(`Configured storage details successfully.`);
       }
     }
 
     const activeStorageResults = await saveActiveStorage({
       storage: {
-        active_default_storage_type: value,
+        active_default_storage_type: value as StorageTypeApiAccepted,
       },
     });
 
@@ -61,57 +66,74 @@ const StorageConfiguration = () => {
     }
   };
 
+  const storageComponents = {
+    s3: S3StorageConfiguration,
+    gcs: GoogleCloudStorageConfiguration,
+  };
+  const StorageConfigComponent =
+    storageComponents[storageValue as keyof typeof storageComponents];
+
   return (
     <Layout title="Configure Privacy Requests - Storage">
-      <BackButton backPath={PRIVACY_REQUESTS_CONFIGURATION_ROUTE} />
-      <Heading mb={5} fontSize="2xl" fontWeight="semibold">
+      <PageHeader
+        heading="Privacy Requests"
+        breadcrumbItems={[
+          { title: "All requests", href: PRIVACY_REQUESTS_ROUTE },
+          {
+            title: "Configure requests",
+            href: PRIVACY_REQUESTS_CONFIGURATION_ROUTE,
+          },
+          { title: "Storage" },
+        ]}
+      />
+      <Typography.Title level={5} className="mb-5">
         Configure storage
-      </Heading>
-
-      <Box display="flex" flexDirection="column" width="50%">
-        <Box mb={5}>
+      </Typography.Title>
+      <Flex vertical className="w-[640px]">
+        <div className="mb-5">
           Fides requires a storage destination to store and share the results of
           privacy requests. For a production setup, it is highly recommended to
           have S3 as a storage destination. Ensure you have completed the setup
           for the storage destination and have the details handy prior to the
           following steps.
-        </Box>
-        <Box>
+        </div>
+        <div>
           To configure a Storage destination, first choose a method to store
           your results. Fides currently supports{" "}
-          <Text as="span" color="complimentary.500">
-            Local
-          </Text>{" "}
-          and{" "}
-          <Text as="span" color="complimentary.500">
-            S3
-          </Text>{" "}
-          storage methods.
-        </Box>
-        <Heading fontSize="md" fontWeight="semibold" mt={10}>
+          <Typography.Text strong>Local</Typography.Text>
+          {", "}
+          <Typography.Text strong>S3</Typography.Text> and{" "}
+          <Typography.Text strong>GCS</Typography.Text> storage methods.
+        </div>
+      </Flex>
+      <Flex vertical className="w-96">
+        <Typography.Title level={5} className="mt-10">
           Choose storage type to configure
-        </Heading>
-        <RadioGroup
-          isDisabled={isLoading}
-          onChange={handleChange}
+        </Typography.Title>
+        <Radio.Group
+          disabled={isLoading}
+          onChange={(e) => handleChange(e.target.value)}
           value={storageValue}
           data-testid="privacy-requests-storage-selection"
-          colorScheme="secondary"
-          p={3}
+          className="p-3"
         >
-          <Stack direction="row">
-            <Radio key="local" value="local" data-testid="option-local" mr={5}>
+          <Flex>
+            <Radio key="local" value="local" data-testid="option-local">
               Local
             </Radio>
             <Radio key="s3" value="s3" data-testid="option-s3">
               S3
             </Radio>
-          </Stack>
-        </RadioGroup>
-        {storageValue === "s3" && storageDetails ? (
-          <S3StorageConfiguration storageDetails={storageDetails} />
-        ) : null}
-      </Box>
+            <Radio key="gcs" value="gcs" data-testid="option-gcs">
+              GCS
+            </Radio>
+          </Flex>
+        </Radio.Group>
+
+        {StorageConfigComponent && storageDetails && (
+          <StorageConfigComponent storageDetails={storageDetails} />
+        )}
+      </Flex>
     </Layout>
   );
 };

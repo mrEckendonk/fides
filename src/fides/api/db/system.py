@@ -8,19 +8,18 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from deepdiff import DeepDiff
 from fastapi import HTTPException
-from fideslang.models import Cookies as CookieSchema
 from fideslang.models import System as SystemSchema
 from fideslang.validation import FidesKey
 from loguru import logger as log
-from sqlalchemy import and_, delete, insert, select, update
+from sqlalchemy import select
+from sqlalchemy import update as sql_update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import BinaryExpression
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 
-from fides.api.db.crud import create_resource, get_resource, update_resource
+from fides.api.db.crud import create_resource, get_resource
 from fides.api.models.sql_models import (  # type: ignore[attr-defined]
-    Cookies,
     DataCategory,
     DataSubject,
     DataUse,
@@ -28,6 +27,7 @@ from fides.api.models.sql_models import (  # type: ignore[attr-defined]
     System,
 )
 from fides.api.models.system_history import SystemHistory
+from fides.api.util import errors
 from fides.api.util.errors import NotFoundError
 
 
@@ -59,22 +59,28 @@ async def validate_data_labels(
     """
     Given a model and a list of FidesKeys, check that for each Fides Key
     there is a model instance with that key and the active attribute set to True.
-    If any of the keys don't exist or exist but are not active, raise a 400 error
+    If any of the keys don't exist or exist but are not active, raise a 400 error.
+
+    Uses a single batch query instead of per-label queries to avoid N+1 performance issues.
     """
-    for label in labels:
-        try:
-            resource = await get_resource(
-                sql_model=sql_model,
-                fides_key=label,
-                async_session=db,
-            )
-        except NotFoundError:
+    if not labels:
+        return
+
+    unique_labels = set(labels)
+    query = select(sql_model.fides_key, sql_model.active).where(
+        sql_model.fides_key.in_(unique_labels)
+    )
+    async with db.begin():
+        result = await db.execute(query)
+        found: Dict[str, bool] = {row.fides_key: row.active for row in result}
+
+    for label in unique_labels:
+        if label not in found:
             raise HTTPException(
                 status_code=HTTP_400_BAD_REQUEST,
                 detail=f"Invalid privacy declaration referencing unknown {sql_model.__name__} {label}",
             )
-
-        if not resource.active:
+        if not found[label]:
             raise HTTPException(
                 status_code=HTTP_400_BAD_REQUEST,
                 detail=f"Invalid privacy declaration referencing inactive {sql_model.__name__} {label}",
@@ -91,13 +97,17 @@ async def validate_privacy_declarations(db: AsyncSession, system: SystemSchema) 
 
     If not, a `400` is raised
     """
-    logical_ids = set()
+    # Collect all labels across declarations for batch validation (3 queries total
+    # instead of N per declaration)
+    all_data_uses: List[FidesKey] = []
+    all_data_categories: List[FidesKey] = []
+    all_data_subjects: List[FidesKey] = []
+    logical_ids: set = set()
+
     for privacy_declaration in system.privacy_declarations:
-        await validate_data_labels(db, DataUse, [privacy_declaration.data_use])
-        await validate_data_labels(
-            db, DataCategory, privacy_declaration.data_categories
-        )
-        await validate_data_labels(db, DataSubject, privacy_declaration.data_subjects)
+        all_data_uses.append(privacy_declaration.data_use)
+        all_data_categories.extend(privacy_declaration.data_categories)
+        all_data_subjects.extend(privacy_declaration.data_subjects)
 
         logical_id = privacy_declaration_logical_id(privacy_declaration)
         if logical_id in logical_ids:
@@ -105,8 +115,11 @@ async def validate_privacy_declarations(db: AsyncSession, system: SystemSchema) 
                 status_code=HTTP_400_BAD_REQUEST,
                 detail=f"Duplicate privacy declarations specified with data use {privacy_declaration.data_use}",
             )
-
         logical_ids.add(logical_id)
+
+    await validate_data_labels(db, DataUse, all_data_uses)
+    await validate_data_labels(db, DataCategory, all_data_categories)
+    await validate_data_labels(db, DataSubject, all_data_subjects)
 
 
 async def upsert_system(
@@ -123,17 +136,27 @@ async def upsert_system(
 
     for resource in resources:
         try:
-            await get_resource(System, resource.fides_key, db)
+            existing_system = await get_resource(System, resource.fides_key, db)
         except NotFoundError:
             log.debug(
                 f"Upsert System with fides_key {resource.fides_key} not found, will create"
             )
             await create_system(
-                resource=resource, db=db, current_user_id=current_user_id
+                resource=resource,
+                db=db,
+                current_user_id=current_user_id,
+                skip_validation=True,
             )
             inserted += 1
             continue
-        await update_system(resource=resource, db=db, current_user_id=current_user_id)
+        # Pass the already-loaded System through so update_system doesn't
+        # re-fetch it.
+        await update_system(
+            resource=resource,
+            db=db,
+            current_user_id=current_user_id,
+            existing_system=existing_system,
+        )
         updated += 1
     return (inserted, updated)
 
@@ -154,8 +177,7 @@ async def upsert_privacy_declarations(
         # looking for "matching" existing declarations based on data_use and name
         for privacy_declaration in resource.privacy_declarations:
             # prepare our 'payload' for either create or update
-            data = privacy_declaration.dict()
-            privacy_declaration_cookies: List[Dict] = data.pop("cookies", None)
+            data = privacy_declaration.model_dump(mode="json")
             data["system_id"] = system.id  # include FK back to system
 
             # if we find matching declaration, remove it from our map
@@ -168,108 +190,35 @@ async def upsert_privacy_declarations(
                 # otherwise, create a new declaration record
                 declaration = PrivacyDeclaration.create(db, data=data)
 
-            # Upsert cookies for the given privacy declaration
-            await upsert_cookies(
-                db, privacy_declaration_cookies, declaration, system=None
-            )
-
         # delete any existing privacy declarations that have not been "matched" in the request
         for existing_declarations in existing_declarations.values():
             await db.delete(existing_declarations)
 
 
-async def upsert_cookies(
-    async_session: AsyncSession,
-    cookies: Optional[List[Dict]],
-    privacy_declaration: Optional[PrivacyDeclaration],
-    system: Optional[System],
-) -> None:
-    """
-    Upsert cookies for the given system or privacy_declaration.  Cookies can be attached at the system-level
-    or the privacy declaration-level.
-
-    Remove any existing cookies that aren't specified here.
-    """
-    if not (privacy_declaration or system):
-        # Dev-level error
-        raise ValueError(
-            "Either system or privacy declaration must be supplied to upsert cookies"
-        )
-
-    if privacy_declaration and system:
-        # Dev-level error
-        raise ValueError(
-            "Supply either system or privacy declaration, not both, to upsert cookies"
-        )
-
-    parsed_cookies = (
-        [CookieSchema.parse_obj(cookie) for cookie in cookies] if cookies else []
-    )
-
-    resource_filter: BinaryExpression = (
-        Cookies.system_id == system.id
-        if system
-        else Cookies.privacy_declaration_id == privacy_declaration.id  # type: ignore[union-attr]
-    )
-
-    for cookie_data in parsed_cookies:
-        # Check if cookie exists on the resource
-        result = await async_session.execute(
-            select(Cookies).where(
-                and_(Cookies.name == cookie_data.name, resource_filter)
-            )
-        )
-        row: Optional[Cookies] = result.scalars().first()
-        if row:
-            # Update existing cookie
-            await async_session.execute(
-                update(Cookies).where(Cookies.id == row.id).values(cookie_data.dict())
-            )
-
-        else:
-            # Insert new cookie
-            await async_session.execute(
-                insert(Cookies).values(
-                    {
-                        "name": cookie_data.name,
-                        "path": cookie_data.path,
-                        "domain": cookie_data.domain,
-                        "privacy_declaration_id": (
-                            privacy_declaration.id if privacy_declaration else None
-                        ),
-                        "system_id": system.id if system else None,
-                    }
-                )
-            )
-
-    # Select cookies which are currently on the application resource, but not included in the request
-    delete_result = await async_session.execute(
-        select(Cookies).where(
-            and_(
-                Cookies.name.notin_([cookie.name for cookie in parsed_cookies]),
-                resource_filter,
-            )
-        )
-    )
-
-    # Remove those cookies altogether
-    await async_session.execute(
-        delete(Cookies).where(
-            Cookies.id.in_(
-                [cookie.id for cookie in delete_result.scalars().unique().all()]
-            )
-        )
-    )
-
-
 async def update_system(
-    resource: SystemSchema, db: AsyncSession, current_user_id: Optional[str] = None
-) -> Tuple[Dict, bool]:
-    """Helper function to share core system update logic for wrapping endpoint functions"""
-    system: System = await get_resource(
-        sql_model=System, fides_key=resource.fides_key, async_session=db
-    )
-    existing_system_dict = copy.deepcopy(SystemSchema.from_orm(system).dict())
+    resource: SystemSchema,
+    db: AsyncSession,
+    current_user_id: Optional[str] = None,
+    existing_system: Optional[System] = None,
+) -> Tuple[System, bool]:
+    """Helper function to share core system update logic for wrapping endpoint functions.
+
+    If ``existing_system`` is supplied, it is used in place of an explicit
+    ``get_resource`` call. Callers that already loaded the System (e.g.
+    ``upsert_system`` after its existence check) should pass it through to
+    avoid a redundant fetch.
+    """
+    system: System
+    if existing_system is None:
+        system = await get_resource(
+            sql_model=System, fides_key=resource.fides_key, async_session=db
+        )
+    else:
+        system = existing_system
+
+    existing_system_dict = copy.deepcopy(
+        SystemSchema.model_validate(system)
+    ).model_dump(mode="json")
 
     # handle the privacy declaration upsert logic
     try:
@@ -284,30 +233,40 @@ async def update_system(
         resource, "privacy_declarations"
     )  # remove the attribute on the system since we've already updated declarations
 
-    # Remove system-level cookies from request before updating the system.
-    # Cookies are upserted separately
-    proposed_system_cookies: Optional[List[Cookies]] = resource.cookies
-    delattr(resource, "cookies")
-
-    # perform any updates on the system resource itself
-    updated_system = await update_resource(System, resource.dict(), db)
+    # Inline the UPDATE rather than calling ``crud.update_resource``, which
+    # otherwise issues two extra ``get_resource`` calls (one before the
+    # UPDATE and one to return the post-UPDATE row). We already hold the
+    # ORM object and ``db.refresh`` below picks up any DB-side coercions.
+    resource_dict = resource.model_dump()
+    async with db.begin():
+        log.debug(
+            "Updating resource",
+            sql_model="System",
+            fides_key=resource.fides_key,
+        )
+        try:
+            await db.execute(
+                sql_update(System.__table__)
+                .where(System.fides_key == resource.fides_key)
+                .values(resource_dict)
+            )
+        except SQLAlchemyError as exc:
+            # Mirrors the guard the prior `crud.update_resource` call had.
+            log.exception(f"Failed to update System with error: '{exc}'")
+            raise errors.QueryError()
 
     async with db.begin():
-        await upsert_cookies(
-            db, proposed_system_cookies, privacy_declaration=None, system=updated_system
-        )  # Upsert the associated cookies at the System-level
-
-        await db.refresh(updated_system)
+        await db.refresh(system)
 
         system_updated: bool = _audit_system_changes(
             db,
             system.id,
             current_user_id,
             existing_system_dict,
-            SystemSchema.from_orm(updated_system).dict(),
+            SystemSchema.model_validate(system).model_dump(mode="json"),
         )
 
-    return updated_system, system_updated
+    return system, system_updated
 
 
 def _audit_system_changes(
@@ -343,8 +302,18 @@ def _audit_system_changes(
 
     system_updated: bool = False
 
+    # Compute each axis's diff once so we can both gate the SystemHistory
+    # write and emit observability around how often each axis actually
+    # changes. These logs help quantify the steady-state no-op rate before
+    # we consider skipping the UPDATE for unchanged systems.
+    general_diff = DeepDiff(existing_system, updated_system, ignore_order=True)
+    privacy_diff = DeepDiff(privacy_existing, privacy_updated, ignore_order=True)
+    data_flow_diff = DeepDiff(
+        egress_ingress_existing, egress_ingress_updated, ignore_order=True
+    )
+
     # Create a SystemHistory entry for general changes
-    if DeepDiff(existing_system, updated_system, ignore_order=True):
+    if general_diff:
         system_updated = True
 
         SystemHistory(
@@ -356,7 +325,7 @@ def _audit_system_changes(
         ).save(db=db)
 
     # Create a SystemHistory entry for changes to privacy_declarations
-    if DeepDiff(privacy_existing, privacy_updated, ignore_order=True):
+    if privacy_diff:
         system_updated = True
 
         SystemHistory(
@@ -368,7 +337,7 @@ def _audit_system_changes(
         ).save(db=db)
 
     # Create a SystemHistory entry for changes to egress and ingress
-    if DeepDiff(egress_ingress_existing, egress_ingress_updated, ignore_order=True):
+    if data_flow_diff:
         system_updated = True
 
         SystemHistory(
@@ -379,30 +348,44 @@ def _audit_system_changes(
             created_at=now,
         ).save(db=db)
 
+    log.debug(
+        "System change detection",
+        system_id=system_id,
+        general_changed=bool(general_diff),
+        privacy_declarations_changed=bool(privacy_diff),
+        data_flow_changed=bool(data_flow_diff),
+        any_changed=system_updated,
+        general_diff_keys=len(general_diff.affected_paths) if general_diff else 0,
+        privacy_diff_keys=len(privacy_diff.affected_paths) if privacy_diff else 0,
+        data_flow_diff_keys=(
+            len(data_flow_diff.affected_paths) if data_flow_diff else 0
+        ),
+    )
+
     return system_updated
 
 
 async def create_system(
-    resource: SystemSchema, db: AsyncSession, current_user_id: Optional[str] = None
+    resource: SystemSchema,
+    db: AsyncSession,
+    current_user_id: Optional[str] = None,
+    skip_validation: bool = False,
 ) -> Dict:
     """
     Override `System` create/POST to handle `.privacy_declarations` defined inline,
     for backward compatibility and ease of use for API users.
     """
-    await validate_privacy_declarations(db, resource)
+    if not skip_validation:
+        await validate_privacy_declarations(db, resource)
     # copy out the declarations to be stored separately
     # as they will be processed AFTER the system is added
     privacy_declarations = resource.privacy_declarations
     # remove the attribute on the system update since the declarations will be created separately
     delattr(resource, "privacy_declarations")
 
-    # Remove system-level cookies from request; these will be processed after the system is added
-    proposed_system_cookies: Optional[List[Cookies]] = resource.cookies
-    delattr(resource, "cookies")
-
     # create the system resource using generic creation
     # the system must be created before the privacy declarations so that it can be referenced
-    resource_dict = resource.dict()
+    resource_dict = resource.model_dump()
 
     # set the current user's ID
     resource_dict["user_id"] = current_user_id
@@ -414,27 +397,14 @@ async def create_system(
     privacy_declaration_exception = None
     try:
         async with db.begin():
-            await upsert_cookies(
-                db,
-                proposed_system_cookies,
-                privacy_declaration=None,
-                system=created_system,
-            )  # Create the associated cookies at the System-level
-
             # create the specified declarations as records in their own table
             for privacy_declaration in privacy_declarations:
-                data = privacy_declaration.dict()
+                data = privacy_declaration.model_dump(mode="json")
                 data["system_id"] = created_system.id  # add FK back to system
-                privacy_declaration_cookies: List[Dict] = data.pop("cookies", [])
                 privacy_declaration = PrivacyDeclaration.create(
                     db, data=data
                 )  # create the associated PrivacyDeclaration
-                await upsert_cookies(
-                    db,
-                    privacy_declaration_cookies,
-                    privacy_declaration=privacy_declaration,
-                    system=None,
-                )  # Create the associated cookies on the Privacy Declaration
+
     except Exception as e:
         log.error(
             f"Error adding privacy declarations, reverting system creation: {str(privacy_declaration_exception)}"

@@ -3,6 +3,8 @@
 /* eslint-disable */
 
 import type { fides__api__schemas__privacy_center_config__ConsentConfig } from "./fides__api__schemas__privacy_center_config__ConsentConfig";
+import type { MetricsConfig } from "./MetricsConfig";
+import type { PrivacyCenterLink } from "./PrivacyCenterLink";
 import type { PrivacyRequestOption } from "./PrivacyRequestOption";
 
 /**
@@ -14,16 +16,22 @@ import type { PrivacyRequestOption } from "./PrivacyRequestOption";
 export type PrivacyCenterConfig = {
   title: string;
   description: string;
-  description_subtext?: Array<string>;
-  addendum?: Array<string>;
-  server_url_development?: string;
-  server_url_production?: string;
-  logo_path: string;
-  logo_url?: string;
-  favicon_path?: string;
-  actions: Array<PrivacyRequestOption>;
-  includeConsent?: boolean;
+  description_subtext?: Array<string> | null;
+  addendum?: Array<string> | null;
+  server_url_development?: string | null;
+  server_url_production?: string | null;
+  logo_path?: string | null;
+  logo_url?: string | null;
+  favicon_path?: string | null;
+  page_title?: string | null;
+  actions?: Array<PrivacyRequestOption>;
+  includeConsent?: boolean | null;
   consent: fides__api__schemas__privacy_center_config__ConsentConfig;
-  privacy_policy_url?: string;
-  privacy_policy_url_text?: string;
+  /** @deprecated Prefer `links`. Kept for backwards compatibility. */
+  privacy_policy_url?: string | null;
+  /** @deprecated Prefer `links`. Kept for backwards compatibility. */
+  privacy_policy_url_text?: string | null;
+  links?: Array<PrivacyCenterLink>;
+  metrics?: MetricsConfig | null;
+  error_message?: string | null;
 };

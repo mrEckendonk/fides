@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, List, Optional, Set
 
 from fastapi.applications import FastAPI
-from pydantic import AnyUrl
+from pydantic import SerializeAsAny
 from sqlalchemy.orm import Session
 
+from fides.api.custom_types import AnyHttpUrlStringRemovesSlash, URLOriginString
 from fides.api.models.application_config import ApplicationConfig
 from fides.api.schemas.storage.storage import StorageType
 from fides.api.util.cors_middleware_utils import update_cors_middleware
@@ -82,6 +83,19 @@ class ConfigProxyBase:
         )
 
 
+class AdminUISettingsProxy(ConfigProxyBase):
+    prefix = "admin_ui"
+
+    enabled: bool
+    url: SerializeAsAny[Optional[AnyHttpUrlStringRemovesSlash]] = None
+
+
+class PrivacyCenterSettingsProxy(ConfigProxyBase):
+    prefix = "privacy_center"
+
+    url: SerializeAsAny[Optional[AnyHttpUrlStringRemovesSlash]] = None
+
+
 class NotificationSettingsProxy(ConfigProxyBase):
     prefix = "notifications"
 
@@ -90,6 +104,7 @@ class NotificationSettingsProxy(ConfigProxyBase):
     send_request_review_notification: bool
     notification_service_type: Optional[str]
     enable_property_specific_messaging: Optional[str]
+    privacy_assessments_channel: Optional[str]
 
 
 class ExecutionSettingsProxy(ConfigProxyBase):
@@ -132,7 +147,7 @@ class SecuritySettingsProxy(ConfigProxyBase):
     # for advanced usage of non-URLs, e.g. wildcards (`*`), the related
     # `cors_origin_regex` property should be used.
     # this is explicitly _not_ accessible via API - it must be used with care.
-    cors_origins: List[AnyUrl]
+    cors_origins: SerializeAsAny[List[URLOriginString]]
 
 
 class ConsentSettingsProxy(ConfigProxyBase):
@@ -141,6 +156,15 @@ class ConsentSettingsProxy(ConfigProxyBase):
     override_vendor_purposes: bool
 
 
+class DuplicateDetectionSettingsProxy(ConfigProxyBase):
+    prefix = "privacy_request_duplicate_detection"
+
+    enabled: bool
+    time_window_days: int
+    match_identity_fields: List[str]
+
+
+# pylint: disable=too-many-instance-attributes
 class ConfigProxy:
     """
     ConfigProxy instances allow access to "resolved" config properties
@@ -163,11 +187,14 @@ class ConfigProxy:
     """
 
     def __init__(self, db: Session) -> None:
+        self.admin_ui = AdminUISettingsProxy(db)
         self.notifications = NotificationSettingsProxy(db)
         self.execution = ExecutionSettingsProxy(db)
         self.storage = StorageSettingsProxy(db)
         self.security = SecuritySettingsProxy(db)
         self.consent = ConsentSettingsProxy(db)
+        self.privacy_request_duplicate_detection = DuplicateDetectionSettingsProxy(db)
+        self.privacy_center = PrivacyCenterSettingsProxy(db)
 
     def load_current_cors_domains_into_middleware(self, app: FastAPI) -> None:
         """

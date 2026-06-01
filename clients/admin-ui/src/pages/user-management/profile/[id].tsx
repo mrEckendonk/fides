@@ -1,4 +1,4 @@
-import { Spinner } from "fidesui";
+import { Alert, Flex, Spin } from "fidesui";
 import { useRouter } from "next/router";
 import React, { useEffect } from "react";
 import EditUserForm from "user-management/EditUserForm";
@@ -6,10 +6,12 @@ import {
   setActiveUserId,
   useGetUserByIdQuery,
 } from "user-management/user-management.slice";
-import UserManagementLayout from "user-management/UserManagementLayout";
 
 import { useAppDispatch, useAppSelector } from "~/app/hooks";
 import { selectUser } from "~/features/auth";
+import ErrorPage from "~/features/common/errors/ErrorPage";
+import Layout from "~/features/common/Layout";
+import { USER_MANAGEMENT_ROUTE } from "~/features/common/nav/routes";
 import { useHasPermission } from "~/features/common/Restrict";
 import { ScopeRegistryEnum } from "~/types/api";
 
@@ -24,8 +26,11 @@ const Profile = () => {
   } else {
     profileId = "";
   }
-  const { data: existingUser, isLoading: isLoadingUser } =
-    useGetUserByIdQuery(profileId);
+  const {
+    data: existingUser,
+    isLoading: isLoadingUser,
+    error,
+  } = useGetUserByIdQuery(profileId);
 
   // Must have edit user permission or be the user's profile
   const loggedInUser = useAppSelector(selectUser);
@@ -47,24 +52,35 @@ const Profile = () => {
     }
   }, [router, canAccess, existingUser]);
 
-  if (isLoadingUser) {
+  if (error) {
     return (
-      <UserManagementLayout>
-        <Spinner />
-      </UserManagementLayout>
-    );
-  }
-
-  if (existingUser == null) {
-    return (
-      <UserManagementLayout>Could not find profile ID.</UserManagementLayout>
+      <ErrorPage
+        error={error}
+        defaultMessage="A problem occurred while fetching the user profile"
+        actions={[
+          {
+            label: "Return to users",
+            onClick: () => router.push(USER_MANAGEMENT_ROUTE),
+          },
+        ]}
+      />
     );
   }
 
   return (
-    <UserManagementLayout>
-      <EditUserForm user={existingUser} />
-    </UserManagementLayout>
+    <Layout title="Users - Edit a user">
+      {isLoadingUser && <Spin />}
+      {!isLoadingUser && !existingUser && (
+        <Flex justify="center">
+          <Alert
+            title="Could not find user with this profile ID."
+            type="warning"
+            showIcon
+          />
+        </Flex>
+      )}
+      {!!existingUser && <EditUserForm user={existingUser} />}
+    </Layout>
   );
 };
 

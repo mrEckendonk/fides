@@ -1,4 +1,4 @@
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSelector, createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import type { RootState } from "~/app/store";
 import { baseApi } from "~/features/common/api.slice";
@@ -7,11 +7,22 @@ import { User } from "~/features/user-management/types";
 import { RoleRegistryEnum, ScopeRegistryEnum } from "~/types/api";
 
 import {
+  AuthenticationMethods,
   LoginRequest,
   LoginResponse,
+  LoginWithOIDCRequest,
   LogoutRequest,
   LogoutResponse,
 } from "./types";
+
+// Currently, the BE response doesn't include whether the user is a root user,
+// so we need to check if the id matches a db user id.
+export const isRootUserId = (userId?: string): boolean => {
+  if (!userId) {
+    return false;
+  }
+  return !userId.toLowerCase().startsWith("fid_");
+};
 
 export interface AuthState {
   user: User | null;
@@ -40,7 +51,23 @@ export const authSlice = createSlice({
 });
 
 export const selectAuth = (state: RootState) => state.auth;
-export const selectUser = (state: RootState) => selectAuth(state).user;
+
+// Enhanced user selector that includes isRootUser property
+export const selectUser = createSelector([selectAuth], (auth) => {
+  if (!auth.user) {
+    return null;
+  }
+
+  // Currently, the BE response doesn't include whether the user is a root user,
+  // so we need to check if the id matches a db user id.
+  const isRootUser = isRootUserId(auth.user.id);
+
+  return {
+    ...auth.user,
+    isRootUser,
+  };
+});
+
 export const selectToken = (state: RootState) => selectAuth(state).token;
 
 export const { login, logout } = authSlice.actions;
@@ -58,6 +85,17 @@ const authApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: () => ["Auth"],
     }),
+    loginWithOIDC: build.mutation<LoginResponse, LoginWithOIDCRequest>({
+      query: (data) => ({
+        url: `plus/openid-provider/${encodeURIComponent(data.provider)}/callback`,
+        method: "GET",
+        params: {
+          code: data.code,
+          state: data.state,
+        },
+      }),
+      invalidatesTags: () => ["Auth"],
+    }),
     logout: build.mutation<LogoutResponse, LogoutRequest>({
       query: () => ({
         url: "logout",
@@ -69,12 +107,51 @@ const authApi = baseApi.injectEndpoints({
       query: () => ({ url: `oauth/role` }),
       providesTags: ["Roles"],
     }),
+    acceptInvite: build.mutation<
+      LoginResponse,
+      LoginRequest & { inviteCode: string }
+    >({
+      query: ({ username, password, inviteCode }) => ({
+        url: "/user/accept-invite",
+        params: { username, invite_code: inviteCode },
+        method: "POST",
+        body: { new_password: password },
+      }),
+    }),
+    getAuthenticationMethods: build.query<AuthenticationMethods, void>({
+      query: () => ({
+        url: "plus/authentication-methods",
+        method: "GET",
+      }),
+    }),
+    forgotPassword: build.mutation<{ detail: string }, { email: string }>({
+      query: ({ email }) => ({
+        url: "user/forgot-password",
+        method: "POST",
+        body: { email },
+      }),
+    }),
+    resetPasswordWithToken: build.mutation<
+      LoginResponse,
+      { username: string; token: string; new_password: string }
+    >({
+      query: ({ username, token, new_password }) => ({
+        url: "user/reset-password-with-token",
+        method: "POST",
+        body: { username, token, new_password },
+      }),
+    }),
   }),
 });
 
 export const {
   useLoginMutation,
+  useLoginWithOIDCMutation,
   useLogoutMutation,
+  useAcceptInviteMutation,
   useGetRolesToScopesMappingQuery,
+  useGetAuthenticationMethodsQuery,
+  useForgotPasswordMutation,
+  useResetPasswordWithTokenMutation,
 } = authApi;
 export const { reducer } = authSlice;

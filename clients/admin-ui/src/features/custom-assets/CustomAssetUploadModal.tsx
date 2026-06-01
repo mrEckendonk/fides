@@ -1,23 +1,17 @@
 /* eslint-disable react/no-unescaped-entities */
 import {
-  Box,
   Button,
-  ButtonGroup,
+  ChakraBox as Box,
+  ChakraText as Text,
   Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  Text,
-  useToast,
+  useMessage,
 } from "fidesui";
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 
 import DocsLink from "~/features/common/DocsLink";
 import { getErrorMessage, isErrorResult } from "~/features/common/helpers";
-import { errorToastParams, successToastParams } from "~/features/common/toast";
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
 import { useUpdateCustomAssetMutation } from "~/features/plus/plus.slice";
 import { CustomAssetType } from "~/types/api/models/CustomAssetType";
 
@@ -28,22 +22,21 @@ type RequestModalProps = {
   assetType: CustomAssetType;
 };
 
-const CustomAssetUploadModal: React.FC<RequestModalProps> = ({
+const CustomAssetUploadModal = ({
   isOpen,
   onClose,
   testId = "custom-asset-modal",
   assetType,
-}) => {
-  const initialRef = useRef(null);
+}: RequestModalProps) => {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const toast = useToast();
+  const message = useMessage();
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (acceptedFiles: File[]) => {
       const file = acceptedFiles[0];
       const fileExtension = file.name.split(".").pop()?.toLowerCase();
 
       if (fileExtension !== "css") {
-        toast(errorToastParams("Only css files are allowed."));
+        message.error("Only css files are allowed.");
         return;
       }
 
@@ -60,10 +53,10 @@ const CustomAssetUploadModal: React.FC<RequestModalProps> = ({
         file: uploadedFile,
       });
       if (isErrorResult(result)) {
-        toast(errorToastParams(getErrorMessage(result.error)));
+        message.error(getErrorMessage(result.error));
         return;
       }
-      toast(successToastParams("Stylesheet uploaded successfully"));
+      message.success("Stylesheet uploaded successfully");
       onClose();
     }
   };
@@ -80,78 +73,62 @@ const CustomAssetUploadModal: React.FC<RequestModalProps> = ({
 
   return (
     <Modal
-      initialFocusRef={initialRef}
-      isOpen={isOpen}
-      onClose={onClose}
-      size="2xl"
+      open={isOpen}
+      onCancel={onClose}
+      width={MODAL_SIZE.md}
+      centered
+      destroyOnHidden
+      data-testid={testId}
+      title="Upload stylesheet"
+      footer={
+        <div className="flex w-full justify-end gap-2">
+          <Button
+            onClick={onClose}
+            data-testid="cancel-btn"
+            disabled={isLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="primary"
+            htmlType="submit"
+            disabled={!uploadedFile || isLoading}
+            onClick={handleSubmit}
+            data-testid="submit-btn"
+          >
+            Submit
+          </Button>
+        </div>
+      }
     >
-      <ModalOverlay />
-      <ModalContent textAlign="left" p={2} data-testid={testId}>
-        <ModalHeader tabIndex={-1} ref={initialRef}>
-          Upload stylesheet
-        </ModalHeader>
-        <ModalBody>
-          <Text fontSize="sm" mb={4}>
-            To customize the appearance of your consent experiences, you may
-            upload a CSS stylesheet. To download a template as a helpful
-            starting point, click{" "}
-            <DocsLink
-              href="https://raw.githubusercontent.com/ethyca/fides/main/clients/fides-js/src/components/fides.css"
-              isExternal
-            >
-              here
-            </DocsLink>
-            .{" "}
-            <DocsLink href="https://fid.es/customize-styles" isExternal>
-              Learn more
-            </DocsLink>
-            .
-          </Text>
-          <Box
-            {...getRootProps()}
-            bg={isDragActive ? "gray.100" : "gray.50"}
-            border="2px dashed"
-            borderColor={isDragActive ? "gray.300" : "gray.200"}
-            borderRadius="md"
-            cursor="pointer"
-            minHeight="150px"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            textAlign="center"
-          >
-            <input {...getInputProps()} />
-            {renderFileText()}
-          </Box>
-        </ModalBody>
-        <ModalFooter>
-          <ButtonGroup
-            size="sm"
-            spacing="2"
-            width="100%"
-            display="flex"
-            justifyContent="right"
-          >
-            <Button
-              variant="outline"
-              onClick={onClose}
-              data-testid="cancel-btn"
-              isDisabled={isLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="primary"
-              type="submit"
-              isDisabled={!uploadedFile || isLoading}
-              onClick={handleSubmit}
-              data-testid="submit-btn"
-            >
-              Submit
-            </Button>
-          </ButtonGroup>
-        </ModalFooter>
-      </ModalContent>
+      <Text fontSize="sm" mb={4}>
+        To customize the appearance of your consent experiences, you may upload
+        a CSS stylesheet.{" "}
+        <DocsLink href="https://raw.githubusercontent.com/ethyca/fides/main/clients/fides-js/src/components/fides.css">
+          Download a template
+        </DocsLink>{" "}
+        as a helpful starting point.
+        <DocsLink href="https://fid.es/customize-styles">
+          Learn more about customizing styles
+        </DocsLink>
+        .
+      </Text>
+      <Box
+        {...getRootProps()}
+        bg={isDragActive ? "gray.100" : "gray.50"}
+        border="2px dashed"
+        borderColor={isDragActive ? "gray.300" : "gray.200"}
+        borderRadius="md"
+        cursor="pointer"
+        minHeight="150px"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        textAlign="center"
+      >
+        <input {...getInputProps()} />
+        {renderFileText()}
+      </Box>
     </Modal>
   );
 };

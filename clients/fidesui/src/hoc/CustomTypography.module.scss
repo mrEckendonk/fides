@@ -1,0 +1,66 @@
+.paragraph {
+  // Use :global to target Ant's classes directly
+  &:global(.ant-typography) {
+    margin-bottom: 0;
+
+    // Only add margin to paragraphs that aren't the last element
+    &:not(:last-child) {
+      margin-bottom: 1em;
+    }
+  }
+}
+
+// Text size classes
+.sm {
+  font-size: var(--fidesui-font-size-sm) !important;
+}
+
+.default {
+  font-size: var(--fidesui-font-size) !important;
+}
+
+.lg {
+  font-size: var(--fidesui-font-size-lg) !important;
+}
+
+// Heading size classes
+.h1 {
+  font-size: var(--fidesui-font-size-heading-1) !important;
+}
+
+.h2 {
+  font-size: var(--fidesui-font-size-heading-2) !important;
+}
+
+.h3 {
+  font-size: var(--fidesui-font-size-heading-3) !important;
+}
+
+.h4 {
+  font-size: var(--fidesui-font-size-heading-4) !important;
+}
+
+.h5 {
+  font-size: var(--fidesui-font-size-heading-5) !important;
+}
+
+// Primary color link
+.primaryColorLink {
+  color: var(--fides-color-primary) !important;
+
+  strong {
+    color: inherit !important;
+    text-decoration: inherit !important;
+  }
+
+  &:hover {
+    color: var(--fidesui-neutral-800) !important;
+    text-decoration: underline !important;
+  }
+}
+
+// If true, the text will inherit the color and text decoration from the parent
+.unStyled {
+  color: inherit !important;
+  text-decoration: inherit !important;
+}

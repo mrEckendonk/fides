@@ -1,10 +1,16 @@
-import { Link } from "fidesui";
+import { Typography } from "fidesui";
 
+const { Link } = Typography;
 /**
  * An external link to documentation.
  */
-const DocsLink = (props: React.ComponentProps<typeof Link>) => (
-  <Link isExternal color="complimentary.500" {...props} />
+const DocsLink = ({
+  children,
+  ...props
+}: React.ComponentProps<typeof Link>) => (
+  <Link target="_blank" rel="noopener noreferrer" {...props}>
+    {children}
+  </Link>
 );
 
 export default DocsLink;

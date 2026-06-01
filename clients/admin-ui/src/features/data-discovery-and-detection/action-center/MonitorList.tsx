@@ -1,0 +1,153 @@
+import { skipToken } from "@reduxjs/toolkit/query";
+import { Flex, Icons, List, Pagination, useMessage } from "fidesui";
+import { useEffect } from "react";
+
+import { useAppSelector } from "~/app/hooks";
+import { selectUser } from "~/features/auth";
+import { useFeatures } from "~/features/common/features";
+import { ACTION_CENTER_ROUTE } from "~/features/common/nav/routes";
+import { useAntPagination } from "~/features/common/pagination/useAntPagination";
+import { useGetAggregateMonitorResultsQuery } from "~/features/data-discovery-and-detection/action-center/action-center.slice";
+import { EmptyMonitorsResult } from "~/features/data-discovery-and-detection/action-center/EmptyMonitorsResult";
+import useSearchForm from "~/features/data-discovery-and-detection/action-center/hooks/useSearchForm";
+import { MonitorResult } from "~/features/data-discovery-and-detection/action-center/MonitorResult";
+import { useGetUserMonitorsQuery } from "~/features/user-management";
+import { APIMonitorType } from "~/types/api/models/APIMonitorType";
+
+import MonitorListSearchForm from "./forms/MonitorListSearchForm";
+import {
+  MonitorSearchForm,
+  MonitorSearchFormQuerySchema,
+  SearchFormQueryState,
+} from "./MonitorList.const";
+import MonitorStats from "./MonitorStats";
+
+const MonitorList = () => {
+  const message = useMessage();
+  const {
+    flags: { webMonitor: webMonitorEnabled, awsMonitor: awsMonitorEnabled },
+  } = useFeatures();
+  const { paginationProps, pageIndex, pageSize, resetPagination } =
+    useAntPagination();
+
+  const availableMonitorTypes = [
+    ...(webMonitorEnabled ? [APIMonitorType.WEBSITE] : []),
+    APIMonitorType.DATASTORE,
+    APIMonitorType.INFRASTRUCTURE,
+    ...(awsMonitorEnabled ? [APIMonitorType.CLOUD_INFRASTRUCTURE] : []),
+  ] as const;
+
+  const currentUser = useAppSelector(selectUser);
+
+  const { data: userMonitors } = useGetUserMonitorsQuery(
+    currentUser?.id
+      ? {
+          id: currentUser.id,
+        }
+      : skipToken,
+  );
+
+  const defaultStewardFilter =
+    (userMonitors ?? []).length > 0 ? currentUser?.id : undefined;
+
+  const { requestData, setSearchForm, ...formProps } = useSearchForm<
+    Partial<Parameters<typeof useGetAggregateMonitorResultsQuery>[0]>,
+    MonitorSearchForm
+  >({
+    schema: MonitorSearchFormQuerySchema([...availableMonitorTypes]),
+    queryState: SearchFormQueryState([...availableMonitorTypes]),
+    initialValues: {
+      search: null,
+      monitor_type: null,
+      steward_key: defaultStewardFilter ?? null,
+    },
+    translate: ({ search, monitor_type, steward_key }) => {
+      return {
+        search: search || undefined,
+        monitor_type: monitor_type
+          ? [monitor_type]
+          : [
+              ...availableMonitorTypes,
+            ] /** this should be handled via ant binding ideally. * */,
+        steward_user_id:
+          typeof steward_key === "undefined" || !steward_key
+            ? []
+            : [steward_key],
+      };
+    },
+  });
+
+  const { data, isError, isLoading } = useGetAggregateMonitorResultsQuery({
+    ...(typeof requestData === "object" ? requestData : {}),
+    page: pageIndex,
+    size: pageSize,
+  });
+
+  useEffect(() => {
+    if (defaultStewardFilter) {
+      setSearchForm({ steward_key: defaultStewardFilter });
+    }
+  }, [setSearchForm, defaultStewardFilter]);
+
+  useEffect(() => {
+    if (isError) {
+      message.error("Error fetching data. Please try again later");
+    }
+  }, [isError, message]);
+
+  const results =
+    data?.items?.flatMap((monitor) =>
+      !!monitor.key && typeof monitor.key !== "undefined" ? [monitor] : [],
+    ) || [];
+
+  return (
+    <Flex className="h-[calc(100%-48px)] overflow-hidden" gap="medium" vertical>
+      <MonitorListSearchForm
+        {...formProps}
+        onFinish={(values) => {
+          formProps.onFinish(values);
+          resetPagination();
+        }}
+        availableMonitorTypes={availableMonitorTypes}
+      />
+      <MonitorStats />
+      <List
+        loading={isLoading}
+        dataSource={results}
+        locale={{
+          emptyText: <EmptyMonitorsResult />,
+        }}
+        className="h-full overflow-y-auto overflow-x-clip" // overflow-x-clip to prevent horizontal scroll. see https://stackoverflow.com/a/69767073/441894
+        renderItem={(summary) => {
+          const link =
+            summary.key && summary.monitorType
+              ? `${ACTION_CENTER_ROUTE}/${summary.monitorType}/${summary.key}`
+              : "";
+          return (
+            !!summary?.key && (
+              <MonitorResult
+                key={summary.key}
+                monitorSummary={summary}
+                href={link}
+              />
+            )
+          );
+        }}
+      />
+      <Pagination
+        {...paginationProps}
+        total={data?.total || 0}
+        showSizeChanger={{
+          suffixIcon: <Icons.ChevronDown />,
+        }}
+        hideOnSinglePage={
+          // if we're on the smallest page size, and there's only one page, hide the pagination
+          paginationProps.pageSize?.toString() ===
+          paginationProps.pageSizeOptions?.[0]
+        }
+      />
+    </Flex>
+  );
+};
+
+export default MonitorList;

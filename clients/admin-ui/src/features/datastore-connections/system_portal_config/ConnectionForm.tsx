@@ -3,15 +3,23 @@ import ConnectionListDropdown, {
   useConnectionListDropDown,
 } from "datastore-connections/system_portal_config/ConnectionListDropdown";
 import OrphanedConnectionModal from "datastore-connections/system_portal_config/OrphanedConnectionModal";
-import { Box, Button, Flex, Stack, useDisclosure } from "fidesui";
+import {
+  Button,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraStack as Stack,
+  useChakraDisclosure as useDisclosure,
+} from "fidesui";
 import React, { useEffect, useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
 import ConnectorTemplateUploadModal from "~/features/connector-templates/ConnectorTemplateUploadModal";
 import { ConnectorParameters } from "~/features/datastore-connections/system_portal_config/forms/ConnectorParameters";
+import { useRemoveCustomIntegration } from "~/features/integrations/hooks/useRemoveCustomIntegration";
 import {
   ConnectionConfigurationResponse,
   ConnectionSystemTypeMap,
+  ConnectionType,
   ScopeRegistryEnum,
   SystemType,
 } from "~/types/api";
@@ -27,16 +35,25 @@ export type ConnectionOption = {
 };
 
 type Props = {
-  connectionConfig?: ConnectionConfigurationResponse;
+  connectionConfig?: ConnectionConfigurationResponse | null;
   systemFidesKey: string;
 };
+
+// Website integrations have no reason to be linked to systems
+const hiddenConnectionTypes = [
+  ConnectionType.WEBSITE,
+  ConnectionType.TEST_WEBSITE,
+];
 
 const ConnectionForm = ({ connectionConfig, systemFidesKey }: Props) => {
   const {
     dropDownOptions,
     selectedValue: selectedConnectionOption,
     setSelectedValue: setSelectedConnectionOption,
-  } = useConnectionListDropDown({ connectionConfig });
+  } = useConnectionListDropDown({
+    connectionConfig,
+    hiddenTypes: hiddenConnectionTypes,
+  });
   const filters = useAppSelector(selectDatastoreConnectionFilters);
 
   const { data } = useGetAllDatastoreConnectionsQuery({
@@ -49,11 +66,18 @@ const ConnectionForm = ({ connectionConfig, systemFidesKey }: Props) => {
 
   useEffect(() => {
     if (data) {
-      setOrphanedConnectionConfigs(data.items);
+      // Filter out website connections from orphaned connections since they
+      // have no reason to be linked to systems
+      const filteredOrphanedConnections = data.items.filter(
+        (config) => !hiddenConnectionTypes.includes(config.connection_type),
+      );
+      setOrphanedConnectionConfigs(filteredOrphanedConnections);
     }
   }, [data]);
 
   const uploadTemplateModal = useDisclosure();
+  const { handleRemove: handleRemoveCustomIntegration, modalContext } =
+    useRemoveCustomIntegration(selectedConnectionOption);
 
   /* STEPS TO UNIFY the database and saas forms
   7. Get it working for manual connectors
@@ -63,13 +87,13 @@ const ConnectionForm = ({ connectionConfig, systemFidesKey }: Props) => {
   return (
     <Box id="con-wrapper" px={6}>
       <Flex py={5}>
-        <Stack direction={{ base: "column", lg: "row" }}>
+        <Stack direction={{ base: "column", lg: "row" }} alignItems="center">
           <ConnectionListDropdown
             list={dropDownOptions}
             label="Integration type"
             selectedValue={selectedConnectionOption}
             onChange={setSelectedConnectionOption}
-            disabled={connectionConfig && connectionConfig !== null}
+            disabled={Boolean(connectionConfig && connectionConfig !== null)}
           />
           {!connectionConfig && orphanedConnectionConfigs.length > 0 ? (
             <OrphanedConnectionModal
@@ -79,17 +103,27 @@ const ConnectionForm = ({ connectionConfig, systemFidesKey }: Props) => {
           ) : null}
 
           <Restrict scopes={[ScopeRegistryEnum.CONNECTOR_TEMPLATE_REGISTER]}>
-            <Button
-              variant="outline"
-              type="submit"
-              minWidth="auto"
-              data-testid="upload-btn"
-              size="sm"
-              onClick={uploadTemplateModal.onOpen}
-              marginLeft={2}
-            >
-              Upload integration
-            </Button>
+            <Flex gap={2}>
+              {connectionConfig &&
+                selectedConnectionOption?.custom &&
+                selectedConnectionOption?.default_connector_available && (
+                  <Button
+                    type="link"
+                    danger
+                    data-testid="delete-custom-integration-btn"
+                    onClick={handleRemoveCustomIntegration}
+                  >
+                    Remove
+                  </Button>
+                )}
+              <Button
+                htmlType="submit"
+                data-testid="upload-btn"
+                onClick={uploadTemplateModal.onOpen}
+              >
+                Upload integration
+              </Button>
+            </Flex>
           </Restrict>
         </Stack>
 
@@ -97,40 +131,20 @@ const ConnectionForm = ({ connectionConfig, systemFidesKey }: Props) => {
           isOpen={uploadTemplateModal.isOpen}
           onClose={uploadTemplateModal.onClose}
         />
+        {modalContext}
       </Flex>
-
-      {selectedConnectionOption?.type === SystemType.DATABASE ? (
+      {selectedConnectionOption?.type &&
+      [
+        SystemType.DATABASE,
+        SystemType.DATA_CATALOG,
+        SystemType.SAAS,
+        SystemType.MANUAL,
+        SystemType.EMAIL,
+      ].includes(selectedConnectionOption.type) ? (
         <ConnectorParameters
           connectionConfig={connectionConfig}
-          setSelectedConnectionOption={setSelectedConnectionOption}
-          connectionOption={selectedConnectionOption}
-          systemFidesKey={systemFidesKey}
-        />
-      ) : null}
-      {selectedConnectionOption?.type === SystemType.SAAS &&
-      selectedConnectionOption ? (
-        <ConnectorParameters
           connectionOption={selectedConnectionOption}
           setSelectedConnectionOption={setSelectedConnectionOption}
-          connectionConfig={connectionConfig}
-          systemFidesKey={systemFidesKey}
-        />
-      ) : null}
-      {selectedConnectionOption?.type === SystemType.MANUAL &&
-      selectedConnectionOption ? (
-        <ConnectorParameters
-          connectionOption={selectedConnectionOption}
-          setSelectedConnectionOption={setSelectedConnectionOption}
-          connectionConfig={connectionConfig}
-          systemFidesKey={systemFidesKey}
-        />
-      ) : null}
-      {selectedConnectionOption?.type === SystemType.EMAIL &&
-      selectedConnectionOption ? (
-        <ConnectorParameters
-          connectionOption={selectedConnectionOption}
-          setSelectedConnectionOption={setSelectedConnectionOption}
-          connectionConfig={connectionConfig}
           systemFidesKey={systemFidesKey}
         />
       ) : null}

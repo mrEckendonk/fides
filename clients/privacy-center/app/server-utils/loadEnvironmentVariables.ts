@@ -1,4 +1,63 @@
-import { PrivacyCenterSettings } from "~/app/server-utils/PrivacyCenterSettings";
+import { DEFAULT_MODAL_LINK_ID } from "fides-js";
+
+import {
+  LOG_LEVEL_LABELS,
+  PrivacyCenterSettings,
+} from "~/app/server-utils/PrivacyCenterSettings";
+import type { ConsentMethod } from "~/types/api";
+import type {
+  ConsentFlagType,
+  ConsentNonApplicableFlagMode,
+} from "~/types/config";
+
+/**
+ * Default value for how long to cache the /fides.js bundle for, in seconds.
+ * This can be overridden via the FIDES_PRIVACY_CENTER__FIDES_JS_MAX_AGE_SECONDS
+ * environment variable.
+ */
+export const DEFAULT_FIDES_JS_MAX_AGE_SECONDS = 60 * 60;
+
+/**
+ * Default value for how long stale content can be served for the /fides.js bundle, in seconds.
+ * This applies to both stale-while-revalidate (serve stale while fetching fresh) and
+ * stale-if-error (serve stale if origin fails).
+ * This can be overridden via the FIDES_PRIVACY_CENTER__FIDES_JS_SERVE_STALE_SECONDS
+ * environment variable.
+ */
+export const DEFAULT_FIDES_JS_SERVE_STALE_SECONDS =
+  DEFAULT_FIDES_JS_MAX_AGE_SECONDS * 24;
+
+const defaultMissingExperienceBehavior = (
+  setting: string | undefined,
+): PrivacyCenterSettings["MISSING_EXPERIENCE_BEHAVIOR"] => {
+  if (setting === "throw") {
+    return "throw";
+  }
+
+  return "empty_experience";
+};
+
+const defaultLogLevel = (setting: any): PrivacyCenterSettings["LOG_LEVEL"] => {
+  if (LOG_LEVEL_LABELS.includes(setting)) {
+    return setting;
+  }
+
+  return "info";
+};
+
+const defaultSecurityHeadersMode = (
+  setting: string | undefined,
+): PrivacyCenterSettings["SECURITY_HEADERS_MODE"] => {
+  if (setting === "recommended") {
+    return "recommended";
+  }
+
+  return "none";
+};
+
+export const DEFAULT_ATTRIBUTION_ANCHOR_TEXT = "Consent powered by Ethyca";
+export const DEFAULT_ATTRIBUTION_DESTINATION_URL =
+  "https://www.ethyca.com/janus?utm_source=fides_consent&utm_medium=referral&utm_campaign=cmp_backlinks&utm_term=janus";
 
 const loadEnvironmentVariables = () => {
   // Load environment variables
@@ -14,7 +73,29 @@ const loadEnvironmentVariables = () => {
     CONFIG_CSS_URL:
       process.env.FIDES_PRIVACY_CENTER__CONFIG_CSS_URL ||
       "file:///app/config/config.css",
-    CUSTOM_PROPERTIES: process.env.CUSTOM_PROPERTIES === "true" || true,
+    SHOW_BRAND_LINK:
+      process.env.FIDES_PRIVACY_CENTER__SHOW_BRAND_LINK !== "false", // default: true
+    ROOT_PROPERTY_PATH:
+      process.env.FIDES_PRIVACY_CENTER__ROOT_PROPERTY_PATH || null,
+    USE_API_CONFIG: process.env.FIDES_PRIVACY_CENTER__USE_API_CONFIG === "true", // default: false
+    FIDES_JS_MAX_AGE_SECONDS:
+      Number(process.env.FIDES_PRIVACY_CENTER__FIDES_JS_MAX_AGE_SECONDS) ||
+      DEFAULT_FIDES_JS_MAX_AGE_SECONDS,
+    FIDES_JS_SERVE_STALE_SECONDS:
+      Number(process.env.FIDES_PRIVACY_CENTER__FIDES_JS_SERVE_STALE_SECONDS) ||
+      DEFAULT_FIDES_JS_SERVE_STALE_SECONDS,
+    MISSING_EXPERIENCE_BEHAVIOR: defaultMissingExperienceBehavior(
+      process.env.FIDES_PRIVACY_CENTER__MISSING_EXPERIENCE_BEHAVIOR,
+    ),
+    LOG_LEVEL: defaultLogLevel(process.env.FIDES_PRIVACY_CENTER__LOG_LEVEL),
+    SECURITY_HEADERS_MODE: defaultSecurityHeadersMode(
+      process.env.FIDES_PRIVACY_CENTER__SECURITY_HEADERS_MODE,
+    ),
+    ENABLE_EXTERNAL_TASK_PORTAL:
+      process.env.FIDES_PRIVACY_CENTER__ENABLE_EXTERNAL_TASK_PORTAL === "true",
+    PRIVACY_REQUEST_DISCLOSURE_ENABLED:
+      process.env.FIDES_PRIVACY_CENTER__PRIVACY_REQUEST_DISCLOSURE_ENABLED ===
+      "true", // default: false
 
     // Overlay options
     DEBUG: process.env.FIDES_PRIVACY_CENTER__DEBUG
@@ -34,7 +115,8 @@ const loadEnvironmentVariables = () => {
       process.env.FIDES_PRIVACY_CENTER__GEOLOCATION_API_URL || "",
     OVERLAY_PARENT_ID:
       process.env.FIDES_PRIVACY_CENTER__OVERLAY_PARENT_ID || null,
-    MODAL_LINK_ID: process.env.FIDES_PRIVACY_CENTER__MODAL_LINK_ID || null,
+    MODAL_LINK_ID:
+      process.env.FIDES_PRIVACY_CENTER__MODAL_LINK_ID || DEFAULT_MODAL_LINK_ID,
     PRIVACY_CENTER_URL:
       process.env.FIDES_PRIVACY_CENTER__PRIVACY_CENTER_URL ||
       "http://localhost:3000",
@@ -81,6 +163,54 @@ const loadEnvironmentVariables = () => {
     FIDES_CLEAR_COOKIE: process.env.FIDES_PRIVACY_CENTER__FIDES_CLEAR_COOKIE
       ? process.env.FIDES_PRIVACY_CENTER__FIDES_CLEAR_COOKIE === "true"
       : false,
+    FIDES_CONSENT_OVERRIDE:
+      (process.env.FIDES_PRIVACY_CENTER__FIDES_KNOWN_PREFERENCE as
+        | ConsentMethod.ACCEPT
+        | ConsentMethod.REJECT) || null,
+    FIDES_DISABLED_NOTICES:
+      process.env.FIDES_PRIVACY_CENTER__FIDES_DISABLED_NOTICES || null,
+    FIDES_DISABLED_SYSTEMS:
+      process.env.FIDES_PRIVACY_CENTER__FIDES_DISABLED_SYSTEMS || null,
+    FIDES_CONSENT_NON_APPLICABLE_FLAG_MODE:
+      (process.env
+        .FIDES_PRIVACY_CENTER__FIDES_CONSENT_NON_APPLICABLE_FLAG_MODE as ConsentNonApplicableFlagMode) ||
+      null,
+    FIDES_CONSENT_FLAG_TYPE:
+      (process.env
+        .FIDES_PRIVACY_CENTER__FIDES_CONSENT_FLAG_TYPE as ConsentFlagType) ||
+      null,
+    FIDES_INITIALIZED_EVENT_MODE:
+      (process.env.FIDES_PRIVACY_CENTER__FIDES_INITIALIZED_EVENT_MODE as
+        | "multiple"
+        | "once"
+        | "disable") || "once",
+    FIDES_UNSUPPORTED_REPEATED_SCRIPT_LOADING:
+      (process.env
+        .FIDES_PRIVACY_CENTER__FIDES_UNSUPPORTED_REPEATED_SCRIPT_LOADING as
+        | "enabled_acknowledge_not_supported"
+        | "disabled") || "disabled",
+    FIDES_COOKIE_SUFFIX:
+      process.env.FIDES_PRIVACY_CENTER__FIDES_COOKIE_SUFFIX ?? null,
+    FIDES_COOKIE_COMPRESSION:
+      (process.env.FIDES_PRIVACY_CENTER__FIDES_COOKIE_COMPRESSION as
+        | "gzip"
+        | "none") || "none",
+    // Attribution link options
+    ATTRIBUTION_ENABLED:
+      process.env.FIDES_PRIVACY_CENTER__ATTRIBUTION_ENABLED !== "false", // default: true
+    ATTRIBUTION_ANCHOR_TEXT:
+      process.env.FIDES_PRIVACY_CENTER__ATTRIBUTION_ANCHOR_TEXT ||
+      DEFAULT_ATTRIBUTION_ANCHOR_TEXT,
+    ATTRIBUTION_DESTINATION_URL: (() => {
+      const url =
+        process.env.FIDES_PRIVACY_CENTER__ATTRIBUTION_DESTINATION_URL ||
+        DEFAULT_ATTRIBUTION_DESTINATION_URL;
+      return url.startsWith("https://") || url.startsWith("http://")
+        ? url
+        : DEFAULT_ATTRIBUTION_DESTINATION_URL;
+    })(),
+    ATTRIBUTION_NOFOLLOW:
+      process.env.FIDES_PRIVACY_CENTER__ATTRIBUTION_NOFOLLOW === "true", // default: false
   };
   return settings;
 };

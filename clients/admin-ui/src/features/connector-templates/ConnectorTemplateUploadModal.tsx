@@ -1,23 +1,17 @@
-import { FetchBaseQueryError } from "@reduxjs/toolkit/dist/query/fetchBaseQuery";
+import { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import {
-  Box,
   Button,
-  ButtonGroup,
+  ChakraBox as Box,
+  ChakraText as Text,
   Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  Text,
-  useToast,
+  useMessage,
 } from "fidesui";
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useDispatch } from "react-redux";
 
 import { getErrorMessage } from "~/features/common/helpers";
-import { errorToastParams, successToastParams } from "~/features/common/toast";
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
 import {
   setConnectionOptions,
   useGetAllConnectionTypesQuery,
@@ -28,24 +22,24 @@ import { useRegisterConnectorTemplateMutation } from "./connector-template.slice
 type RequestModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  testId?: String;
+  testId?: string;
 };
 
-const ConnectorTemplateUploadModal: React.FC<RequestModalProps> = ({
+const ConnectorTemplateUploadModal = ({
   isOpen,
   onClose,
   testId = "connector-template-modal",
-}) => {
+}: RequestModalProps) => {
   const dispatch = useDispatch();
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const toast = useToast();
+  const message = useMessage();
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (acceptedFiles: File[]) => {
       const file = acceptedFiles[0];
       const fileExtension = file.name.split(".").pop()?.toLowerCase();
 
       if (fileExtension !== "zip") {
-        toast(errorToastParams("Only zip files are allowed."));
+        message.error("Only zip files are allowed.");
         return;
       }
 
@@ -61,23 +55,21 @@ const ConnectorTemplateUploadModal: React.FC<RequestModalProps> = ({
     },
     {
       skip: false,
-    }
+    },
   );
 
   const handleSubmit = async () => {
     if (uploadedFile) {
       try {
         await registerConnectorTemplate(uploadedFile).unwrap();
-        toast(
-          successToastParams("Integration template uploaded successfully.")
-        );
+        message.success("Integration template uploaded successfully.");
 
         // refresh the connection types
         const { data } = await refetchConnectionTypes();
         dispatch(setConnectionOptions(data?.items ?? []));
         onClose();
       } catch (error) {
-        toast(errorToastParams(getErrorMessage(error as FetchBaseQueryError)));
+        message.error(getErrorMessage(error as FetchBaseQueryError));
       } finally {
         setUploadedFile(null);
       }
@@ -95,64 +87,59 @@ const ConnectorTemplateUploadModal: React.FC<RequestModalProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="2xl">
-      <ModalOverlay />
-      <ModalContent textAlign="left" p={2} data-testid={testId}>
-        <ModalHeader>Upload integration template</ModalHeader>
-        <ModalBody>
-          <Text fontSize="sm" mb={4}>
-            Drag and drop your integration template zip file here, or click to
-            browse your files.
-          </Text>
-          <Box
-            {...getRootProps()}
-            bg={isDragActive ? "gray.100" : "gray.50"}
-            border="2px dashed"
-            borderColor={isDragActive ? "gray.300" : "gray.200"}
-            borderRadius="md"
-            cursor="pointer"
-            minHeight="150px"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            textAlign="center"
+    <Modal
+      open={isOpen}
+      onCancel={onClose}
+      width={MODAL_SIZE.md}
+      centered
+      destroyOnHidden
+      data-testid={testId}
+      title="Upload integration template"
+      footer={
+        <div className="flex w-full justify-end gap-2">
+          <Button
+            onClick={onClose}
+            data-testid="cancel-btn"
+            disabled={isLoading}
           >
-            <input {...getInputProps()} />
-            {renderFileText()}
-          </Box>
-          <Text fontSize="sm" mt={4}>
-            An integration template zip file must include a SaaS config and
-            dataset, but may also contain an icon (.svg) as an optional file.
-          </Text>
-        </ModalBody>
-        <ModalFooter>
-          <ButtonGroup
-            size="sm"
-            spacing="2"
-            width="100%"
-            display="flex"
-            justifyContent="right"
+            Cancel
+          </Button>
+          <Button
+            type="primary"
+            htmlType="submit"
+            disabled={!uploadedFile || isLoading}
+            onClick={handleSubmit}
+            data-testid="submit-btn"
           >
-            <Button
-              variant="outline"
-              onClick={onClose}
-              data-testid="cancel-btn"
-              isDisabled={isLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="primary"
-              type="submit"
-              isDisabled={!uploadedFile || isLoading}
-              onClick={handleSubmit}
-              data-testid="submit-btn"
-            >
-              Submit
-            </Button>
-          </ButtonGroup>
-        </ModalFooter>
-      </ModalContent>
+            Submit
+          </Button>
+        </div>
+      }
+    >
+      <Text fontSize="sm" mb={4}>
+        Drag and drop your integration template zip file here, or click to
+        browse your files.
+      </Text>
+      <Box
+        {...getRootProps()}
+        bg={isDragActive ? "gray.100" : "gray.50"}
+        border="2px dashed"
+        borderColor={isDragActive ? "gray.300" : "gray.200"}
+        borderRadius="md"
+        cursor="pointer"
+        minHeight="150px"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        textAlign="center"
+      >
+        <input {...getInputProps()} />
+        {renderFileText()}
+      </Box>
+      <Text fontSize="sm" mt={4}>
+        An integration template zip file must include a SaaS config and dataset,
+        but may also contain an icon (.svg) as an optional file.
+      </Text>
     </Modal>
   );
 };

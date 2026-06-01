@@ -1,11 +1,11 @@
-import { Box, BoxProps } from "fidesui";
+import { ChakraBox as Box, ChakraBoxProps as BoxProps } from "fidesui";
 
 const ConnectedCircle = ({
   connected,
   ...other
-}: { connected?: boolean } & BoxProps) => {
+}: { connected?: boolean | null } & BoxProps) => {
   let color = "red.500";
-  if (connected == null) {
+  if (connected === null || connected === undefined) {
     color = "gray.300";
   } else if (connected) {
     color = "green.500";

@@ -8,14 +8,14 @@ type HomeLayoutProps = {
   title: string;
 };
 
-const HomeLayout: React.FC<HomeLayoutProps> = ({ children, title }) => (
-  <Flex data-testid={title} direction="column" height="100%">
+const HomeLayout = ({ children, title }: HomeLayoutProps) => (
+  <Flex vertical data-testid={title} className="h-full">
     <Head>
       <title>Fides Admin UI - {title}</title>
       <meta name="description" content="Privacy Engineering Platform" />
       <link rel="icon" href="/favicon.ico" />
     </Head>
-    <Flex as="main" flexDirection="column" gap={10}>
+    <Flex vertical gap={40} component="main">
       {children}
     </Flex>
   </Flex>

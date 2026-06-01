@@ -1,6 +1,6 @@
 import { stubPlus } from "cypress/support/stubs";
 
-import { DOMAIN_MANAGEMENT_ROUTE } from "~/features/common/nav/v2/routes";
+import { DOMAIN_MANAGEMENT_ROUTE } from "~/features/common/nav/routes";
 
 // Mock response for GET /api/v1/config?api_set=true
 const API_SET_CONFIG = {
@@ -25,6 +25,7 @@ describe("Domains page", () => {
 
   it("can navigate to the Domains page", () => {
     cy.visit("/");
+    cy.getByTestId("Core configuration-nav-group").click();
     cy.getByTestId("Domains-nav-link").click();
     cy.getByTestId("management-domains");
   });
@@ -33,32 +34,32 @@ describe("Domains page", () => {
     describe("when existing domains are configured (both api-set and config-set)", () => {
       beforeEach(() => {
         cy.intercept("GET", "/api/v1/config?api_set=true", API_SET_CONFIG).as(
-          "getApiSetConfig"
+          "getApiSetConfig",
         );
         cy.intercept(
           "GET",
           "/api/v1/config?api_set=false",
-          CONFIG_SET_CONFIG
+          CONFIG_SET_CONFIG,
         ).as("getConfigSetConfig");
         cy.visit(DOMAIN_MANAGEMENT_ROUTE);
       });
 
       it("can display a loading state while fetching domain configuration", () => {
         cy.getByTestId("api-set-domains-form").within(() => {
-          cy.get(".chakra-spinner");
+          cy.get(".ant-spin-spinning");
         });
         cy.getByTestId("config-set-domains-form").within(() => {
-          cy.get(".chakra-spinner");
+          cy.get(".ant-spin-spinning");
         });
 
         // After fetching, spinners should disappear
         cy.wait("@getApiSetConfig");
         cy.wait("@getConfigSetConfig");
         cy.getByTestId("api-set-domains-form").within(() => {
-          cy.get(".chakra-spinner").should("not.exist");
+          cy.get(".ant-spin-spinning").should("not.exist");
         });
         cy.getByTestId("config-set-domains-form").within(() => {
-          cy.get(".chakra-spinner").should("not.exist");
+          cy.get(".ant-spin-spinning").should("not.exist");
         });
       });
 
@@ -69,20 +70,20 @@ describe("Domains page", () => {
         cy.getByTestId("api-set-domains-form").within(() => {
           cy.getByTestId("input-cors_origins[0]").should(
             "have.value",
-            "https://example.com"
+            "https://example.com",
           );
         });
 
         cy.getByTestId("config-set-domains-form").within(() => {
           cy.getByTestId("input-config_cors_origins[0]").should(
             "have.value",
-            "http://localhost"
+            "http://localhost",
           );
         });
 
         cy.getByTestId("input-config_cors_origin_regex").should(
           "have.value",
-          "https://.*\\.example\\.com"
+          "https://.*\\.example\\.com",
         );
       });
     });
@@ -90,10 +91,10 @@ describe("Domains page", () => {
     describe("when no existing domains are configured", () => {
       beforeEach(() => {
         cy.intercept("GET", "/api/v1/config?api_set=true", {}).as(
-          "getApiSetConfig"
+          "getApiSetConfig",
         );
         cy.intercept("GET", "/api/v1/config?api_set=false", {}).as(
-          "getConfigSetConfig"
+          "getConfigSetConfig",
         );
         cy.visit(DOMAIN_MANAGEMENT_ROUTE);
       });
@@ -118,10 +119,10 @@ describe("Domains page", () => {
   describe("can edit domains", () => {
     beforeEach(() => {
       cy.intercept("GET", "/api/v1/config?api_set=true", API_SET_CONFIG).as(
-        "getApiSetConfig"
+        "getApiSetConfig",
       );
       cy.intercept("GET", "/api/v1/config?api_set=false", CONFIG_SET_CONFIG).as(
-        "getConfigSetConfig"
+        "getConfigSetConfig",
       );
       cy.visit(DOMAIN_MANAGEMENT_ROUTE);
       cy.wait("@getApiSetConfig");
@@ -135,12 +136,12 @@ describe("Domains page", () => {
         },
       };
       cy.intercept("PUT", "/api/v1/config", { statusCode: 200 }).as(
-        "putApiSetConfig"
+        "putApiSetConfig",
       );
       cy.intercept(
         "GET",
         "/api/v1/config?api_set=true",
-        API_SET_CONFIG_UPDATED
+        API_SET_CONFIG_UPDATED,
       ).as("getApiSetConfig");
 
       // Edit the first domain and save our changes
@@ -157,9 +158,9 @@ describe("Domains page", () => {
       cy.wait("@getApiSetConfig");
       cy.getByTestId("input-cors_origins[0]").should(
         "have.value",
-        "https://www.example.com"
+        "https://www.example.com",
       );
-      cy.getByTestId("toast-success-msg");
+      cy.shouldShowMessage("success");
     });
 
     it("can remove an existing domain", () => {
@@ -169,12 +170,12 @@ describe("Domains page", () => {
         },
       };
       cy.intercept("PUT", "/api/v1/config", { statusCode: 200 }).as(
-        "putApiSetConfig"
+        "putApiSetConfig",
       );
       cy.intercept(
         "GET",
         "/api/v1/config?api_set=true",
-        API_SET_CONFIG_UPDATED
+        API_SET_CONFIG_UPDATED,
       ).as("getApiSetConfig");
 
       // Delete the first domain and save our changes
@@ -189,9 +190,9 @@ describe("Domains page", () => {
       cy.wait("@getApiSetConfig");
       cy.getByTestId("input-cors_origins[0]").should(
         "have.value",
-        "https://app.example.com"
+        "https://app.example.com",
       );
-      cy.getByTestId("toast-success-msg");
+      cy.shouldShowMessage("success");
     });
 
     it("can validate domains", () => {

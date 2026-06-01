@@ -20,15 +20,55 @@ When releasing, a new tag is created on the release branch and the release proce
 
 In the case of patches, a branch is created from the relevant tag. Commits are then cherry-picked into this branch, and a new patch version tag is created.
 
+## Changelog Entries
+
+To avoid merge conflicts in `CHANGELOG.md`, we use a fragment-based system where each PR adds a YAML file describing the change.
+
+### Creating a Changelog Entry
+
+When creating a PR, add a changelog entry file:
+
+1. Copy `changelog/TEMPLATE.yaml` to a new file in the `changelog/` directory
+2. Name the file using your PR number (e.g., `7137.yaml`) or a descriptive slug (e.g., `add-gpc-fields.yaml`)
+3. Fill in the required fields:
+   - `type`: One of: Added, Changed, Developer Experience, Deprecated, Docs, Fixed, Removed, Security
+   - `description`: Short description of the change (without the leading `-`)
+   - `pr`: PR number (optional if not yet known)
+   - `labels`: Optional list of labels: `high-risk`, `db-migration`
+
+Example (`changelog/7137.yaml`):
+
+```yaml
+type: Added
+description: Added editable GPC translation fields to privacy experience configuration
+pr: 7137
+labels: []
+```
+
+The changelog entry will be automatically compiled into `CHANGELOG.md` during the release process.
+
 ## Release Steps
 
-We use GitHub’s `release` feature to tag releases that then get automatically deployed to DockerHub and PyPi via GitHub Actions. We also use a `CHANGELOG.md` to mitigate surprises to our users and help them plan updates accordingly. The release steps are as follows:
+We use GitHub's `release` feature to tag releases that then get automatically deployed to DockerHub and PyPi via GitHub Actions. We also use a `CHANGELOG.md` to mitigate surprises to our users and help them plan updates accordingly. The release steps are as follows:
 
 ### Major and Minor
 
-1. Open a PR that is titled the version of the release (i.e. `1.6.0`)
-    * Rename the `Unreleased` section of `CHANGELOG.md` to the new version number and put a date next to it
-    * Update the `compare` links for both the new version and for the new `Unreleased` section
+1. Compile changelog fragments into `CHANGELOG.md`:
+   ```sh
+   # Preview what will be generated (dry run)
+   nox -s "changelog(dry)"
+
+   # Compile fragments and finalize for release
+   nox -s "changelog(write)" -- --release 2.76.0
+   ```
+   This will:
+   - Compile all YAML fragments from `changelog/` into the Unreleased section
+   - Create a new version section with all Unreleased content
+   - Leave the `Unreleased` section empty at the top (ready for new entries)
+   - Update the `compare` links for both the new version and the `Unreleased` section
+   - Delete the processed fragment files
+
+1. Open a PR that is titled the version of the release (i.e. `2.76.0`) with the updated `CHANGELOG.md`
 1. Once approved, merge the PR
 1. Create a new release, ensuring that the last PR to get merged is the aforementioned `CHANGELOG.md` update PR
 1. Add the new version as the tag (i.e. `1.6.0`)
@@ -131,10 +171,23 @@ It may be necessary for a patch release to contain only select commits to the `m
     git cherry-pick <commit>...
     ```
 
-1. Copy the `Unreleased` section of `CHANGELOG.md` and paste above the release being patched
-    1. Rename `Unreleased` to the new version number and put a date next to it
-    1. Cut and paste the documented changes that are now included in the patch release to the correct section
-    1. Commit these changes
+1. Compile changelog fragments for the patch release:
+   ```sh
+   # Preview what will be generated (dry run)
+   nox -s "changelog(dry)" -- --prs 1234,5678
+
+   # Compile fragments and finalize for patch release (only selected PRs)
+   nox -s "changelog(write)" -- --release 1.2.4 --prs 1234,5678
+   ```
+   This will:
+   - Compile only the YAML fragments matching the specified PR numbers (comma-separated list)
+   - Create a new version section from those entries
+   - Leave the `Unreleased` section empty at the top
+   - Delete only the processed fragment files (matching PRs)
+   - Leave other fragment files in `changelog/` for future releases
+   - Update compare links appropriately
+
+   **Note:** For patch releases, you typically only want to include specific PRs. Use the `--prs` flag to specify which PR numbers to include. Fragments without PR numbers will be skipped when using this flag.
 1. Open a pull request to incorporate any cherry-picked commits and the `CHANGELOG.md` changes into the release branch
     1. Set the base branch of this pull request to the release branch
     1. Once approved, merge the pull request into the release branch
@@ -168,77 +221,4 @@ It may be necessary for a patch release to contain only select commits to the `m
 
 ## Release Checklist
 
-The release checklist is a manual set of checks done before each release to ensure functionality of the most critical components of the application. Some of these steps are redundant with automated tests, while others are _only_ tested here as part of this check.
-
-This checklist should be copy/pasted into the final pre-release PR, and checked off as you complete each step.
-
-Additionally, there is a robust [Release Process](https://ethyca.atlassian.net/wiki/spaces/EN/pages/2545483802/Release+Process+Fides) page available in Confluence (_internal only_).
-
-### Pre-Release Steps
-
-#### General
-
-From the release branch, confirm the following:
-
-* [ ] Quickstart works: `nox -s quickstart` (verify you can complete the interactive prompts from the command-line)
-* [ ] Test environment works: `nox -s "fides_env(test)"` (verify the admin UI on localhost:8080, privacy center on localhost:3001, CLI and webserver)
-* [ ] Have Roger run a QATouch automation run
-
-Next, run the following checks via the test environment:
-
-#### API
-
-* [ ] Verify that the generated API docs are correct @ <http://localhost:8080/docs>
-
-#### CLI
-
-Run these from within the test environment shell:
-
-* [ ] `git reset --hard` - **Note: This is required for the `pull` command to work**
-* [ ] `fides user login`
-* [ ] `fides push src/fides/data/sample_project/sample_resources/`
-* [ ] `fides pull src/fides/data/sample_project/sample_resources/`
-* [ ] `fides evaluate src/fides/data/sample_project/sample_resources/`
-* [ ] `fides generate dataset db --credentials-id app_postgres test.yml` - **Note: Because the filesystem isn't mounted, the new file will only show up within the container**
-* [ ] `fides scan dataset db --credentials-id app_postgres`
-
-#### Privacy Center
-
-* [ ] Every navigation button works
-* [ ] DSR submission succeeds
-* [ ] Consent request submission succeeds
-
-#### Admin UI
-
-* [ ] Every navigation button works
-* [ ] DSR approval succeeds
-* [ ] DSR execution succeeds
-
-#### Documentation
-
-* [ ] Verify that the CHANGELOG is formatted correctly and clean up verbiage where needed
-* [ ] Verify that the CHANGELOG is representative of the actual changes
-
-:warning: Note that any updates that need to be made to the CHANGELOG should **not** be commited directly to the release branch.
-Instead, they should be committed on a branch off of `main` and then PR'd and merged into `main`, before being cherry-picked
-over to the release branch. This ensures that the CHANGELOG stays consistent between the release branch and `main`.
-
-#### Publishing the release
-
-When publishing the release, be sure to include the following sections in the release description:
-
-* [ ] `## Release Pull Request` section that includes a link back to the release PR (i.e., this one!) for tracking purposes
-* [ ] `## QA Touch Test Run` section that includes a link to the QATouch test run (QA team should provide this)
-
-### Post-Release Steps
-
-* [ ] Verify the ethyca-fides release is published to PyPi: <https://pypi.org/project/ethyca-fides/#history>
-* [ ] Verify the fides release is published to DockerHub: <https://hub.docker.com/r/ethyca/fides>
-* [ ] Verify the fides-privacy-center release is published to DockerHub: <https://hub.docker.com/r/ethyca/fides-privacy-center>
-* [ ] Verify the fides-sample-app release is published to DockerHub: <https://hub.docker.com/r/ethyca/fides-sample-app>
-* [ ] Smoke test the PyPi & DockerHub releases:
-    * [ ] Create a fresh venv with `python3 -m venv 2_12_0_venv`
-    * [ ] Activate the venv `source 2_12_0_venv/bin/activate`
-    * [ ] `pip install ethyca-fides` 
-    * [ ] `fides deploy up`
-* [ ] Announce the release!
+Please use the [checklist defined in `.github/PULL_REQUEST_TEMPLATE/release_pull_request.md`](https://github.com/ethyca/fides/blob/HEAD/.github/PULL_REQUEST_TEMPLATE/release_pull_request_template.md) as a release checklist. This should be put in the description for PRs of release branches.

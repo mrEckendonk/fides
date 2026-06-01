@@ -8,74 +8,99 @@ describe("Nav Bar", () => {
   it("renders all navigation groups with links inside", () => {
     cy.visit("/");
 
-    cy.get("nav button").should("have.length", 7);
-    cy.getByTestId("Overview-nav-group").within(() => {
-      cy.getByTestId("Home-nav-link");
-    });
-    cy.getByTestId("Data inventory-nav-group").within(() => {
-      cy.getByTestId("Systems & vendors-nav-link");
-      cy.getByTestId("Add systems-nav-link");
-      cy.getByTestId("Manage datasets-nav-link");
-    });
-    cy.getByTestId("Privacy requests-nav-group").within(() => {
-      cy.getByTestId("Request manager-nav-link");
-      cy.getByTestId("Connection manager-nav-link");
-    });
-    cy.getByTestId("Settings-nav-group").within(() => {
-      cy.getByTestId("Users-nav-link");
-      cy.getByTestId("Organization-nav-link");
-      cy.getByTestId("Taxonomy-nav-link");
-      cy.getByTestId("About Fides-nav-link");
-    });
+    // Without Plus: Overview, Data inventory, Privacy requests, Core configuration, Settings (Compliance hidden)
+    cy.get(".ant-menu-submenu-title").should("have.length", 5);
+    cy.getByTestId("Overview-nav-group")
+      .click()
+      .parents(".ant-menu-submenu")
+      .within(() => {
+        cy.getByTestId("Home-nav-link");
+      });
+    cy.getByTestId("Data inventory-nav-group")
+      .click()
+      .parents(".ant-menu-submenu")
+      .within(() => {
+        cy.getByTestId("System inventory-nav-link");
+        cy.getByTestId("Add systems-nav-link");
+        cy.getByTestId("Manage datasets-nav-link");
+      });
+    cy.getByTestId("Privacy requests-nav-group")
+      .click()
+      .parents(".ant-menu-submenu")
+      .within(() => {
+        cy.getByTestId("Request manager-nav-link");
+      });
+    cy.getByTestId("Core configuration-nav-group")
+      .click()
+      .parents(".ant-menu-submenu")
+      .within(() => {
+        cy.getByTestId("Taxonomy-nav-link");
+      });
+    cy.getByTestId("Settings-nav-group")
+      .click()
+      .parents(".ant-menu-submenu")
+      .within(() => {
+        cy.getByTestId("Privacy requests-nav-link");
+        cy.getByTestId("Users-nav-link");
+        cy.getByTestId("Organization-nav-link");
+        cy.getByTestId("About Fides-nav-link");
+      });
   });
 
   it("renders the Consent and Detection & Discovery navs with Plus", () => {
     stubPlus(true);
     cy.visit("/");
 
-    cy.get("nav button").should("have.length", 9);
-    cy.getByTestId("Detection & Discovery-nav-group").within(() => {
-      cy.getByTestId("Activity-nav-link").should("exist");
-      cy.getByTestId("Data detection-nav-link").should("exist");
-      cy.getByTestId("Data discovery-nav-link").should("exist");
-    });
+    // With Plus: Overview, Detection & Discovery, Data inventory, Privacy requests, Consent, Core configuration, Compliance, Settings
+    cy.get(".ant-menu-submenu-title").should("have.length", 8);
+    cy.getByTestId("Detection & Discovery-nav-group")
+      .click()
+      .parents(".ant-menu-submenu")
+      .within(() => {
+        cy.getByTestId("Action center-nav-link").should("exist");
+      });
+    cy.getByTestId("Core configuration-nav-group").should("exist");
+    cy.getByTestId("Compliance-nav-group").should("exist");
   });
 
   it("styles the active navigation link based on the current route", () => {
-    const ACTIVE_COLOR = "rgb(119, 69, 240)";
-    // Start on the Home page
+    const ACTIVE_COLOR = "rgb(43, 46, 53)";
     cy.visit("/");
 
     // The nav should reflect the active page.
+    cy.getByTestId("Overview-nav-group").click();
+
     cy.getByTestId("Home-nav-link")
-      .should("have.css", "background-color")
+      .should("have.css", "color")
       .should("eql", ACTIVE_COLOR);
-    cy.getByTestId("Systems & vendors-nav-link")
-      .should("have.css", "background-color")
+
+    cy.getByTestId("Data inventory-nav-group").click();
+    cy.getByTestId("System inventory-nav-link")
+      .should("have.css", "color")
       .should("not.eql", ACTIVE_COLOR);
 
     // Navigate by clicking a nav link.
-    cy.getByTestId("Systems & vendors-nav-link").click();
+    cy.getByTestId("System inventory-nav-link").click();
 
     // The nav should update which page is active.
     cy.getByTestId("Home-nav-link")
-      .should("have.css", "background-color")
+      .should("have.css", "color")
       .should("not.eql", ACTIVE_COLOR);
-    cy.getByTestId("Systems & vendors-nav-link")
-      .should("have.css", "background-color")
+    cy.getByTestId("System inventory-nav-link")
+      .should("have.css", "color")
       .should("eql", ACTIVE_COLOR);
   });
 
   it("can collapse nav groups and persist across page views", () => {
     cy.visit("/");
+    cy.getByTestId("Privacy requests-nav-group").click();
     cy.getByTestId("Request manager-nav-link").should("be.visible");
-    cy.getByTestId("Privacy requests-nav-group").within(() => {
-      cy.get("button").click();
-    });
+    cy.getByTestId("Privacy requests-nav-group").click();
     cy.getByTestId("Request manager-nav-link").should("not.be.visible");
 
     // Move to another page
-    cy.getByTestId("Systems & vendors-nav-link").click();
+    cy.getByTestId("Data inventory-nav-group").click();
+    cy.getByTestId("System inventory-nav-link").click();
     cy.getByTestId("Request manager-nav-link").should("not.be.visible");
   });
 });

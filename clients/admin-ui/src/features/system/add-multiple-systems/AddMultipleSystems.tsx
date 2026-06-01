@@ -28,27 +28,25 @@ import {
   TableSkeletonLoader,
   useClientSidePagination,
 } from "common/table/v2";
-import { errorToastParams, successToastParams } from "common/toast";
 import {
-  Badge,
-  Box,
   Button,
-  Flex,
-  HStack,
-  Spinner,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraHStack as HStack,
+  ChakraText as Text,
+  ChakraVStack as VStack,
+  Spin,
   Tag,
-  Text,
   Tooltip,
-  useDisclosure,
-  useToast,
-  VStack,
+  useChakraDisclosure as useDisclosure,
+  useMessage,
+  useModal,
 } from "fidesui";
 import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
-import ConfirmationModal from "~/features/common/modals/ConfirmationModal";
-import { INDEX_ROUTE } from "~/features/common/nav/v2/routes";
+import { INDEX_ROUTE } from "~/features/common/nav/routes";
 import AddVendor from "~/features/configure-consent/AddVendor";
 import {
   DictSystems,
@@ -64,15 +62,15 @@ export const VendorSourceCell = ({ value }: { value: string }) => {
   const labels = vendorSourceLabels[source] ?? { label: "", fullName: "" };
   return (
     <Flex alignItems="center" justifyContent="center" height="100%" mr="2">
-      <Tooltip label={labels.fullName} placement="top">
-        <Badge>{labels.label}</Badge>
+      <Tooltip title={labels.fullName}>
+        <Tag>{labels.label}</Tag>
       </Tooltip>
     </Flex>
   );
 };
 
 const ADDED_VENDOR_TOOLTIP_LABEL =
-  "This vendor has already been added. You can view the properties of this vendor by going to View Systems.";
+  "This vendor has already been added. You can view the properties of this vendor by going to the System Inventory.";
 
 type MultipleSystemTable = DictSystems;
 
@@ -102,13 +100,17 @@ const EmptyTableNotice = () => (
       vendors by selecting the "Add custom vendor" button below.`}
       </Text>
     </VStack>
-    <AddVendor buttonLabel="Add custom vendor" />
+    <AddVendor
+      buttonLabel="Add custom vendor"
+      buttonProps={{ type: "primary" }}
+    />
   </VStack>
 );
 
+const SYSTEM_TEXT = "Vendor";
+
 export const AddMultipleSystems = ({ redirectRoute }: Props) => {
-  const systemText = "Vendor";
-  const toast = useToast();
+  const message = useMessage();
   const { dictionaryService, tcf: isTcfEnabled } = useFeatures();
   const { isLoading: isLoadingHealthCheck } = useGetHealthQuery();
   const router = useRouter();
@@ -127,7 +129,7 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
     onOpen: onOpenFilter,
     onClose: onCloseFilter,
   } = useDisclosure();
-  const { isOpen, onClose, onOpen } = useDisclosure();
+  const modal = useModal();
   const [isRowSelectionBarOpen, setIsRowSelectionBarOpen] =
     useState<boolean>(false);
 
@@ -175,20 +177,26 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
           />
         ),
       }),
+      columnHelper.accessor((row) => row.vendor_id, {
+        id: "id",
+        cell: (props) => <DefaultCell value={props.getValue()} />,
+        header: (props) => <DefaultHeaderCell value="ID" {...props} />,
+        enableColumnFilter: isTcfEnabled,
+      }),
       columnHelper.accessor((row) => row.name, {
         id: "name",
         cell: (props) => <DefaultCell value={props.getValue()} />,
-        header: (props) => <DefaultHeaderCell value={systemText} {...props} />,
+        header: (props) => <DefaultHeaderCell value="Name" {...props} />,
       }),
       columnHelper.accessor((row) => row.vendor_id, {
-        id: "vendor_id",
+        id: "source",
         cell: (props) => <VendorSourceCell value={props.getValue()} />,
         header: (props) => <DefaultHeaderCell value="Source" {...props} />,
         enableColumnFilter: isTcfEnabled,
         filterFn: "arrIncludesSome",
       }),
     ],
-    [allRowsLinkedToSystem, systemText, isTcfEnabled]
+    [allRowsLinkedToSystem, isTcfEnabled],
   );
 
   const tableInstance = useReactTable<MultipleSystemTable>({
@@ -205,7 +213,8 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
     state: {
       globalFilter,
       columnVisibility: {
-        vendor_id: isTcfEnabled,
+        id: isTcfEnabled,
+        source: isTcfEnabled,
       },
     },
     initialState: {
@@ -214,7 +223,9 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
       },
       columnSizing: {
         select: 0,
-        vendor_id: 0,
+        id: 0,
+        source: 0,
+        name: 0,
       },
     },
     enableColumnResizing: true,
@@ -254,14 +265,12 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
       const result = await postVendorIds(vendorIds);
       router.push(redirectRoute);
       if (isErrorResult(result)) {
-        toast(errorToastParams(getErrorMessage(result.error)));
+        message.error(getErrorMessage(result.error));
       } else {
-        toast(
-          successToastParams(
-            `Successfully added ${
-              vendorIds.length
-            } ${systemText.toLocaleLowerCase()}`
-          )
+        message.success(
+          `Successfully added ${
+            vendorIds.length
+          } ${SYSTEM_TEXT.toLocaleLowerCase()}${vendorIds.length > 1 ? "s" : ""}`,
         );
       }
     }
@@ -271,31 +280,13 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
     .getSelectedRowModel()
     .rows.some((row) => !row.original.linked_system);
 
-  const isTooltipDisabled = useMemo(() => {
-    /*
-      The tooltip surrounding the add button is conditionally displayed.
-
-      It displays if no rows have been selected or if all of the vendors
-      are already linked to systems
-    */
-    if (!anyNewSelectedRows || allRowsLinkedToSystem) {
-      return false;
-    }
-
-    return true;
-  }, [anyNewSelectedRows, allRowsLinkedToSystem]);
-
   if (!dictionaryService && !isLoadingHealthCheck) {
     router.push(INDEX_ROUTE);
     return null; // this prevents the empty table from flashing
   }
 
   if (isPostLoading || isPostSuccess) {
-    return (
-      <Flex height="100%" justifyContent="center" alignItems="center">
-        <Spinner />
-      </Flex>
-    );
+    return <Spin />;
   }
 
   if (isGetLoading) {
@@ -303,20 +294,19 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
   }
 
   const toolTipText = allRowsLinkedToSystem
-    ? `All ${systemText.toLocaleLowerCase()} have already been added`
-    : `Select a ${systemText.toLocaleLowerCase()} `;
+    ? `All ${SYSTEM_TEXT.toLocaleLowerCase()}s have already been added`
+    : `Select a ${SYSTEM_TEXT.toLocaleLowerCase()} `;
 
   const totalSelectSystemsLength = tableInstance
     .getSelectedRowModel()
     .rows.filter((r) => !r.original.linked_system).length;
 
+  const vendorFilter = tableInstance
+    .getState()
+    .columnFilters.find((c) => c.id === "source");
   const totalFilters =
-    tableInstance.getState().columnFilters.length > 0
-      ? // @ts-ignore
-        (tableInstance
-          .getState()
-          .columnFilters.filter((c) => c.id === "vendor_id")[0].value
-          .length as number)
+    vendorFilter && Array.isArray(vendorFilter.value)
+      ? vendorFilter.value.length
       : 0;
   return (
     <Flex
@@ -325,19 +315,6 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
       overflow="auto"
       data-testid="add-multiple-systems-tbl"
     >
-      <ConfirmationModal
-        isOpen={isOpen}
-        isCentered
-        onCancel={onClose}
-        onClose={onClose}
-        onConfirm={addVendors}
-        title="Confirmation"
-        message={`You are about to add ${totalSelectSystemsLength.toLocaleString(
-          "en"
-        )} ${systemText.toLocaleLowerCase()}${
-          totalSelectSystemsLength > 1 ? "s" : ""
-        }`}
-      />
       <MultipleSystemsFilterModal
         isOpen={isFilterOpen}
         onClose={onCloseFilter}
@@ -357,19 +334,24 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
               <Text fontWeight="700" fontSize="sm" lineHeight="2" ml={4}>
                 {totalSelectSystemsLength.toLocaleString("en")} selected
               </Text>
-              <Tooltip
-                label={toolTipText}
-                shouldWrapChildren
-                placement="top"
-                isDisabled={isTooltipDisabled}
-              >
+              <Tooltip title={toolTipText}>
                 <Button
-                  onClick={onOpen}
+                  onClick={() => {
+                    modal.confirm({
+                      title: "Confirmation",
+                      content: `You are about to add ${totalSelectSystemsLength.toLocaleString(
+                        "en",
+                      )} ${SYSTEM_TEXT.toLocaleLowerCase()}${
+                        totalSelectSystemsLength > 1 ? "s" : ""
+                      }`,
+                      centered: true,
+                      icon: null,
+                      onOk: addVendors,
+                    });
+                  }}
                   data-testid="add-multiple-systems-btn"
-                  size="xs"
-                  variant="outline"
                   disabled={!anyNewSelectedRows}
-                  ml={4}
+                  className="ml-4"
                 >
                   Add
                 </Button>
@@ -378,7 +360,7 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
           ) : null}
         </Flex>
         <HStack spacing={4} alignItems="center">
-          <AddVendor buttonLabel="Add custom vendor" buttonVariant="outline" />
+          <AddVendor buttonLabel="Add custom vendor" />
           {isTcfEnabled ? (
             // Wrap in a span so it is consistent height with the add button, whose
             // Tooltip wraps a span
@@ -386,15 +368,10 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
               <Button
                 onClick={onOpenFilter}
                 data-testid="filter-multiple-systems-btn"
-                size="xs"
-                variant="outline"
               >
-                Filter{" "}
+                Filter
                 {totalFilters > 0 ? (
-                  <Tag borderRadius="full" size="sm" ml={2}>
-                    {" "}
-                    {totalFilters}{" "}
-                  </Tag>
+                  <Tag className="mr-0">{totalFilters}</Tag>
                 ) : null}
               </Button>
             </span>
@@ -420,7 +397,7 @@ export const AddMultipleSystems = ({ redirectRoute }: Props) => {
       />
       <PaginationBar
         pageSizes={PAGE_SIZES}
-        totalRows={totalRows}
+        totalRows={totalRows || 0}
         onPreviousPageClick={onPreviousPageClick}
         isPreviousPageDisabled={isPreviousPageDisabled}
         onNextPageClick={onNextPageClick}

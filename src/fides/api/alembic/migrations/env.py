@@ -1,9 +1,12 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from loguru import logger as log
+from sqlalchemy import create_engine, pool, text
 
+from fides.api.db.database import include_object
 from fides.api.util.logger import setup as setup_fidesapi_logger
+from fides.common.engine_creators import SYNC_DIALECT_URL, db_cred_provider, make_sync_creator
 from fides.config import CONFIG
 
 # this is the Alembic Config object, which provides
@@ -42,13 +45,21 @@ def run_migrations_offline():
     script output.
 
     """
-    url = fides_config.database.sync_database_uri
+    url = db_cred_provider.get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
+
+    if fides_config.database.migration_role:
+        log.warning(
+            "FIDES__DATABASE__MIGRATION_ROLE is set but has no effect in offline "
+            f"migration mode. Prepend 'SET ROLE \"{fides_config.database.migration_role}\";' "
+            "to the generated SQL script manually if needed."
+        )
 
     with context.begin_transaction():
         context.run_migrations()
@@ -61,16 +72,28 @@ def run_migrations_online():
     and associate a connection with the context.
 
     """
-    configuration = alembic_config.get_section(alembic_config.config_ini_section)
-    configuration["sqlalchemy.url"] = fides_config.database.sync_database_uri
-    connectable = engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
+    connectable = create_engine(
+        SYNC_DIALECT_URL,
+        creator=make_sync_creator(),
         poolclass=pool.NullPool,
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        if fides_config.database.migration_role:
+            # SET ROLE does not support bind parameters; use standard SQL identifier
+            # quoting (double-quotes, inner double-quotes escaped by doubling) to
+            # safely handle role names. The value is operator-supplied config, not
+            # end-user input.
+            escaped_role = fides_config.database.migration_role.replace('"', '""')
+            quoted_role = f'"{escaped_role}"'
+            connection.execute(text(f"SET ROLE {quoted_role}"))
+            log.info(f"Migration role set to: {fides_config.database.migration_role!r}")
+
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+        )
 
         with context.begin_transaction():
             context.run_migrations()

@@ -1,24 +1,28 @@
-import { Button, Heading, HStack, Stack } from "fidesui";
-import { Form, Formik } from "formik";
-import { useState } from "react";
-import * as Yup from "yup";
+import {
+  Button,
+  Card,
+  Flex,
+  Form,
+  Input,
+  Select,
+  Typography,
+  useMessage,
+} from "fidesui";
+import { useEffect, useState } from "react";
 
 import { useAppDispatch, useAppSelector } from "~/app/hooks";
-import { CustomSelect, CustomTextInput } from "~/features/common/form/inputs";
-import {
-  isErrorResult,
-  ParsedError,
-  parseError,
-} from "~/features/common/helpers";
-import { useAlert } from "~/features/common/hooks";
+import DocsLink from "~/features/common/DocsLink";
+import { ParsedError, parseError } from "~/features/common/helpers";
 import {
   GenerateResponse,
   GenerateTypes,
   System,
   ValidTargets,
 } from "~/types/api";
-import { RTKErrorResult } from "~/types/errors";
+import { RTKErrorResult } from "~/types/errors/api";
 
+import ErrorPage from "../common/errors/ErrorPage";
+import { NextBreadcrumb } from "../common/nav/NextBreadcrumb";
 import {
   changeStep,
   selectOrganizationFidesKey,
@@ -27,7 +31,6 @@ import {
 import { AWS_REGION_OPTIONS } from "./constants";
 import { isSystem } from "./helpers";
 import { useGenerateMutation } from "./scanner.slice";
-import ScannerError from "./ScannerError";
 import ScannerLoading from "./ScannerLoading";
 
 const initialValues = {
@@ -39,48 +42,37 @@ const initialValues = {
 
 type FormValues = typeof initialValues;
 
-const ValidationSchema = Yup.object().shape({
-  aws_access_key_id: Yup.string()
-    .required()
-    .trim()
-    .matches(/^\w+$/, "Cannot contain spaces or special characters")
-    .label("Access Key ID"),
-  aws_secret_access_key: Yup.string()
-    .required()
-    .trim()
-    .matches(/^[^\s]+$/, "Cannot contain spaces")
-    .label("Secret"),
-  aws_session_token: Yup.string()
-    .optional()
-    .trim()
-    .matches(/^[^\s]+$/, "Cannot contain spaces")
-    .label("Session Token (for temporary credentials)"),
-  region_name: Yup.string().required().label("Default Region"),
-});
-
-const AuthenticateAwsForm = () => {
+export const AuthenticateAwsForm = () => {
   const organizationKey = useAppSelector(selectOrganizationFidesKey);
   const dispatch = useAppDispatch();
-  const { successAlert } = useAlert();
+  const message = useMessage();
+  const [form] = Form.useForm<FormValues>();
 
   const [scannerError, setScannerError] = useState<ParsedError>();
+
+  // Track submittable state
+  const allValues = Form.useWatch([], form);
+  const [submittable, setSubmittable] = useState(false);
+
+  useEffect(() => {
+    const checkValidity = async () => {
+      try {
+        await form.validateFields({ validateOnly: true });
+        setSubmittable(true);
+      } catch {
+        setSubmittable(false);
+      }
+    };
+    checkValidity();
+  }, [form, allValues]);
 
   const handleResults = (results: GenerateResponse["generate_results"]) => {
     const systems: System[] = (results ?? []).filter(isSystem);
     dispatch(setSystemsForReview(systems));
     dispatch(changeStep());
-    successAlert(
+    message.success(
       `Your scan was successfully completed, with ${systems.length} new systems detected!`,
-      `Scan Successfully Completed`,
-      { isClosable: true }
     );
-  };
-  const handleError = (error: RTKErrorResult["error"]) => {
-    const parsedError = parseError(error, {
-      status: 500,
-      message: "Our system encountered a problem while connecting to AWS.",
-    });
-    setScannerError(parsedError);
   };
   const handleCancel = () => {
     dispatch(changeStep(2));
@@ -88,109 +80,178 @@ const AuthenticateAwsForm = () => {
 
   const [generate, { isLoading }] = useGenerateMutation();
 
-  const handleSubmit = async (values: FormValues) => {
+  const onFinish = async (values: FormValues) => {
     setScannerError(undefined);
 
-    const result = await generate({
-      organization_key: organizationKey,
-      generate: {
-        config: values,
-        target: ValidTargets.AWS,
-        type: GenerateTypes.SYSTEMS,
-      },
-    });
+    try {
+      const result = await generate({
+        organization_key: organizationKey,
+        generate: {
+          config: values,
+          target: ValidTargets.AWS,
+          type: GenerateTypes.SYSTEMS,
+        },
+      }).unwrap();
 
-    if (isErrorResult(result)) {
-      handleError(result.error);
-    } else {
-      handleResults(result.data.generate_results);
+      handleResults(result.generate_results);
+    } catch (error) {
+      const parsedError = parseError(error as RTKErrorResult["error"], {
+        status: 500,
+        message: "Our system encountered a problem while connecting to AWS.",
+      });
+      setScannerError(parsedError);
     }
   };
 
   return (
-    <Formik
-      initialValues={initialValues}
-      validationSchema={ValidationSchema}
-      onSubmit={handleSubmit}
-    >
-      {({ isValid, isSubmitting, dirty }) => (
-        <Form data-testid="authenticate-aws-form">
-          <Stack spacing={10}>
-            {isSubmitting ? (
-              <ScannerLoading
-                title="System scanning in progress"
-                onClose={handleCancel}
-              />
-            ) : null}
+    <Flex vertical gap="large">
+      <NextBreadcrumb
+        items={[
+          {
+            title: "Add systems",
+            href: "",
+            onClick: (e) => {
+              e.preventDefault();
+              handleCancel();
+            },
+          },
+          { title: "Authenticate AWS scanner" },
+        ]}
+      />
 
-            {scannerError ? (
-              <ScannerError error={scannerError} scanType="aws" />
-            ) : null}
-            {!isSubmitting && !scannerError ? (
-              <>
-                <Heading size="lg">Authenticate AWS Scanner</Heading>
-                <h2>
+      {isLoading && (
+        <ScannerLoading
+          title="System scanning in progress"
+          onClose={handleCancel}
+        />
+      )}
+
+      {scannerError && (
+        <>
+          <ErrorPage
+            error={scannerError}
+            defaultMessage={
+              scannerError.status === 403
+                ? "Fides was unable to scan AWS. It appears that the credentials were valid to login but they did not have adequate permission to complete the scan."
+                : "Fides was unable to scan your infrastructure. Please ensure your credentials are accurate and inspect the error log below for more details."
+            }
+            fullScreen={false}
+            showReload={false}
+          />
+          {scannerError.status === 403 && (
+            <Typography.Paragraph type="secondary" data-testid="permission-msg">
+              To fix this issue, double check that you have granted the required
+              permissions to these credentials as part of your IAM policy. If
+              you need more help in configuring IAM policies, you can read about
+              them in the{" "}
+              <DocsLink href="https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction_access-management.html">
+                AWS documentation
+              </DocsLink>
+              .
+            </Typography.Paragraph>
+          )}
+        </>
+      )}
+
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={onFinish}
+        initialValues={initialValues}
+        data-testid="authenticate-aws-form"
+      >
+        <Flex vertical gap="large">
+          {!isLoading && !scannerError && (
+            <Card>
+              <Flex vertical gap="small" className="w-full max-w-xl">
+                <Typography.Paragraph>
                   To use the scanner to inventory systems in AWS, you must first
                   authenticate to your AWS cloud by providing the following
                   information:
-                </h2>
-                <Stack>
-                  <CustomTextInput
-                    name="aws_access_key_id"
-                    label="Access Key ID"
-                    // TODO(#724): These fields should link to the AWS docs, but that requires HTML
-                    // content instead of just a string label. The message would be:
-                    // "You can find more information about creating access keys and secrets on AWS docs here."
-                    tooltip="The Access Key ID created by the cloud hosting provider."
-                    isRequired
-                  />
-                  <CustomTextInput
-                    type="password"
-                    name="aws_secret_access_key"
-                    label="Secret"
-                    // "You can find more about creating access keys and secrets on AWS docs here."
-                    tooltip="The secret associated with the Access Key ID used for authentication."
-                    isRequired
-                  />
-                  <CustomTextInput
-                    type="password"
-                    name="aws_session_token"
-                    label="Session Token"
-                    // "You can find more about creating access keys and secrets on AWS docs here."
-                    tooltip="The session token when using temporary credentials."
-                  />
-                  <CustomSelect
-                    name="region_name"
-                    label="AWS Region"
-                    // "You can learn more about regions in AWS docs here."
-                    tooltip="The geographic region of the cloud hosting provider you would like to scan."
+                </Typography.Paragraph>
+                <Form.Item
+                  name="aws_access_key_id"
+                  label="Access Key ID"
+                  tooltip="The Access Key ID created by the cloud hosting provider."
+                  rules={[
+                    { required: true, message: "Access Key ID is required" },
+                    {
+                      pattern: /^\w+$/,
+                      message: "Cannot contain spaces or special characters",
+                    },
+                  ]}
+                >
+                  <Input data-testid="input-aws_access_key_id" />
+                </Form.Item>
+                <Form.Item
+                  name="aws_secret_access_key"
+                  label="Secret"
+                  tooltip="The secret associated with the Access Key ID used for authentication."
+                  rules={[
+                    { required: true, message: "Secret is required" },
+                    {
+                      pattern: /^[^\s]+$/,
+                      message: "Cannot contain spaces",
+                    },
+                  ]}
+                >
+                  <Input.Password data-testid="input-aws_secret_access_key" />
+                </Form.Item>
+                <Form.Item
+                  name="aws_session_token"
+                  label="Session Token"
+                  tooltip="The session token when using temporary credentials."
+                  rules={[
+                    {
+                      validator: (_, value) => {
+                        if (!value || !/\s/.test(value)) {
+                          return Promise.resolve();
+                        }
+                        return Promise.reject(
+                          new Error("Cannot contain spaces"),
+                        );
+                      },
+                    },
+                  ]}
+                >
+                  <Input.Password data-testid="input-aws_session_token" />
+                </Form.Item>
+                <Form.Item
+                  name="region_name"
+                  label="AWS Region"
+                  tooltip="The geographic region of the cloud hosting provider you would like to scan."
+                  rules={[
+                    { required: true, message: "Default Region is required" },
+                  ]}
+                >
+                  <Select
+                    aria-label="AWS Region"
                     options={AWS_REGION_OPTIONS}
-                    isRequired
+                    placeholder="Select a region"
+                    data-testid="controlled-select-region_name"
                   />
-                </Stack>
-              </>
-            ) : null}
-            {!isSubmitting ? (
-              <HStack>
-                <Button variant="outline" onClick={handleCancel}>
-                  Cancel
-                </Button>
+                </Form.Item>
+              </Flex>
+            </Card>
+          )}
+          {!isLoading && (
+            <Flex gap="small" justify="end">
+              <Button onClick={handleCancel}>Cancel</Button>
+              {!scannerError && (
                 <Button
-                  type="submit"
-                  variant="primary"
-                  isDisabled={!dirty || !isValid}
-                  isLoading={isLoading}
+                  htmlType="submit"
+                  type="primary"
+                  disabled={!form.isFieldsTouched() || !submittable}
+                  loading={isLoading}
                   data-testid="submit-btn"
                 >
-                  Save and Continue
+                  Save and continue
                 </Button>
-              </HStack>
-            ) : null}
-          </Stack>
-        </Form>
-      )}
-    </Formik>
+              )}
+            </Flex>
+          )}
+        </Flex>
+      </Form>
+    </Flex>
   );
 };
-
-export default AuthenticateAwsForm;

@@ -1,20 +1,20 @@
 import {
-  Accordion,
-  AccordionButton,
-  AccordionIcon,
-  AccordionItem,
-  AccordionItemProps,
-  AccordionPanel,
-  Box,
-  Heading,
+  Button,
+  ChakraAccordion as Accordion,
+  ChakraAccordionButton as AccordionButton,
+  ChakraAccordionIcon as AccordionIcon,
+  ChakraAccordionItem as AccordionItem,
+  ChakraAccordionItemProps as AccordionItemProps,
+  ChakraAccordionPanel as AccordionPanel,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraHeading as Heading,
+  Modal,
 } from "fidesui";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
 import CheckboxTree from "~/features/common/CheckboxTree";
-import StandardDialog, {
-  StandardDialogProps,
-} from "~/features/common/modals/StandardDialog";
 import { TreeNode } from "~/features/common/types";
 import {
   selectDataSubjects,
@@ -24,28 +24,31 @@ import {
   selectDataUses,
   useGetAllDataUsesQuery,
 } from "~/features/data-use/data-use.slice";
-import { transformTaxonomyEntityToNodes } from "~/features/taxonomy/helpers";
 import {
   selectDataCategories,
   useGetAllDataCategoriesQuery,
-} from "~/features/taxonomy/taxonomy.slice";
+} from "~/features/taxonomy/data-category.slice";
+import { transformTaxonomyEntityToNodes } from "~/features/taxonomy/helpers";
 
-export type DatamapReportFilterSelections = {
-  dataUses: string[];
-  dataSubjects: string[];
-  dataCategories: string[];
-};
+import { DatamapReportFilterSelections } from "../types";
 
-interface DatamapReportFilterModalProps
-  extends Omit<StandardDialogProps, "children" | "onConfirm"> {
+interface DatamapReportFilterModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  columnNameMap: Record<string, string>;
+  selectedFilters: DatamapReportFilterSelections;
   onFilterChange: (selectedFilters: DatamapReportFilterSelections) => void;
 }
 
+interface FilterModalAccordionItemProps extends AccordionItemProps {
+  label: string;
+  children: React.ReactNode;
+}
 const FilterModalAccordionItem = ({
   label,
   children,
   ...props
-}: { label: string } & AccordionItemProps): JSX.Element => (
+}: FilterModalAccordionItemProps) => (
   <AccordionItem {...props}>
     <Heading>
       <AccordionButton
@@ -63,33 +66,54 @@ const FilterModalAccordionItem = ({
 );
 
 export const DatamapReportFilterModal = ({
-  onClose,
+  isOpen,
+  columnNameMap,
+  selectedFilters,
   onFilterChange,
-  ...props
+  onClose,
 }: DatamapReportFilterModalProps): JSX.Element => {
   useGetAllDataUsesQuery();
   useGetAllDataSubjectsQuery();
   useGetAllDataCategoriesQuery();
 
+  const {
+    dataUses: selectedDataUses,
+    dataSubjects: selectedDataSubjects,
+    dataCategories: selectedDataCategories,
+  } = selectedFilters;
+
   const dataUses = useAppSelector(selectDataUses);
   const dataSubjects = useAppSelector(selectDataSubjects);
   const dataCategories = useAppSelector(selectDataCategories);
 
-  const [checkedUses, setCheckedUses] = useState<string[]>([]);
-  const [checkedSubjects, setCheckedSubjects] = useState<string[]>([]);
-  const [checkedCategories, setCheckedCategories] = useState<string[]>([]);
+  const [checkedUses, setCheckedUses] = useState<string[]>(selectedDataUses);
+  const [checkedSubjects, setCheckedSubjects] =
+    useState<string[]>(selectedDataSubjects);
+  const [checkedCategories, setCheckedCategories] = useState<string[]>(
+    selectedDataCategories,
+  );
+
+  useEffect(() => {
+    setCheckedUses(selectedDataUses);
+  }, [selectedDataUses]);
+  useEffect(() => {
+    setCheckedSubjects(selectedDataSubjects);
+  }, [selectedDataSubjects]);
+  useEffect(() => {
+    setCheckedCategories(selectedDataCategories);
+  }, [selectedDataCategories]);
 
   const dataUseNodes: TreeNode[] = useMemo(
     () => transformTaxonomyEntityToNodes(dataUses),
-    [dataUses]
+    [dataUses],
   );
   const dataSubjectNodes: TreeNode[] = useMemo(
     () => transformTaxonomyEntityToNodes(dataSubjects),
-    [dataSubjects]
+    [dataSubjects],
   );
   const dataCategoryNodes: TreeNode[] = useMemo(
     () => transformTaxonomyEntityToNodes(dataCategories),
-    [dataCategories]
+    [dataCategories],
   );
 
   const resetFilters = () => {
@@ -112,19 +136,26 @@ export const DatamapReportFilterModal = ({
     });
     onClose();
   };
+
   return (
-    <StandardDialog
-      heading="Filter Datamap Report"
-      {...props}
-      onCancel={resetFilters}
-      onConfirm={handleFilterChange}
-      onClose={onClose}
-      cancelButtonText="Reset filters"
-      continueButtonText="Done"
+    <Modal
+      title="Filter Datamap Report"
+      open={isOpen}
+      onCancel={onClose}
+      centered
+      destroyOnHidden
       data-testid="datamap-report-filter-modal"
+      footer={
+        <Flex gap={3} sx={{ "& button": { width: "100%" } }}>
+          <Button onClick={resetFilters}>Reset filters</Button>
+          <Button type="primary" onClick={handleFilterChange}>
+            Done
+          </Button>
+        </Flex>
+      }
     >
       <Accordion allowToggle>
-        <FilterModalAccordionItem label="Data uses">
+        <FilterModalAccordionItem label={columnNameMap.data_uses}>
           <CheckboxTree
             nodes={dataUseNodes}
             selected={checkedUses}
@@ -132,7 +163,7 @@ export const DatamapReportFilterModal = ({
             data-testid="filter-modal-checkbox-tree-uses"
           />
         </FilterModalAccordionItem>
-        <FilterModalAccordionItem label="Data categories">
+        <FilterModalAccordionItem label={columnNameMap.data_categories}>
           <CheckboxTree
             nodes={dataCategoryNodes}
             selected={checkedCategories}
@@ -140,7 +171,7 @@ export const DatamapReportFilterModal = ({
             data-testid="filter-modal-checkbox-tree-categories"
           />
         </FilterModalAccordionItem>
-        <FilterModalAccordionItem label="Data subjects">
+        <FilterModalAccordionItem label={columnNameMap.data_subjects}>
           <CheckboxTree
             nodes={dataSubjectNodes}
             selected={checkedSubjects}
@@ -149,6 +180,6 @@ export const DatamapReportFilterModal = ({
           />
         </FilterModalAccordionItem>
       </Accordion>
-    </StandardDialog>
+    </Modal>
   );
 };

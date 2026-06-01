@@ -8,7 +8,7 @@ INTEGRATION_COMPOSE_FILE = "./docker-compose.integration-tests.yml"
 INTEGRATION_POSTGRES_COMPOSE_FILE = "./docker/docker-compose.integration-postgres.yml"
 REMOTE_DEBUG_COMPOSE_FILE = "docker-compose.remote-debug.yml"
 SAMPLE_PROJECT_COMPOSE_FILE = "./src/fides/data/sample_project/docker-compose.yml"
-WITH_TEST_CONFIG = ("-f", "tests/ctl/test_config.toml")
+WITH_TEST_CONFIG = ("-f", "tests/fides/ctl/test_config.toml")
 
 COMPOSE_FILE_LIST = {
     COMPOSE_FILE,
@@ -45,9 +45,6 @@ PRERELEASE_TAG_SUFFIX = "prerelease"
 RC_TAG_SUFFIX = "rc"
 LATEST_TAG_SUFFIX = "latest"
 
-# Image names for 3rd party apps
-CYPRESS_IMAGE = "cypress/included:12.8.1"
-
 # Helpful paths
 CWD = getcwd()
 
@@ -82,6 +79,15 @@ EXEC = (
     CI_ARGS_EXEC,
     CONTAINER_NAME,
 )
+# Container already has HOME, UV_HOME, UV_PROJECT_ENVIRONMENT from Dockerfile and docker-compose.
+EXEC_UV = (
+    "docker",
+    "exec",
+    *ANALYTICS_OPT_OUT,
+    *ANALYTICS_ID_OVERRIDE,
+    CI_ARGS_EXEC,
+    CONTAINER_NAME,
+)
 EXEC_IT = (
     "docker",
     "exec",
@@ -90,6 +96,15 @@ EXEC_IT = (
     *ANALYTICS_ID_OVERRIDE,
     CI_ARGS_EXEC,
     CONTAINER_NAME,
+)
+RUN = (
+    "docker",
+    "compose",
+    "run",
+    "--rm",
+    *ANALYTICS_OPT_OUT,
+    CI_ARGS,
+    COMPOSE_SERVICE_NAME,
 )
 RUN_NO_DEPS = (
     "docker",
@@ -134,21 +149,4 @@ START_APP_WITH_EXTERNAL_POSTGRES = (
     "--wait",
     "fides",
     "postgres_example",
-)
-RUN_CYPRESS_TESTS = (
-    "docker",
-    "run",
-    "-t",
-    "--network=host",
-    "-v",
-    f"{CWD}/clients/cypress-e2e:/cypress-e2e",
-    "-w",
-    "/cypress-e2e",
-    "--entrypoint=",
-    "-e",
-    "CYPRESS_VIDEO=false",
-    CYPRESS_IMAGE,
-    "/bin/bash",
-    "-c",
-    "npm install && cypress run",
 )

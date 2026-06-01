@@ -1,0 +1,316 @@
+import {
+  Alert,
+  Button,
+  Flex,
+  List,
+  Tag,
+  Tooltip,
+  Typography,
+  useMessage,
+  useModal,
+} from "fidesui";
+import { useCallback, useEffect, useState } from "react";
+
+import {
+  useGetManualTaskConfigQuery,
+  useUpdateDependencyConditionsMutation,
+} from "~/features/datastore-connections/connection-manual-tasks.slice";
+import { ConditionLeaf } from "~/types/api";
+
+import AddEditConditionModal from "./AddEditConditionModal";
+import { operatorLabels } from "./constants";
+import { useConfiguredRequestTypes } from "./hooks/useConfiguredRequestTypes";
+import { useSaveConditions } from "./hooks/useSaveConditions";
+import { formatConditionValue, formatFieldDisplay } from "./utils";
+
+const { Paragraph, Text } = Typography;
+
+interface TaskConditionsTabProps {
+  connectionKey: string;
+}
+
+const TaskConditionsTab = ({ connectionKey }: TaskConditionsTabProps) => {
+  const [conditions, setConditions] = useState<ConditionLeaf[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCondition, setEditingCondition] =
+    useState<ConditionLeaf | null>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+  const message = useMessage();
+  const modal = useModal();
+
+  const { isConsentOnly, hasConsentTasks, hasAccessOrErasureTasks } =
+    useConfiguredRequestTypes({ connectionKey });
+
+  const {
+    data: manualTaskConfig,
+    isLoading,
+    error,
+    refetch,
+  } = useGetManualTaskConfigQuery(
+    { connectionKey },
+    {
+      skip: !connectionKey,
+    },
+  );
+
+  const [updateConditions] = useUpdateDependencyConditionsMutation();
+  const saveConditions = useSaveConditions(
+    connectionKey,
+    updateConditions,
+    refetch,
+  );
+
+  // Extract conditions from dependency_conditions field in ManualTaskResponse
+  useEffect(() => {
+    if (
+      manualTaskConfig?.dependency_conditions &&
+      manualTaskConfig.dependency_conditions.length > 0
+    ) {
+      const firstGroup = manualTaskConfig.dependency_conditions[0];
+      // Filter to only ConditionLeaf items (not nested groups)
+      const leafConditions =
+        "conditions" in firstGroup
+          ? firstGroup.conditions.filter(
+              (condition): condition is ConditionLeaf =>
+                "field_address" in condition && "operator" in condition,
+            )
+          : [];
+      setConditions(leafConditions);
+    } else {
+      setConditions([]);
+    }
+  }, [manualTaskConfig]);
+
+  const handleOpenAddModal = useCallback(() => {
+    setEditingCondition(null);
+    setEditingIndex(null);
+    setIsModalOpen(true);
+  }, []);
+
+  const handleOpenEditModal = useCallback(
+    (index: number, condition: ConditionLeaf) => {
+      setEditingCondition(condition);
+      setEditingIndex(index);
+      setIsModalOpen(true);
+    },
+    [],
+  );
+
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+    setEditingCondition(null);
+    setEditingIndex(null);
+  }, []);
+
+  const handleConditionSaved = useCallback(
+    async (newCondition: ConditionLeaf): Promise<void> => {
+      const originalConditions = conditions; // Capture current state
+      let updatedConditions: ConditionLeaf[] = [];
+
+      if (editingIndex !== null) {
+        // Update existing condition
+        updatedConditions = originalConditions.map((condition, i) =>
+          i === editingIndex ? newCondition : condition,
+        );
+      } else {
+        // Add new condition
+        updatedConditions = [...originalConditions, newCondition];
+      }
+
+      // Update local state optimistically
+      setConditions(updatedConditions);
+
+      // Auto-save to backend
+      try {
+        await saveConditions(updatedConditions);
+        message.success(
+          editingIndex !== null
+            ? "Condition updated successfully!"
+            : "Condition added successfully!",
+        );
+        // Close modal is now handled by the modal itself on success
+      } catch (err) {
+        // Revert to captured original state
+        setConditions(originalConditions);
+        // Re-throw the error to be handled by the modal
+        throw err;
+      }
+    },
+    [conditions, editingIndex, saveConditions, message],
+  );
+
+  const handleDeleteCondition = useCallback(
+    (index: number, condition: ConditionLeaf) => {
+      modal.confirm({
+        title: "Delete condition",
+        content: (
+          <Text className="text-gray-500">
+            Are you sure you want to delete the condition for &ldquo;
+            {condition.field_address}&rdquo;? This action cannot be undone.
+          </Text>
+        ),
+        okText: "Delete",
+        centered: true,
+        className: "delete-condition-modal",
+        onOk: async () => {
+          const originalConditions = conditions; // Capture current state
+          const updatedConditions = originalConditions.filter(
+            (_, i) => i !== index,
+          );
+
+          // Update local state optimistically
+          setConditions(updatedConditions);
+
+          // Auto-save to backend
+          try {
+            await saveConditions(updatedConditions);
+            message.success("Condition deleted successfully!");
+          } catch (err) {
+            message.error("Failed to delete condition. Please try again.");
+            // Revert to captured original state
+            setConditions(originalConditions);
+          }
+        },
+      });
+    },
+    [modal, conditions, saveConditions, message],
+  );
+
+  if (isLoading) {
+    return (
+      <div className="py-4">
+        <Text className="text-gray-500">Loading conditions...</Text>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="py-4">
+        <Text className="text-red-500">
+          Failed to load conditions. Please refresh the page and try again.
+        </Text>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div>
+        <Typography.Title level={5}>Conditional task creation</Typography.Title>
+        <Paragraph className="mt-2 w-2/3 text-gray-600">
+          Configure conditions that must be met before a task is created. If no
+          conditions are set, manual tasks will be created for every incoming
+          privacy request of the corresponding type (access or erasure).
+        </Paragraph>
+        <Paragraph className="mt-2 text-gray-600">
+          <Text strong>
+            All conditions must be met for the task to be created.
+          </Text>
+        </Paragraph>
+      </div>
+
+      {/* Warning banner for mixed consent + access/erasure configurations */}
+      {hasConsentTasks && hasAccessOrErasureTasks && (
+        <Alert
+          title="Consent task limitations"
+          description="Dataset field conditions and some privacy request fields (like due date) are not evaluated for consent manual tasks. These conditions will only apply to access and erasure tasks."
+          type="warning"
+          showIcon
+          className="mb-4"
+          data-testid="consent-conditions-warning"
+        />
+      )}
+
+      <div className="mb-4 flex items-center justify-end gap-2">
+        <Button
+          type="primary"
+          onClick={handleOpenAddModal}
+          data-testid="add-condition-btn"
+        >
+          Add condition
+        </Button>
+      </div>
+
+      <List
+        dataSource={conditions}
+        data-testid="conditions-list"
+        locale={{
+          emptyText: (
+            <div className="py-8 text-center">
+              <Text type="secondary">
+                No conditions configured. Manual tasks will be created for all
+                privacy requests.
+              </Text>
+            </div>
+          ),
+        }}
+        renderItem={(condition: ConditionLeaf, index: number) => (
+          <List.Item
+            key={index}
+            aria-label={`Condition: ${formatFieldDisplay(condition.field_address)} ${operatorLabels[condition.operator]}${formatConditionValue(condition) ? ` ${formatConditionValue(condition)}` : ""}`}
+            actions={[
+              <Button
+                key="edit"
+                type="link"
+                onClick={() => handleOpenEditModal(index, condition)}
+                data-testid={`edit-condition-${index}-btn`}
+                className="px-1"
+                aria-label={`Edit condition for ${condition.field_address}`}
+              >
+                Edit
+              </Button>,
+              <Button
+                key="delete"
+                type="link"
+                onClick={() => handleDeleteCondition(index, condition)}
+                data-testid={`delete-condition-${index}-btn`}
+                className="px-1"
+                aria-label={`Delete condition for ${condition.field_address}`}
+              >
+                Delete
+              </Button>,
+            ]}
+          >
+            <List.Item.Meta
+              title={
+                <Flex gap={8} align="center" className="font-normal">
+                  <div className="max-w-[300px]">
+                    <Tooltip title={condition.field_address}>
+                      <Text>{formatFieldDisplay(condition.field_address)}</Text>
+                    </Tooltip>
+                  </div>
+                  <Tag color="sandstone">
+                    {operatorLabels[condition.operator]}
+                  </Tag>
+                  <div className="max-w-[300px]">
+                    {formatConditionValue(condition) && (
+                      <Text
+                        ellipsis={{ tooltip: formatConditionValue(condition) }}
+                      >
+                        {formatConditionValue(condition)}
+                      </Text>
+                    )}
+                  </div>
+                </Flex>
+              }
+            />
+          </List.Item>
+        )}
+        className="mb-4"
+      />
+
+      <AddEditConditionModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onConditionSaved={handleConditionSaved}
+        editingCondition={editingCondition}
+        connectionKey={connectionKey}
+        isConsentOnly={isConsentOnly}
+      />
+    </div>
+  );
+};
+
+export default TaskConditionsTab;

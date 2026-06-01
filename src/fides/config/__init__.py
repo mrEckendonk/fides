@@ -5,28 +5,34 @@ config sections into a single config object.
 
 from functools import lru_cache
 from os import getenv
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Type, Union
 
 import toml
 from loguru import logger as log
-from pydantic import Field
-from pydantic.class_validators import _FUNCS
-from pydantic.env_settings import SettingsSourceCallable
+from pydantic import ConfigDict, Field, model_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from fides.common.utils import echo_red
 
 from .admin_ui_settings import AdminUISettings
-from .celery_settings import CelerySettings
+from .celery_settings import CelerySettings, merge_celery_environment
 from .cli_settings import CLISettings
 from .consent_settings import ConsentSettings
 from .credentials_settings import merge_credentials_environment
 from .database_settings import DatabaseSettings
+from .duplicate_detection_settings import DuplicateDetectionSettings
 from .execution_settings import ExecutionSettings
 from .fides_settings import FidesSettings
 from .helpers import handle_deprecated_env_variables, handle_deprecated_fields
 from .logging_settings import LoggingSettings
 from .notification_settings import NotificationSettings
+from .privacy_center_settings import PrivacyCenterSettings
 from .redis_settings import RedisSettings
+from .secrets_settings import SecretsSettings
 from .security_settings import SecuritySettings
 from .user_settings import UserSettings
 from .utils import (
@@ -75,25 +81,54 @@ class FidesConfig(FidesSettings):
         description="This is a special section that is used to store arbitrary key/value pairs to be used as credentials."
     )
     database: DatabaseSettings
+    privacy_request_duplicate_detection: DuplicateDetectionSettings
     execution: ExecutionSettings
     logging: LoggingSettings
     notifications: NotificationSettings
     redis: RedisSettings
+    privacy_center: PrivacyCenterSettings
+    secrets: SecretsSettings
     security: SecuritySettings
     user: UserSettings
 
-    class Config:  # pylint: disable=C0115
-        case_sensitive = True
+    model_config = SettingsConfigDict(case_sensitive=True)
 
-        @classmethod
-        def customise_sources(
-            cls,
-            init_settings: SettingsSourceCallable,
-            env_settings: SettingsSourceCallable,
-            file_secret_settings: SettingsSourceCallable,
-        ) -> Tuple[SettingsSourceCallable, ...]:
-            """Set environment variables to take precedence over init values."""
-            return env_settings, init_settings, file_secret_settings
+    @model_validator(mode="after")
+    def _validate_database_credential_secret_names(self) -> "FidesConfig":
+        """Validate database credential secret IDs against the secrets provider."""
+        if self.secrets.provider == "static":
+            if self.database.credential_secret_name:
+                raise ValueError(
+                    f"database.credential_secret_name is set ({self.database.credential_secret_name!r}) "
+                    "but secrets.provider is 'static'. Either remove the secret ID "
+                    "or set secrets.provider to 'aws_secrets_manager'."
+                )
+            if self.database.readonly_credential_secret_name:
+                raise ValueError(
+                    f"database.readonly_credential_secret_name is set ({self.database.readonly_credential_secret_name!r}) "
+                    "but secrets.provider is 'static'. Either remove the secret ID "
+                    "or set secrets.provider to 'aws_secrets_manager'."
+                )
+        else:
+            if not self.database.credential_secret_name:
+                raise ValueError(
+                    f"secrets.provider is {self.secrets.provider!r} but "
+                    "database.credential_secret_name is not set. "
+                    "Provide the secret name/ARN containing database credentials."
+                )
+        return self
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """Set environment variables to take precedence over init values."""
+        return env_settings, init_settings, file_secret_settings
 
     def log_all_config_values(self) -> None:
         """Output DEBUG logs of all the config values."""
@@ -107,8 +142,9 @@ class FidesConfig(FidesSettings):
             self.security,
             self.execution,
             self.admin_ui,
+            self.privacy_center,
         ]:
-            for key, value in settings.dict().items():  # type: ignore
+            for key, value in settings.model_dump(mode="json").items():  # type: ignore
                 log.debug(
                     f"Using config: {settings.Config.env_prefix}{key.upper()} = {value}",  # type: ignore
                 )
@@ -120,7 +156,7 @@ def censor_config(config: Union[FidesConfig, Dict[str, Any]]) -> Dict[str, Any]:
     strip out any keys not specified in the `CONFIG_KEY_ALLOWLIST` above.
     """
     if not isinstance(config, Dict):
-        as_dict = config.dict()
+        as_dict = config.model_dump(mode="json")
     else:
         as_dict = config
     filtered: Dict[str, Any] = {}
@@ -129,7 +165,7 @@ def censor_config(config: Union[FidesConfig, Dict[str, Any]]) -> Dict[str, Any]:
             data = as_dict[key]
             filtered[key] = {}
             for field in value:
-                if field in data:
+                if data and field in data:
                     filtered[key][field] = data[field]
 
     return filtered
@@ -148,22 +184,31 @@ def build_config(config_dict: Dict[str, Any]) -> FidesConfig:
     config_dict = handle_deprecated_fields(config_dict)
     config_dict = handle_deprecated_env_variables(config_dict)
 
+    # Logic for merging additional Celery environment variables before validation.
+    # This allows arbitrary Celery configuration via FIDES__CELERY__* env vars,
+    # not just the explicitly defined fields in CelerySettings.
+    # Environment variables override TOML file values.
+    config_dict["celery"] = merge_celery_environment(config_dict.get("celery", {}))
+
     settings_map: Dict[str, Any] = {
         "admin_ui": AdminUISettings,
         "celery": CelerySettings,
         "consent": ConsentSettings,
         "cli": CLISettings,
         "database": DatabaseSettings,
+        "privacy_request_duplicate_detection": DuplicateDetectionSettings,
         "execution": ExecutionSettings,
         "logging": LoggingSettings,
         "notifications": NotificationSettings,
+        "privacy_center": PrivacyCenterSettings,
         "redis": RedisSettings,
+        "secrets": SecretsSettings,
         "security": SecuritySettings,
         "user": UserSettings,
     }
 
     for key, value in settings_map.items():
-        settings_map[key] = value.parse_obj(config_dict.get(key, {}))
+        settings_map[key] = value.model_validate(config_dict.get(key, {}))
 
     # Logic for populating the user-defined credentials sub-settings.
     # this is done to allow overrides without typed pydantic models
@@ -190,10 +235,6 @@ def get_config(config_path_override: str = "", verbose: bool = False) -> FidesCo
     This will fail if the first encountered configuration file is invalid.
     """
 
-    # This prevents a Pydantic validator reuse error. For context see
-    # https://github.com/streamlit/streamlit/issues/3218
-    _FUNCS.clear()
-
     env_config_path = getenv(DEFAULT_CONFIG_PATH_ENV_VAR)
     config_path = config_path_override or env_config_path or DEFAULT_CONFIG_PATH
 
@@ -201,7 +242,7 @@ def get_config(config_path_override: str = "", verbose: bool = False) -> FidesCo
         settings = toml.load(config_path)
         config = build_config(config_dict=settings)
         if verbose:
-            print(f"> Loaded config from: {config_path}")
+            log.info(f"Loaded config from: {config_path}")
         return config
     except FileNotFoundError:
         pass
@@ -217,12 +258,18 @@ def get_config(config_path_override: str = "", verbose: bool = False) -> FidesCo
 
 def check_required_webserver_config_values(config: FidesConfig) -> None:
     """Check for required config values and print a user-friendly error message."""
+    required_security_keys = [
+        "app_encryption_key",
+        "oauth_root_client_id",
+        "oauth_root_client_secret",
+    ]
+
+    # key_encryption_key is required when using the local provider
+    if config.security.key_provider == "local":
+        required_security_keys.append("key_encryption_key")
+
     required_config_dict = {
-        "security": [
-            "app_encryption_key",
-            "oauth_root_client_id",
-            "oauth_root_client_secret",
-        ]
+        "security": required_security_keys,
     }
 
     missing_required_config_vars = []
@@ -243,7 +290,7 @@ def check_required_webserver_config_values(config: FidesConfig) -> None:
             echo_red(f"- {missing_value}")
         echo_red(
             "\nVisit the Fides deployment documentation for more information: "
-            "https://docs.ethyca.com/fides/deployment"
+            "https://ethyca.com/docs/dev-docs/configuration/deployment"
         )
 
         raise SystemExit(1)

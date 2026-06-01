@@ -1,59 +1,411 @@
 import { formatDate } from "common/utils";
 import {
-  Box,
-  Table,
-  TableContainer,
-  Tbody,
-  Td,
-  Text,
-  Th,
-  Thead,
-  Tr,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraTable as Table,
+  ChakraTableContainer as TableContainer,
+  ChakraTbody as Tbody,
+  ChakraTd as Td,
+  ChakraText as Text,
+  ChakraTh as Th,
+  ChakraThead as Thead,
+  ChakraTr as Tr,
+  CUSTOM_TAG_COLOR,
+  Icons,
+  Tag,
+  Tooltip,
 } from "fidesui";
-import { ExecutionLog, ExecutionLogStatus } from "privacy-requests/types";
+import {
+  ExecutionLog,
+  ExecutionLogStatus,
+  ExecutionLogStatusColors,
+  ExecutionLogStatusLabels,
+  PrivacyRequestEntity,
+} from "privacy-requests/types";
+import React from "react";
+
+import { useSaaSVersionModal } from "~/features/connector-templates/hooks/useSaaSVersionModal";
+import { ActionType } from "~/types/api";
+
+import styles from "./EventLog.module.scss";
+
+/**
+ * Unwraps a Python bytes literal (e.g. b'{"key":"val"}') produced by
+ * str(response.content), returning the inner string. Returns the original
+ * value unchanged if it doesn't match that format.
+ */
+const unwrapPythonBytesLiteral = (value: string): string => {
+  const match = value.match(/^b'([\s\S]*)'$/);
+  if (match) {
+    return match[1].replace(/\\'/g, "'");
+  }
+  return value;
+};
+
+/**
+ * Returns the user-configured extracted content from a log message, or null
+ * for system-generated messages like "success - retrieved N records".
+ * Unwraps Python bytes literals and pretty-prints JSON objects/arrays.
+ */
+const extractMessageContent = (
+  message: string | null | undefined,
+): string | null => {
+  if (!message) {
+    return null;
+  }
+  const withoutSuffix = message
+    .replace(/\s*-\s*(?:retrieved|masked|processed)\s+\d+\s+records?$/i, "")
+    .trim();
+  if (!withoutSuffix || withoutSuffix.toLowerCase() === "success") {
+    return null;
+  }
+  const unwrapped = unwrapPythonBytesLiteral(withoutSuffix);
+  try {
+    const parsed = JSON.parse(unwrapped);
+    if (parsed !== null && typeof parsed === "object") {
+      return JSON.stringify(parsed, null, 2);
+    }
+  } catch {
+    // not JSON — return as-is
+  }
+  return unwrapped;
+};
+
+const AUDIT_STATUSES_WITH_DETAILS: ExecutionLogStatus[] = [
+  ExecutionLogStatus.DENIED,
+  ExecutionLogStatus.PRE_APPROVAL_WEBHOOK_TRIGGERED,
+  ExecutionLogStatus.PRE_APPROVAL_ELIGIBLE,
+  ExecutionLogStatus.PRE_APPROVAL_NOT_ELIGIBLE,
+];
+
+const isAuditStatusWithDetails = (status: ExecutionLogStatus): boolean =>
+  AUDIT_STATUSES_WITH_DETAILS.includes(status);
 
 type EventDetailsProps = {
   eventLogs: ExecutionLog[];
-  openErrorPanel: (message: string) => void;
+  allEventLogs?: ExecutionLog[]; // All event logs from all groups for total calculation
+  onDetailPanel: (message: string, status?: ExecutionLogStatus) => void;
+  privacyRequest?: PrivacyRequestEntity;
 };
 
-const EventLog = ({ eventLogs, openErrorPanel }: EventDetailsProps) => {
-  const tableItems = eventLogs?.map((detail) => (
-    <Tr
-      key={detail.updated_at}
-      _hover={{
-        backgroundColor:
-          detail.status === ExecutionLogStatus.ERROR ? "#F7FAFC" : "unset",
-      }}
-      onClick={() => {
-        if (detail.status === ExecutionLogStatus.ERROR) {
-          openErrorPanel(detail.message);
+const actionTypeToLabel = (actionType: string) => {
+  switch (actionType) {
+    case ActionType.ACCESS:
+      return "Data Retrieval";
+    case ActionType.ERASURE:
+      return "Data Deletion";
+    case ActionType.CONSENT:
+      return "Consent";
+    case ActionType.UPDATE:
+      return "Data Update";
+    default:
+      return actionType;
+  }
+};
+
+const extractRecordCount = (detail: ExecutionLog): string => {
+  // Only show record counts for completed operations
+  if (detail.status !== ExecutionLogStatus.COMPLETE) {
+    return "-";
+  }
+
+  // Only show record counts for actual dataset entries that have a collection_name
+  if (!detail.collection_name) {
+    return "-";
+  }
+
+  // Extract record count from standardized message format
+  const message = detail.message || "";
+
+  // Standardized format: "success - retrieved/masked/processed X records"
+  const standardPattern = /(?:retrieved|masked|processed)\s+(\d+)\s+records?$/i;
+  const standardMatch = message.match(standardPattern);
+  if (standardMatch) {
+    return parseInt(standardMatch[1], 10).toLocaleString();
+  }
+
+  return "-";
+};
+
+const calculateTotalRecordCount = (
+  eventLogs: ExecutionLog[],
+  actionType: string,
+): number | null => {
+  // Get all execution logs for the current action type that are complete
+  // and have collection names (actual dataset entries)
+  const relevantLogs = eventLogs.filter(
+    (log) =>
+      log.action_type === actionType &&
+      log.status === ExecutionLogStatus.COMPLETE &&
+      log.collection_name,
+  );
+
+  // Sort by updated_at descending to get latest entries first
+  const sortedLogs = relevantLogs.sort(
+    (a, b) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+  );
+
+  // Group by collection and keep only the latest entry for each
+  // to avoid multiples in case the request is reprocessed
+  const latestByCollection: { [key: string]: ExecutionLog } = {};
+  sortedLogs.forEach((log) => {
+    // Use collection_name as key since dataset_name is not available in this interface
+    const collectionKey = log.collection_name || "unknown";
+    if (!latestByCollection[collectionKey]) {
+      latestByCollection[collectionKey] = log;
+    }
+  });
+
+  // Extract record counts from the standardized message format
+  let totalCount = 0;
+  let foundAnyRecordInfo = false;
+  const recordPattern = /(?:retrieved|masked|processed)\s+(\d+)\s+records?$/i;
+
+  Object.values(latestByCollection).forEach((log) => {
+    if (log.message) {
+      const match = log.message.match(recordPattern);
+      if (match) {
+        foundAnyRecordInfo = true;
+        const count = parseInt(match[1], 10);
+        totalCount += count;
+      }
+    }
+  });
+
+  // Return null if no record count information was found
+  // Return the actual count (including 0) if we found record information
+  return foundAnyRecordInfo ? totalCount : null;
+};
+
+const extractRecordCountOrTotal = (
+  detail: ExecutionLog,
+  eventLogs: ExecutionLog[],
+  privacyRequestActionType?: string,
+): string => {
+  // For "Request finished" entries, show total record count
+  // Check if status is "finished" (audit log action) and no collection_name
+  // Cast to string since audit log status values are not in ExecutionLogStatus enum
+  if (
+    (detail.status as string) === "finished" &&
+    !detail.collection_name &&
+    privacyRequestActionType
+  ) {
+    const totalCount = calculateTotalRecordCount(
+      eventLogs,
+      privacyRequestActionType,
+    );
+
+    // Show the actual count (including 0) if we found record count information
+    // Show "-" if no record count information was found in any logs
+    return totalCount !== null ? totalCount.toLocaleString() : "-";
+  }
+
+  // For individual collection entries, use the existing logic
+  return extractRecordCount(detail);
+};
+
+const VersionBadge = ({
+  versionIdentifier,
+  onClick,
+}: {
+  versionIdentifier: string;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+}) =>
+  onClick ? (
+    <Tooltip title="View version config">
+      <button
+        type="button"
+        title="View version config"
+        className={styles.versionButton}
+        onClick={onClick}
+        data-testid="version-badge-wrapper"
+      >
+        <Tag color={CUSTOM_TAG_COLOR.DEFAULT}>v{versionIdentifier}</Tag>
+      </button>
+    </Tooltip>
+  ) : (
+    <span data-testid="version-badge-wrapper">
+      <Tag color={CUSTOM_TAG_COLOR.DEFAULT}>v{versionIdentifier}</Tag>
+    </span>
+  );
+
+const EventLog = ({
+  eventLogs,
+  allEventLogs,
+  onDetailPanel,
+  privacyRequest,
+}: EventDetailsProps) => {
+  const { openVersionModal, modal: versionModal } = useSaaSVersionModal();
+
+  // Check if any logs have collection_name OR if there's a finished entry to determine if we should show Records and Collection columns
+  const hasDatasetEntries =
+    eventLogs?.some((log) => log.collection_name) ||
+    eventLogs?.some(
+      (log) => (log.status as string) === "finished" && !log.collection_name,
+    ) ||
+    false;
+
+  // Check if we're viewing only "Request finished" entries
+  const isRequestFinishedView = eventLogs?.every(
+    (log) => (log.status as string) === "finished" && !log.collection_name,
+  );
+
+  // Get the primary action type from the privacy request policy rules
+  const privacyRequestActionType =
+    privacyRequest?.policy?.rules?.[0]?.action_type;
+
+  // Helper function to get action type label with fallback
+  const getActionTypeLabel = (
+    logActionType: string | null | undefined,
+  ): string => {
+    if (logActionType) {
+      return actionTypeToLabel(logActionType);
+    }
+    if (privacyRequestActionType) {
+      return actionTypeToLabel(privacyRequestActionType);
+    }
+    return "-";
+  };
+
+  const renderVersionCell = (log: ExecutionLog) => {
+    const { saas_version: versionIdentifier, connection_key: key } = log;
+    if (!versionIdentifier) {
+      return (
+        <Text color="gray.600" fontSize="xs" lineHeight="4" fontWeight="medium">
+          -
+        </Text>
+      );
+    }
+    return (
+      <VersionBadge
+        versionIdentifier={versionIdentifier}
+        onClick={
+          key
+            ? (e) => {
+                e.stopPropagation();
+                openVersionModal(key, versionIdentifier);
+              }
+            : undefined
         }
-      }}
-      style={{
-        cursor:
-          detail.status === ExecutionLogStatus.ERROR ? "pointer" : "unset",
-      }}
-    >
-      <Td>
-        <Text color="gray.600" fontSize="xs" lineHeight="4" fontWeight="medium">
-          {formatDate(detail.updated_at)}
-        </Text>
-      </Td>
-      <Td>
-        <Text color="gray.600" fontSize="xs" lineHeight="4" fontWeight="medium">
-          {detail.status}
-        </Text>
-      </Td>
-      <Td>
-        <Text color="gray.600" fontSize="xs" lineHeight="4" fontWeight="medium">
-          {detail.collection_name}
-        </Text>
-      </Td>
-    </Tr>
-  ));
+      />
+    );
+  };
+
+  const tableItems = eventLogs?.map((detail) => {
+    const extractedContent =
+      detail.status === ExecutionLogStatus.COMPLETE
+        ? extractMessageContent(detail.message)
+        : null;
+
+    const hasExpandableDetails =
+      detail.status === ExecutionLogStatus.ERROR ||
+      (detail.status === ExecutionLogStatus.SKIPPED && detail.message) ||
+      detail.status === ExecutionLogStatus.AWAITING_PROCESSING ||
+      detail.status === ExecutionLogStatus.POLLING ||
+      (isAuditStatusWithDetails(detail.status) && detail.message) ||
+      !!extractedContent;
+
+    return (
+      <Tr
+        key={detail.updated_at}
+        backgroundColor="unset"
+        onClick={() => {
+          if (hasExpandableDetails) {
+            onDetailPanel(extractedContent ?? detail.message, detail.status);
+          }
+        }}
+        style={{
+          cursor: hasExpandableDetails ? "pointer" : "unset",
+        }}
+        _hover={{ backgroundColor: "var(--fidesui-neutral-50)" }}
+      >
+        <Td>
+          <Text
+            color="gray.600"
+            fontSize="xs"
+            lineHeight="4"
+            fontWeight="medium"
+          >
+            {formatDate(detail.updated_at)}
+          </Text>
+        </Td>
+        <Td>
+          <Text
+            color="gray.600"
+            fontSize="xs"
+            lineHeight="4"
+            fontWeight="medium"
+          >
+            {getActionTypeLabel(detail.action_type)}
+          </Text>
+        </Td>
+        <Td>
+          <Flex alignItems="center" gap="6px">
+            {ExecutionLogStatusLabels[detail.status] ? (
+              <Tag color={ExecutionLogStatusColors[detail.status]}>
+                {ExecutionLogStatusLabels[detail.status]}
+              </Tag>
+            ) : (
+              <Text
+                color="gray.600"
+                fontSize="xs"
+                lineHeight="4"
+                fontWeight="medium"
+              >
+                {detail.status}
+              </Text>
+            )}
+            {extractedContent && (
+              <Tooltip title="Contains extracted log data">
+                <Icons.InformationFilled
+                  color="var(--fidesui-neutral-400)"
+                  size={14}
+                />
+              </Tooltip>
+            )}
+          </Flex>
+        </Td>
+        {hasDatasetEntries && (
+          <Td>
+            <Text
+              color="gray.600"
+              fontSize="xs"
+              lineHeight="4"
+              fontWeight="medium"
+            >
+              {extractRecordCountOrTotal(
+                detail,
+                allEventLogs || eventLogs,
+                privacyRequestActionType,
+              )}
+            </Text>
+          </Td>
+        )}
+        {hasDatasetEntries && !isRequestFinishedView && (
+          <>
+            <Td>
+              <Text
+                color="gray.600"
+                fontSize="xs"
+                lineHeight="4"
+                fontWeight="medium"
+              >
+                {(detail.status as string) === "finished"
+                  ? "Request completed"
+                  : detail.collection_name}
+              </Text>
+            </Td>
+            <Td>{renderVersionCell(detail)}</Td>
+          </>
+        )}
+      </Tr>
+    );
+  });
+
   return (
     <Box width="100%" paddingTop="0px" height="100%">
+      {versionModal}
       <TableContainer
         id="tableContainer"
         height="100%"
@@ -67,6 +419,7 @@ const EventLog = ({ eventLogs, openErrorPanel }: EventDetailsProps) => {
             position="sticky"
             top="0px"
             backgroundColor="white"
+            zIndex={10}
           >
             <Tr>
               <Th>
@@ -86,7 +439,7 @@ const EventLog = ({ eventLogs, openErrorPanel }: EventDetailsProps) => {
                   lineHeight="4"
                   fontWeight="medium"
                 >
-                  Status
+                  Action Type
                 </Text>
               </Th>
               <Th>
@@ -96,13 +449,49 @@ const EventLog = ({ eventLogs, openErrorPanel }: EventDetailsProps) => {
                   lineHeight="4"
                   fontWeight="medium"
                 >
-                  Collection
+                  Status
                 </Text>
               </Th>
+              {hasDatasetEntries && (
+                <Th>
+                  <Text
+                    color="black"
+                    fontSize="xs"
+                    lineHeight="4"
+                    fontWeight="medium"
+                  >
+                    Records
+                  </Text>
+                </Th>
+              )}
+              {hasDatasetEntries && !isRequestFinishedView && (
+                <>
+                  <Th>
+                    <Text
+                      color="black"
+                      fontSize="xs"
+                      lineHeight="4"
+                      fontWeight="medium"
+                    >
+                      Collection
+                    </Text>
+                  </Th>
+                  <Th>
+                    <Text
+                      color="black"
+                      fontSize="xs"
+                      lineHeight="4"
+                      fontWeight="medium"
+                    >
+                      Version
+                    </Text>
+                  </Th>
+                </>
+              )}
             </Tr>
           </Thead>
 
-          <Tbody id="tabelBody">{tableItems}</Tbody>
+          <Tbody id="tableBody">{tableItems}</Tbody>
         </Table>
       </TableContainer>
     </Box>

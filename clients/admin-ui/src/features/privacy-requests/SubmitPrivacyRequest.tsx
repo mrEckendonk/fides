@@ -1,20 +1,21 @@
 import {
   Button,
+  Dropdown,
+  Flex,
+  Icons,
   Modal,
-  ModalBody,
-  ModalContent,
-  ModalHeader,
-  ModalOverlay,
-  Stack,
-  useDisclosure,
-  useToast,
+  Space,
+  useMessage,
 } from "fidesui";
+import { useState } from "react";
 
 import { getErrorMessage } from "~/features/common/helpers";
 import InfoBox from "~/features/common/InfoBox";
-import { errorToastParams, successToastParams } from "~/features/common/toast";
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
+import { useGetFidesCloudConfigQuery } from "~/features/plus/plus.slice";
 import { usePostPrivacyRequestMutation } from "~/features/privacy-requests/privacy-requests.slice";
 import SubmitPrivacyRequestForm, {
+  CopyPrivacyRequestLinkForm,
   PrivacyRequestSubmitFormValues,
 } from "~/features/privacy-requests/SubmitPrivacyRequestForm";
 import { isErrorResult } from "~/types/errors";
@@ -32,15 +33,15 @@ const SubmitPrivacyRequestModal = ({
 }) => {
   const [postPrivacyRequestMutationTrigger] = usePostPrivacyRequestMutation();
 
-  const toast = useToast();
+  const message = useMessage();
 
   const handleSubmit = async (values: PrivacyRequestSubmitFormValues) => {
     // eslint-disable-next-line @typescript-eslint/naming-convention
     const { is_verified, ...rest } = values;
     const customFields = rest.custom_privacy_request_fields
       ? Object.entries(rest.custom_privacy_request_fields)
-          .map(([fieldName, fieldInfo]) =>
-            fieldInfo.value ? { [fieldName]: fieldInfo } : {}
+          .map(([fieldName, fieldInfo]: [string, any]) =>
+            fieldInfo.value ? { [fieldName]: fieldInfo } : {},
           )
           .reduce((acc, next) => ({ ...acc, ...next }), {})
       : undefined;
@@ -50,52 +51,119 @@ const SubmitPrivacyRequestModal = ({
     };
     const result = await postPrivacyRequestMutationTrigger([payload]);
     if (isErrorResult(result)) {
-      toast(
-        errorToastParams(
-          getErrorMessage(
-            result.error,
-            "An error occurred while creating this privacy request. Please try again"
-          )
-        )
+      message.error(
+        getErrorMessage(
+          result.error,
+          "An error occurred while creating this privacy request. Please try again",
+        ),
       );
     } else {
-      toast(successToastParams("Privacy request created"));
+      message.success("Privacy request created");
     }
     onClose();
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="2xl" isCentered>
-      <ModalOverlay />
-      <ModalContent data-testid="submit-request-modal">
-        <ModalHeader>Create privacy request</ModalHeader>
-        <ModalBody>
-          <Stack spacing={4}>
-            <InfoBox title={INFO_BOX_TITLE} text={INFO_BOX_TEXT} />
-            <SubmitPrivacyRequestForm
-              onSubmit={handleSubmit}
-              onCancel={() => onClose()}
-            />
-          </Stack>
-        </ModalBody>
-      </ModalContent>
+    <Modal
+      open={isOpen}
+      onCancel={onClose}
+      centered
+      destroyOnHidden
+      data-testid="submit-request-modal"
+      width={MODAL_SIZE.md}
+      title="Create privacy request"
+      footer={null}
+    >
+      <Flex vertical gap="large">
+        <InfoBox title={INFO_BOX_TITLE} text={INFO_BOX_TEXT} />
+        <SubmitPrivacyRequestForm
+          onSubmit={handleSubmit}
+          onCancel={() => onClose()}
+        />
+      </Flex>
+    </Modal>
+  );
+};
+
+const PrivacyRequestLinkModal = ({
+  isOpen,
+  onClose,
+  privacyCenterUrl,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  privacyCenterUrl: string;
+}) => {
+  return (
+    <Modal
+      open={isOpen}
+      onCancel={onClose}
+      centered
+      destroyOnHidden
+      title="Create a Privacy Request Link"
+      footer={null}
+    >
+      <CopyPrivacyRequestLinkForm
+        privacyCenterUrl={privacyCenterUrl}
+        onSubmit={onClose}
+        onCancel={onClose}
+      />
     </Modal>
   );
 };
 
 const SubmitPrivacyRequest = () => {
-  const { onOpen, isOpen, onClose } = useDisclosure();
+  const [state, setState] = useState<
+    "closed" | "create-link" | "submit-request"
+  >("closed");
+
+  const createLinkOpen = state === "create-link";
+  const submitRequestOpen = state === "submit-request";
+  const handleSubmitRequestOpen = () => setState("submit-request");
+  const handleCreateLinkOpen = () => setState("create-link");
+  const handleClose = () => setState("closed");
+
+  const { data } = useGetFidesCloudConfigQuery();
+  const privacyCenterUrl = (data?.privacy_center_url ?? "").trim();
+  const hasPrivacyCenterUrl = privacyCenterUrl.length > 0;
+
   return (
     <>
-      <SubmitPrivacyRequestModal isOpen={isOpen} onClose={onClose} />
-      <Button
-        colorScheme="primary"
-        size="xs"
-        onClick={onOpen}
-        data-testid="submit-request-btn"
-      >
-        Create request
-      </Button>
+      {hasPrivacyCenterUrl && (
+        <PrivacyRequestLinkModal
+          isOpen={createLinkOpen}
+          onClose={handleClose}
+          privacyCenterUrl={privacyCenterUrl}
+        />
+      )}
+      <SubmitPrivacyRequestModal
+        isOpen={submitRequestOpen}
+        onClose={handleClose}
+      />
+      <Space.Compact data-testid="submit-request-btn">
+        <Button type="primary" onClick={handleSubmitRequestOpen}>
+          Create request
+        </Button>
+        <Dropdown
+          menu={{
+            items: [
+              {
+                label: "Create request link",
+                key: "create-request-link",
+                icon: <Icons.Link />,
+                onClick: handleCreateLinkOpen,
+                disabled: !hasPrivacyCenterUrl,
+              },
+            ],
+          }}
+        >
+          <Button
+            type="primary"
+            icon={<Icons.ChevronDown />}
+            aria-label="More privacy request options"
+          />
+        </Dropdown>
+      </Space.Compact>
     </>
   );
 };

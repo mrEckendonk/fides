@@ -1,4 +1,4 @@
-import { useToast } from "fidesui";
+import { useMessage } from "fidesui";
 
 import { getErrorMessage } from "~/features/common/helpers";
 import { formatDate } from "~/features/common/utils";
@@ -7,14 +7,14 @@ import { ConnectionStatusData } from "~/features/integrations/ConnectionStatusNo
 import { ConnectionConfigurationResponse } from "~/types/api";
 
 const useTestConnection = (
-  integration: ConnectionConfigurationResponse | undefined
+  integration: ConnectionConfigurationResponse | undefined,
 ) => {
   const [
     connectionTestTrigger,
     { data, fulfilledTimeStamp, isLoading: queryIsLoading, isFetching },
   ] = useLazyGetDatastoreConnectionStatusQuery();
 
-  const toast = useToast();
+  const message = useMessage();
 
   const testConnection = async () => {
     if (!integration) {
@@ -22,17 +22,20 @@ const useTestConnection = (
     }
     const result = await connectionTestTrigger(integration.key);
     if (result.isError) {
-      toast({
-        status: "error",
-        description: getErrorMessage(
+      message.error(
+        getErrorMessage(
           result.error,
-          "Unable to test connection. Please try again."
+          "Unable to test connection. Please try again.",
         ),
-      });
+      );
     } else if (result.data?.test_status === "succeeded") {
-      toast({ status: "success", description: "Connected successfully" });
+      message.success("Connected successfully");
     } else if (result.data?.test_status === "failed") {
-      toast({ status: "warning", description: "Connection test failed" });
+      let description = "Connection test failed.";
+      if (result.data?.failure_reason) {
+        description += ` ${result.data?.failure_reason}`;
+      }
+      message.warning(description);
     }
   };
 
@@ -42,7 +45,10 @@ const useTestConnection = (
       : integration?.last_test_timestamp,
     succeeded: data
       ? data.test_status === "succeeded"
-      : integration?.last_test_succeeded,
+      : Boolean(integration?.last_test_succeeded),
+    authorized: Boolean(integration?.authorized),
+    connectionKey: integration?.key,
+    failureReason: data?.failure_reason,
   };
 
   const isLoading = queryIsLoading || isFetching;

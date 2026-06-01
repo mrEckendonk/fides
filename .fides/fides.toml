@@ -44,13 +44,11 @@ drp_jwt_secret = "secret"
 env = "prod"
 
 [execution]
-masking_strict = true
 require_manual_request_approval = false
 task_retry_backoff = 1
 subject_identity_verification_required = false
 task_retry_count = 0
 task_retry_delay = 1
-use_dsr_3_0 = false
 
 [admin_ui]
 enabled = true
@@ -67,3 +65,8 @@ notification_service_type = "mailgun"
 tcf_enabled = false
 ac_enabled = false
 override_vendor_purposes = false
+
+[privacy_request_duplicate_detection]
+enabled = false
+time_window_days = 365
+match_fields = ["email"]

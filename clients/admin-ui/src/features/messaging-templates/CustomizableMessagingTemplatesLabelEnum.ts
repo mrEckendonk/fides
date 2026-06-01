@@ -8,6 +8,8 @@ const CustomizableMessagingTemplatesLabelEnum: Record<
     "Access request completed",
   [CustomizableMessagingTemplatesEnum.PRIVACY_REQUEST_COMPLETE_DELETION]:
     "Erasure request completed",
+  [CustomizableMessagingTemplatesEnum.PRIVACY_REQUEST_COMPLETE_CONSENT]:
+    "Consent request completed",
   [CustomizableMessagingTemplatesEnum.PRIVACY_REQUEST_RECEIPT]:
     "Privacy request received",
   [CustomizableMessagingTemplatesEnum.PRIVACY_REQUEST_REVIEW_APPROVE]:
@@ -16,5 +18,8 @@ const CustomizableMessagingTemplatesLabelEnum: Record<
     "Privacy request denied",
   [CustomizableMessagingTemplatesEnum.SUBJECT_IDENTITY_VERIFICATION]:
     "Subject identity verification",
+  [CustomizableMessagingTemplatesEnum.MANUAL_TASK_DIGEST]: "Manual task digest",
+  [CustomizableMessagingTemplatesEnum.EXTERNAL_USER_WELCOME]:
+    "External user welcome",
 };
 export default CustomizableMessagingTemplatesLabelEnum;

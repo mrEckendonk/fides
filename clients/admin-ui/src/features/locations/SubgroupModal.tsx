@@ -1,23 +1,23 @@
 import {
-  Accordion,
-  AccordionButton,
-  AccordionIcon,
-  AccordionItem,
-  AccordionPanel,
-  Box,
-  Checkbox,
+  Button,
+  ChakraAccordion as Accordion,
+  ChakraAccordionButton as AccordionButton,
+  ChakraAccordionIcon as AccordionIcon,
+  ChakraAccordionItem as AccordionItem,
+  ChakraAccordionPanel as AccordionPanel,
+  ChakraBox as Box,
+  ChakraCheckbox as Checkbox,
+  ChakraSimpleGrid as SimpleGrid,
+  Flex,
   Modal,
-  ModalBody,
-  ModalContent,
-  ModalOverlay,
-  SimpleGrid,
 } from "fidesui";
 import { useMemo, useState } from "react";
 
-import { usePicker } from "~/features/common/PickerCard";
+import { usePicker } from "~/features/common/hooks/usePicker";
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
 import { Location, LocationGroup } from "~/types/api";
 
-import { Footer, Header, HeaderCheckboxRow } from "./modal";
+import { HeaderCheckboxRow } from "./modal";
 import RegulatedToggle from "./RegulatedToggle";
 import { groupByBelongsTo } from "./transformations";
 
@@ -58,7 +58,7 @@ const SubgroupModal = ({
   // If a parent is selected, "United States", do not count it towards "num selected" but do
   // count its children
   const numSelected = draftSelected.filter(
-    (s) => !Object.keys(locationsByGroup).includes(s)
+    (s) => !Object.keys(locationsByGroup).includes(s),
   ).length;
 
   const handleApply = () => {
@@ -81,90 +81,97 @@ const SubgroupModal = ({
   const isGroupedView = !(subgroups.length === 1 && subgroups[0] === "Other");
 
   return (
-    <Modal size="2xl" isOpen={isOpen} onClose={onClose} isCentered>
-      <ModalOverlay />
-      <ModalContent data-testid="subgroup-modal">
-        <Header title="Select locations" />
-        <ModalBody p={6} maxHeight="70vh" overflowY="auto">
-          <HeaderCheckboxRow
-            title={continentName}
-            allSelected={allSelected}
-            onToggleAll={handleToggleAll}
-            numSelected={numSelected}
-          >
-            <RegulatedToggle
-              id={`${continentName}-modal-regulated`}
-              isChecked={showRegulatedOnly}
-              onChange={() => setShowRegulatedOnly(!showRegulatedOnly)}
-            />
-          </HeaderCheckboxRow>
-          {isGroupedView ? (
-            <Accordion allowToggle allowMultiple>
-              {Object.entries(locationsByGroup).map(
-                ([groupId, subLocations]) => {
-                  const group = groups.find((g) => groupId === g.id);
-                  const groupName = group ? group.name : groupId;
-                  return (
-                    <AccordionItem
-                      key={groupId}
-                      data-testid={`${groupName}-accordion`}
+    <Modal
+      open={isOpen}
+      onCancel={onClose}
+      centered
+      destroyOnHidden
+      width={MODAL_SIZE.md}
+      wrapProps={{ "data-testid": "subgroup-modal" }}
+      title="Select locations"
+      footer={
+        <Flex className="w-full" justify="space-between">
+          <Button onClick={onClose} data-testid="cancel-btn">
+            Cancel
+          </Button>
+          <Button type="primary" onClick={handleApply} data-testid="apply-btn">
+            Apply
+          </Button>
+        </Flex>
+      }
+    >
+      <HeaderCheckboxRow
+        title={continentName as string}
+        allSelected={allSelected}
+        onToggleAll={handleToggleAll}
+        numSelected={numSelected}
+      >
+        <RegulatedToggle
+          id={`${continentName}-modal-regulated`}
+          isChecked={showRegulatedOnly}
+          onChange={() => setShowRegulatedOnly(!showRegulatedOnly)}
+        />
+      </HeaderCheckboxRow>
+      {isGroupedView ? (
+        <Accordion allowToggle allowMultiple>
+          {Object.entries(locationsByGroup).map(([groupId, subLocations]) => {
+            const group = groups.find((g) => groupId === g.id);
+            const groupName = group ? group.name : groupId;
+            return (
+              <AccordionItem
+                key={groupId}
+                data-testid={`${groupName}-accordion`}
+              >
+                <h2>
+                  <AccordionButton>
+                    <Box
+                      as="span"
+                      flex="1"
+                      textAlign="left"
+                      fontWeight="semibold"
+                      fontSize="sm"
                     >
-                      <h2>
-                        <AccordionButton>
-                          <Box
-                            as="span"
-                            flex="1"
-                            textAlign="left"
-                            fontWeight="semibold"
-                            fontSize="sm"
-                          >
-                            {groupName}
-                          </Box>
-                          <AccordionIcon />
-                        </AccordionButton>
-                      </h2>
-                      <AccordionPanel pb={4}>
-                        <SimpleGrid columns={3} spacing={6}>
-                          {subLocations.map((location) => (
-                            <Checkbox
-                              size="sm"
-                              colorScheme="complimentary"
-                              key={location.id}
-                              isChecked={draftSelected.includes(location.id)}
-                              onChange={() =>
-                                handleToggleSelection(location.id)
-                              }
-                              data-testid={`${location.name}-checkbox`}
-                            >
-                              {location.name}
-                            </Checkbox>
-                          ))}
-                        </SimpleGrid>
-                      </AccordionPanel>
-                    </AccordionItem>
-                  );
-                }
-              )}
-            </Accordion>
-          ) : (
-            <SimpleGrid columns={3} spacing={6} paddingInline={4}>
-              {filteredLocations.map((location) => (
-                <Checkbox
-                  size="sm"
-                  colorScheme="complimentary"
-                  key={location.id}
-                  isChecked={draftSelected.includes(location.id)}
-                  onChange={() => handleToggleSelection(location.id)}
-                  data-testid={`${location.name}-checkbox`}
-                >
-                  {location.name}
-                </Checkbox>
-              ))}
-            </SimpleGrid>
-          )}
-        </ModalBody>
-        <Footer onApply={handleApply} onClose={onClose} />
-      </ModalContent>
+                      {groupName}
+                    </Box>
+                    <AccordionIcon />
+                  </AccordionButton>
+                </h2>
+                <AccordionPanel pb={4}>
+                  <SimpleGrid columns={3} spacing={6}>
+                    {subLocations.map((location) => (
+                      <Checkbox
+                        size="sm"
+                        colorScheme="complimentary"
+                        key={location.id}
+                        isChecked={draftSelected.includes(location.id)}
+                        onChange={() => handleToggleSelection(location.id)}
+                        data-testid={`${location.name}-checkbox`}
+                      >
+                        {location.name}
+                      </Checkbox>
+                    ))}
+                  </SimpleGrid>
+                </AccordionPanel>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
+      ) : (
+        <SimpleGrid columns={3} spacing={6} paddingInline={4}>
+          {filteredLocations.map((location) => (
+            <Checkbox
+              size="sm"
+              colorScheme="complimentary"
+              key={location.id}
+              isChecked={draftSelected.includes(location.id)}
+              onChange={() => handleToggleSelection(location.id)}
+              data-testid={`${location.name}-checkbox`}
+            >
+              {location.name}
+            </Checkbox>
+          ))}
+        </SimpleGrid>
+      )}
     </Modal>
   );
 };

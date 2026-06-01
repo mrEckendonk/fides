@@ -1,8 +1,7 @@
 from enum import Enum as EnumType
 
-from sqlalchemy import Column
+from sqlalchemy import Column, String
 from sqlalchemy import Enum as EnumColumn
-from sqlalchemy import String
 
 from fides.api.db.base_class import Base
 
@@ -14,6 +13,13 @@ class AuditLogAction(str, EnumType):
     denied = "denied"
     email_sent = "email_sent"
     finished = "finished"
+    policy_evaluated = "policy_evaluated"
+    pre_approval_webhook_triggered = "pre_approval_webhook_triggered"
+    pre_approval_eligible = "pre_approval_eligible"
+    pre_approval_not_eligible = "pre_approval_not_eligible"
+    imported = "imported"
+    access_package_approved = "access_package_approved"
+    access_package_redacted = "access_package_redacted"
 
 
 class AuditLog(Base):

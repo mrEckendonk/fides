@@ -8,6 +8,7 @@ cc-test-reporter
 ## generic files to ignore
 *~
 *.lock
+!uv.lock
 *.DS_Store
 *.swp
 *.out
@@ -147,6 +148,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+test_report.xml
 *.cover
 .hypothesis/
 .pytest_cache/
@@ -257,3 +259,18 @@ saas_config.toml
 
 # multilang migration backup files produced by db init
 multilang_migration_backup_*
+
+# Cursor
+.cursor/*
+
+# Claude Code
+.claude/*
+
+# Cline
+.cline/*
+.clinerules/*
+
+# Go shared library build artifacts
+policy-engine/libpbac.*
+policy-engine/*.h
+src/fides/bin/libpbac.h

@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import itertools
 import re
 from enum import Enum
+from functools import cached_property
 from typing import Any, Dict, List, Optional, Set, Type
 
-from fideslang.validation import FidesKey
-from sqlalchemy import Boolean, Column
+from fideslang.validation import FidesKey, validate_fides_key
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    false,
+    or_,
+    text,
+)
 from sqlalchemy import Enum as EnumColumn
-from sqlalchemy import Float, ForeignKey, String, UniqueConstraint, or_
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.mutable import MutableList
-from sqlalchemy.orm import RelationshipProperty, Session, relationship
+from sqlalchemy.orm import RelationshipProperty, Session, relationship, selectinload
 from sqlalchemy.orm.dynamic import AppenderQuery
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.util import hybridproperty
 
 from fides.api.db.base_class import Base, FidesBase
@@ -20,15 +33,11 @@ from fides.api.models import (
     dry_update_data,
     update_if_modified,
 )
-from fides.api.models.experience_notices import ExperienceNotices
-from fides.api.models.location_regulation_selections import (
-    DeprecatedNoticeRegion,
-    PrivacyNoticeRegion,
-)
+from fides.api.models.asset import Asset
+from fides.api.models.location_regulation_selections import DeprecatedNoticeRegion
 from fides.api.models.sql_models import (  # type: ignore[attr-defined]
-    Cookies,
-    PrivacyDeclaration,
     System,
+    get_system_data_uses,
 )
 from fides.api.schemas.language import SupportedLanguage
 
@@ -45,7 +54,10 @@ class UserConsentPreference(Enum):
     tcf = "tcf"  # Overall preference set for TCF where there are numerous preferences under the single notice
 
 
-class ConsentMechanism(Enum):
+from enum import StrEnum
+
+
+class ConsentMechanism(StrEnum):
     """
     Enum is not formalized in the DB because it may be subject to frequent change
     """
@@ -83,6 +95,12 @@ class PrivacyNoticeBase:
     enforcement_level = Column(EnumColumn(EnforcementLevel), nullable=False)
     framework = Column(String)
     gpp_field_mapping = Column(MutableList.as_mutable(JSONB), index=False, unique=False)
+    att_exempt = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        doc="If True, this notice is not controlled by ATT — it remains user-toggleable even when the user denies the iOS App Tracking Transparency prompt.",
+    )
     has_gpc_flag = Column(Boolean, nullable=False, default=False)
     internal_description = Column(String)  # Visible to internal users only
     name = Column(String, nullable=False)
@@ -111,7 +129,7 @@ class PrivacyNoticeBase:
         if not isinstance(name, str):
             raise Exception("Privacy notice keys must be generated from a string.")
         notice_key: str = re.sub(r"\s+", "_", name.lower().strip())
-        return FidesKey(FidesKey.validate(notice_key))
+        return FidesKey(validate_fides_key(notice_key))
 
 
 class PrivacyNoticeTemplate(PrivacyNoticeBase, Base):
@@ -142,6 +160,10 @@ class PrivacyNotice(PrivacyNoticeBase, Base):
     accepts or rejects to indicate their consent for particular data uses
     """
 
+    id = Column(
+        String(255), primary_key=True, index=True, default=FidesBase.generate_uuid
+    )
+
     origin = Column(
         String,
         ForeignKey(PrivacyNoticeTemplate.id_field_path),
@@ -152,6 +174,30 @@ class PrivacyNotice(PrivacyNoticeBase, Base):
         backref="privacy_notice",
         lazy="selectin",
         order_by="NoticeTranslation.created_at",
+    )
+
+    parent_id = Column(
+        String,
+        ForeignKey("privacynotice.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    display_order = Column(
+        Integer,
+        nullable=True,
+        doc="Optional ordering for child notices within a parent. Lower values appear first.",
+    )
+
+    children: "RelationshipProperty[List[PrivacyNotice]]" = relationship(
+        "PrivacyNotice",
+        back_populates="parent",
+        cascade="all",
+        passive_deletes=True,
+        order_by=lambda: PrivacyNotice.display_order.asc().nullslast(),
+    )
+    parent: "RelationshipProperty[Optional[PrivacyNotice]]" = relationship(
+        "PrivacyNotice",
+        back_populates="children",
+        remote_side=[id],
     )
 
     @hybridproperty
@@ -172,53 +218,249 @@ class PrivacyNotice(PrivacyNoticeBase, Base):
 
         raise Exception("Invalid notice consent mechanism.")
 
-    @property
-    def cookies(self) -> List[Cookies]:
-        """Return relevant cookie names (via the data use)"""
-        db = Session.object_session(self)
-        return (
-            db.query(Cookies)
-            .join(
-                PrivacyDeclaration,
-                PrivacyDeclaration.id == Cookies.privacy_declaration_id,
-            )
+    @staticmethod
+    def _get_cookie_filter_for_data_uses(data_uses: List[str]) -> ColumnElement:
+        """
+        Returns the SQLAlchemy filter clause to find cookies for the given data uses.
+        This is a helper method to keep the query logic consistent and safe.
+        """
+        if not data_uses:
+            return false()
+
+        # Use array overlap operator (&&) for exact matches - GIN index friendly
+        exact_matches_condition = Asset.data_uses.op("&&")(data_uses)
+
+        # For hierarchical children, we still need to check individual elements with LIKE
+        # They have to match the data_use and the period separator, so we know it's a hierarchical descendant
+        hierarchical_conditions = [
+            text(  # nosemgrep: sql_injection_fstring -- f-string only constructs the bind param name (`:pattern_0`); actual value is bound via .bindparams()
+                f"EXISTS(SELECT 1 FROM unnest(data_uses) AS data_use WHERE data_use LIKE :pattern_{i})"
+            ).bindparams(**{f"pattern_{i}": f"{data_use}.%"})
+            for i, data_use in enumerate(data_uses)
+        ]
+
+        return or_(exact_matches_condition, *hierarchical_conditions)
+
+    @classmethod
+    def _query_cookie_assets_for_data_uses(
+        cls,
+        db: Session,
+        data_uses: Set[str],
+        exclude_cookies_from_systems: Optional[Set[str]] = None,
+    ) -> List[Asset]:
+        """
+        Query cookie Assets for the given set of data uses using the shared filter logic.
+        Applies optional exclusion by `System.fides_key` and eagerly loads the `system` relationship.
+        """
+        if not data_uses:
+            return []
+
+        cookie_filter = cls._get_cookie_filter_for_data_uses(list(data_uses))
+        query = (
+            db.query(Asset)
+            .options(selectinload("system"))
             .filter(
+                Asset.asset_type == "Cookie",
+                cookie_filter,
+            )
+        )
+        if exclude_cookies_from_systems:
+            query = query.outerjoin(System).filter(
                 or_(
-                    *[
-                        PrivacyDeclaration.data_use.like(f"{notice_use}%")
-                        for notice_use in self.data_uses
-                    ]
+                    Asset.system_id.is_(None),
+                    System.fides_key.not_in(exclude_cookies_from_systems),
                 )
             )
-        ).all()
 
-    @property
-    def systems_applicable(self) -> bool:
-        """Return if any systems overlap with this notice's data uses"""
+        return query.all()
+
+    @staticmethod
+    def _group_cookies_by_data_use(cookies: List[Asset]) -> Dict[str, List[Asset]]:
+        """Build a mapping of data_use -> list of cookie Assets."""
+        cookies_by_data_use: Dict[str, List[Asset]] = {}
+        for cookie in cookies:
+            for data_use in cookie.data_uses or []:
+                cookies_by_data_use.setdefault(data_use, []).append(cookie)
+        return cookies_by_data_use
+
+    @staticmethod
+    def _select_cookies_for_notice_data_uses(
+        notice_data_uses: List[str],
+        cookies_by_data_use: Dict[str, List[Asset]],
+    ) -> List[Asset]:
+        """
+        Return cookies that match the notice data uses either exactly or as hierarchical descendants.
+        Deduplicate by object identity; ordering is not guaranteed.
+        """
+        unique_cookies_by_id: Dict[int, Asset] = {}
+
+        for notice_data_use in notice_data_uses or []:
+            # Exact matches
+            for cookie in cookies_by_data_use.get(notice_data_use, []):
+                unique_cookies_by_id[id(cookie)] = cookie
+
+            # Hierarchical descendants: e.g., "analytics" matches "analytics.reporting"
+            prefix = f"{notice_data_use}."
+            for du_key, cookie_list in cookies_by_data_use.items():
+                if du_key.startswith(prefix):
+                    for cookie in cookie_list:
+                        unique_cookies_by_id[id(cookie)] = cookie
+
+        return list(unique_cookies_by_id.values())
+
+    @cached_property
+    def cookies(self) -> List[Asset]:
+        """
+        Return relevant assets of type 'cookie' (via the data use)
+
+        Cookies are matched to the privacy notice if they have at least one data use
+        that is either an exact match or a hierarchical descendant of a one of the
+        data uses in the privacy notice.
+
+        This is a cached_property, so the database query is only executed
+        once per instance, and the result is cached for subsequent accesses.
+        """
         db = Session.object_session(self)
-        for system in db.query(System):
-            if self.applies_to_system(system):
-                return True
-        return False
+        cookie_filter = self._get_cookie_filter_for_data_uses(self.data_uses)
 
-    @property
-    def configured_regions(self) -> List[PrivacyNoticeRegion]:
-        """Convenience property to look up which regions are using these Notices."""
-        from fides.api.models.privacy_experience import PrivacyExperience
-
-        db = Session.object_session(self)
-        configured_regions = (
-            db.query(PrivacyExperience.region)
-            .join(
-                ExperienceNotices,
-                PrivacyExperience.experience_config_id
-                == ExperienceNotices.experience_config_id,
+        return (
+            db.query(Asset)
+            .filter(
+                Asset.asset_type == "Cookie",
+                cookie_filter,
             )
-            .filter(ExperienceNotices.notice_id == self.id)
-            .group_by(PrivacyExperience.region)
-            .order_by(PrivacyExperience.region.asc())
+            .all()
         )
-        return [region[0] for region in configured_regions]
+
+    @classmethod
+    def load_cookie_data_for_notices(
+        cls,
+        db: Session,
+        notices: List["PrivacyNotice"],
+        exclude_cookies_from_systems: Optional[Set[str]] = None,
+    ) -> None:
+        """
+        An efficient method to bulk-load cookie data for a list of PrivacyNotice objects.
+        This prevents the "N+1" query problem by pre-populating the `cookies`
+        cached_property for each notice.
+        """
+        if not notices:
+            return
+
+        all_data_uses = set(itertools.chain.from_iterable(n.data_uses for n in notices))
+        all_relevant_cookies = cls._query_cookie_assets_for_data_uses(
+            db, all_data_uses, exclude_cookies_from_systems
+        )
+        cookies_by_data_use = cls._group_cookies_by_data_use(all_relevant_cookies)
+
+        for notice in notices:
+            matching_cookies = cls._select_cookies_for_notice_data_uses(
+                notice.data_uses, cookies_by_data_use
+            )
+
+            # Pre-populate the cache of the 'cookies' cached_property.
+            # This directly sets the attribute that the decorator would otherwise compute.
+            setattr(notice, "cookies", matching_cookies)
+
+    @property
+    def calculated_systems_applicable(self) -> bool:
+        """Convenience property to return if any systems overlap with this notice's data uses
+
+        This is used in the Plus API
+        """
+        db = Session.object_session(self)
+
+        all_system_data_uses: Set[str] = get_system_data_uses(db, include_parents=True)
+        return bool(set(self.data_uses).intersection(all_system_data_uses))
+
+    @property
+    def configured_regions_for_notice(self) -> List[str]:
+        """Convenience property to look up which regions are using these Notices.
+
+        This is used in the Plus API
+        """
+        db = Session.object_session(self)
+
+        # Raw sql for performance
+        experience_regions_cursor_result = db.execute(
+            text(
+                """
+            SELECT array_agg(distinct(privacyexperience.region) order by privacyexperience.region) AS regions
+            FROM privacynotice
+               JOIN experiencenotices
+                 ON experiencenotices.notice_id = :privacy_notice_id
+               JOIN privacyexperienceconfig
+                 ON privacyexperienceconfig.id = experiencenotices.experience_config_id
+               JOIN privacyexperience
+                 ON privacyexperience.experience_config_id = privacyexperienceconfig.id
+            GROUP BY privacynotice.id
+            """
+            ),
+            {"privacy_notice_id": self.id},
+        )
+        res = [result for result in experience_regions_cursor_result]
+        return res[0]["regions"] if res else []
+
+    @staticmethod
+    def _set_child_notice_display_order(
+        child_notices: List[Dict[str, Any]],
+        existing_notices: List[PrivacyNotice],
+    ) -> None:
+        """
+        Sets display_order on child notice objects based on their position in the child_notices list.
+
+        Args:
+            child_notices: List of dictionaries containing notice IDs in the desired order
+            existing_notices: List of PrivacyNotice objects to update
+        """
+        notice_id_to_index = {
+            child_notice["id"]: index
+            for index, child_notice in enumerate(child_notices)
+        }
+        for child_notice_obj in existing_notices:
+            if child_notice_obj.id in notice_id_to_index:
+                child_notice_obj.display_order = notice_id_to_index[child_notice_obj.id]
+
+    @classmethod
+    def fetch_and_validate_notices(
+        cls,
+        db: Session,
+        child_notices: List[Dict[str, Any]],
+        parent_id: Optional[str] = None,
+    ) -> List[PrivacyNotice]:
+        """
+        Retrieves existing notices from the database and validates their linkage status.
+
+        This function performs two main checks:
+        1. Ensures all specified notices exist in the database.
+        2. Verifies that notices are not linked to a different parent than the one specified.
+        """
+
+        notice_map = {
+            child_notice["id"]: child_notice["name"] for child_notice in child_notices
+        }
+        child_notice_ids = set(notice_map.keys())
+        existing_notices: List[PrivacyNotice] = (
+            db.query(cls).filter(cls.id.in_(child_notice_ids)).all()
+        )
+
+        if missing_ids := child_notice_ids - {notice.id for notice in existing_notices}:
+            missing_names = [notice_map[id] for id in missing_ids]
+            raise ValueError(
+                f"The following notices do not exist: {', '.join(missing_names)}"
+            )
+
+        if linked_ids := {
+            notice.id
+            for notice in existing_notices
+            if notice.parent_id is not None and notice.parent_id != parent_id
+        }:
+            linked_names = [notice_map[id] for id in linked_ids]
+            raise ValueError(
+                f"The following notices are already linked to another notice: {', '.join(linked_names)}"
+            )
+
+        return existing_notices
 
     @classmethod
     def create(
@@ -237,7 +479,21 @@ class PrivacyNotice(PrivacyNoticeBase, Base):
         about the notice and the translation to which the user supplied a consent preference.
         """
         translations = data.pop("translations", []) or []
-        created = super().create(db=db, data=data, check_name=check_name)
+        child_notices = data.pop("children", []) or []
+
+        # return an error before the actual creation if the children are not valid
+        existing_notices = cls.fetch_and_validate_notices(db, child_notices)
+
+        created: PrivacyNotice = super().create(db=db, data=data, check_name=check_name)
+
+        # automatically links and unlinks at the DB level with this assignment
+        created.children = existing_notices
+
+        # Set display_order on children based on their position in the ORIGINAL child_notices list
+        cls._set_child_notice_display_order(child_notices, existing_notices)
+
+        db.commit()
+
         data.pop(
             "id", None
         )  # Default Notices have id specified but we don't want to use the same id for the historical record
@@ -259,13 +515,24 @@ class PrivacyNotice(PrivacyNoticeBase, Base):
 
     def update(self, db: Session, *, data: dict[str, Any]) -> PrivacyNotice:
         """
-        Updates the Privacy Notice and its translations.
+        Updates the Privacy Notice, child privacy notices, and its translations.
 
+        - Links or unlinks child privacy notices to match the children in the request
         - Upserts or deletes supplied translations to match translations in the request
         - For each remaining translation, create a historical record if the base notice
         or translation changed.
         """
         request_translations = data.pop("translations", [])
+        child_notices = data.pop("children", [])
+
+        existing_notices = PrivacyNotice.fetch_and_validate_notices(
+            db, child_notices, self.id
+        )
+        # automatically links and unlinks at the DB level with this assignment
+        self.children = existing_notices
+
+        # Set display_order on children based on their position in the ORIGINAL child_notices list
+        self._set_child_notice_display_order(child_notices, existing_notices)
 
         # Performs a patch update of the base privacy notice
         base_notice_updated: bool = update_if_modified(self, db=db, data=data)
@@ -315,6 +582,11 @@ class PrivacyNotice(PrivacyNoticeBase, Base):
         # This relationship needs to be removed before the dry_update
         # to prevent the dry update from being added to Session.new
         updated_attributes.pop("translations", [])
+        updated_attributes.pop("children", [])
+        # The source PrivacyNotice may have cached/computed attributes (e.g., @cached_property)
+        # stored on the instance dict. These should not be included in historical payloads.
+        # For example, 'cookies' is cached on the PrivacyNotice instance when accessed.
+        updated_attributes.pop("cookies", None)
 
         # create a new object with the updated attribute data to keep this
         # ORM object (i.e., `self`) pristine
@@ -460,6 +732,12 @@ def create_historical_record_for_notice_and_translation(
     existing_version: float = notice_translation.version or 0.0
     history_data: dict = create_historical_data_from_record(privacy_notice)
     history_data.pop("translations", None)
+    history_data.pop("parent_id", None)
+    history_data.pop("display_order", None)
+    # The source PrivacyNotice may have cached/computed attributes (e.g., @cached_property)
+    # stored on the instance dict. These should not be included in historical payloads.
+    # For example, 'cookies' is cached on the PrivacyNotice instance when accessed.
+    history_data.pop("cookies", None)
 
     updated_translation_data: dict = create_historical_data_from_record(
         notice_translation

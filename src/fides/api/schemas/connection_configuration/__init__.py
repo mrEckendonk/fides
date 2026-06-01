@@ -13,11 +13,29 @@ from fides.api.schemas.connection_configuration.connection_secrets import (
 from fides.api.schemas.connection_configuration.connection_secrets_attentive import (
     AttentiveSchema,
 )
+from fides.api.schemas.connection_configuration.connection_secrets_aws import (
+    AWSDocsSchema as AWSDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_aws import (
+    AWSSchema as AWSSchema,
+)
 from fides.api.schemas.connection_configuration.connection_secrets_bigquery import (
     BigQueryDocsSchema as BigQueryDocsSchema,
 )
 from fides.api.schemas.connection_configuration.connection_secrets_bigquery import (
     BigQuerySchema as BigQuerySchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_datahub import (
+    DatahubDocsSchema as DatahubDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_datahub import (
+    DatahubSchema as DatahubSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_dynamic_erasure_email import (
+    DynamicErasureEmailDocsSchema as DynamicErasureEmailDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_dynamic_erasure_email import (
+    DynamicErasureEmailSchema as DynamicErasureEmailSchema,
 )
 from fides.api.schemas.connection_configuration.connection_secrets_dynamodb import (
     DynamoDBDocsSchema as DynamoDBDocsSchema,
@@ -34,6 +52,12 @@ from fides.api.schemas.connection_configuration.connection_secrets_email import 
 from fides.api.schemas.connection_configuration.connection_secrets_email import (
     ExtendedEmailSchema,
 )
+from fides.api.schemas.connection_configuration.connection_secrets_entra import (
+    EntraDocsSchema as EntraDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_entra import (
+    EntraSchema as EntraSchema,
+)
 from fides.api.schemas.connection_configuration.connection_secrets_fides import (
     FidesConnectorSchema,
     FidesDocsSchema,
@@ -44,11 +68,29 @@ from fides.api.schemas.connection_configuration.connection_secrets_google_cloud_
 from fides.api.schemas.connection_configuration.connection_secrets_google_cloud_sql_mysql import (
     GoogleCloudSQLMySQLSchema as GoogleCloudSQLMySQLSchema,
 )
-from fides.api.schemas.connection_configuration.connection_secrets_manual_webhook import (
-    ManualWebhookSchema as ManualWebhookSchema,
+from fides.api.schemas.connection_configuration.connection_secrets_google_cloud_sql_postgres import (
+    GoogleCloudSQLPostgresDocsSchema as GoogleCloudSQLPostgresDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_google_cloud_sql_postgres import (
+    GoogleCloudSQLPostgresSchema as GoogleCloudSQLPostgresSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_google_workspace import (
+    GoogleWorkspaceDocsSchema as GoogleWorkspaceDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_google_workspace import (
+    GoogleWorkspaceSchema as GoogleWorkspaceSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_jira_ticket import (
+    JiraTicketDocsSchema as JiraTicketDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_jira_ticket import (
+    JiraTicketSchema as JiraTicketSchema,
 )
 from fides.api.schemas.connection_configuration.connection_secrets_manual_webhook import (
-    ManualWebhookSchemaforDocs as ManualWebhookSchemaforDocs,
+    ManualWebhookDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_manual_webhook import (
+    ManualWebhookSchema as ManualWebhookSchema,
 )
 from fides.api.schemas.connection_configuration.connection_secrets_mariadb import (
     MariaDBDocsSchema as MariaDBDocsSchema,
@@ -74,11 +116,29 @@ from fides.api.schemas.connection_configuration.connection_secrets_mysql import 
 from fides.api.schemas.connection_configuration.connection_secrets_mysql import (
     MySQLSchema as MySQLSchema,
 )
+from fides.api.schemas.connection_configuration.connection_secrets_okta import (
+    OktaDocsSchema as OktaDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_okta import (
+    OktaSchema as OktaSchema,
+)
 from fides.api.schemas.connection_configuration.connection_secrets_postgres import (
     PostgreSQLDocsSchema as PostgreSQLDocsSchema,
 )
 from fides.api.schemas.connection_configuration.connection_secrets_postgres import (
     PostgreSQLSchema as PostgreSQLSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_rds_mysql import (
+    RDSMySQLDocsSchema as RDSMySQLDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_rds_mysql import (
+    RDSMySQLSchema as RDSMySQLSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_rds_postgres import (
+    RDSPostgresDocsSchema as RDSPostgresDocsSchema,
+)
+from fides.api.schemas.connection_configuration.connection_secrets_rds_postgres import (
+    RDSPostgresSchema as RDSPostgresSchema,
 )
 from fides.api.schemas.connection_configuration.connection_secrets_redshift import (
     RedshiftDocsSchema as RedshiftDocsSchema,
@@ -118,33 +178,48 @@ from fides.api.schemas.connection_configuration.connection_secrets_timescale imp
 from fides.api.schemas.connection_configuration.connection_secrets_timescale import (
     TimescaleSchema as TimescaleSchema,
 )
+from fides.api.schemas.connection_configuration.connection_secrets_website import (
+    WebsiteSchema,
+)
 from fides.api.schemas.connection_configuration.connections_secrets_https import (
     HttpsSchema as HttpsSchema,
 )
 from fides.api.schemas.saas.saas_config import SaaSConfig as SaaSConfig
 
 secrets_schemas: Dict[str, Any] = {
-    ConnectionType.attentive.value: AttentiveSchema,
+    ConnectionType.attentive_email.value: AttentiveSchema,
+    ConnectionType.aws.value: AWSSchema,
     ConnectionType.bigquery.value: BigQuerySchema,
+    ConnectionType.datahub.value: DatahubSchema,
+    ConnectionType.dynamic_erasure_email.value: DynamicErasureEmailSchema,
     ConnectionType.dynamodb.value: DynamoDBSchema,
+    ConnectionType.entra.value: EntraSchema,
     ConnectionType.fides.value: FidesConnectorSchema,
     ConnectionType.generic_consent_email.value: ExtendedEmailSchema,
     ConnectionType.generic_erasure_email.value: EmailSchema,
     ConnectionType.google_cloud_sql_mysql.value: GoogleCloudSQLMySQLSchema,
+    ConnectionType.google_cloud_sql_postgres.value: GoogleCloudSQLPostgresSchema,
+    ConnectionType.google_workspace.value: GoogleWorkspaceSchema,
     ConnectionType.https.value: HttpsSchema,
+    ConnectionType.jira_ticket.value: JiraTicketSchema,
     ConnectionType.manual_webhook.value: ManualWebhookSchema,
     ConnectionType.mariadb.value: MariaDBSchema,
     ConnectionType.mongodb.value: MongoDBSchema,
     ConnectionType.mssql.value: MicrosoftSQLServerSchema,
+    ConnectionType.okta.value: OktaSchema,
     ConnectionType.mysql.value: MySQLSchema,
     ConnectionType.postgres.value: PostgreSQLSchema,
+    ConnectionType.rds_mysql.value: RDSMySQLSchema,
+    ConnectionType.rds_postgres.value: RDSPostgresSchema,
     ConnectionType.redshift.value: RedshiftSchema,
-    ConnectionType.saas.value: SaaSSchema,
     ConnectionType.s3.value: S3Schema,
+    ConnectionType.saas.value: SaaSSchema,
     ConnectionType.scylla.value: ScyllaSchema,
     ConnectionType.snowflake.value: SnowflakeSchema,
     ConnectionType.sovrn.value: SovrnSchema,
     ConnectionType.timescale.value: TimescaleSchema,
+    ConnectionType.website.value: WebsiteSchema,
+    ConnectionType.test_website.value: WebsiteSchema,
 }
 
 
@@ -174,23 +249,38 @@ def get_connection_secrets_schema(
         )
 
 
+# These schemas are used to generate the documentation for the connection secrets
+# but validation is intentionally postponed due to the NoValidationSchema.
+# Creating the actual connection secrets schemas happens later once we know
+# what type of schema we should validate against.
 connection_secrets_schemas = Union[
-    MongoDBDocsSchema,
-    PostgreSQLDocsSchema,
-    MySQLDocsSchema,
-    GoogleCloudSQLMySQLDocsSchema,
-    RedshiftDocsSchema,
-    SnowflakeDocsSchema,
-    MSSQLDocsSchema,
-    MariaDBDocsSchema,
+    AWSDocsSchema,
     BigQueryDocsSchema,
-    SaaSSchema,
-    EmailDocsSchema,
-    ManualWebhookSchemaforDocs,
-    TimescaleDocsSchema,
-    FidesDocsSchema,
-    SovrnDocsSchema,
+    DatahubDocsSchema,
+    EntraDocsSchema,
+    DynamicErasureEmailDocsSchema,
     DynamoDBDocsSchema,
+    EmailDocsSchema,
+    FidesDocsSchema,
+    GoogleCloudSQLMySQLDocsSchema,
+    GoogleCloudSQLPostgresDocsSchema,
+    GoogleWorkspaceDocsSchema,
+    JiraTicketDocsSchema,
+    ManualWebhookDocsSchema,
+    MariaDBDocsSchema,
+    MongoDBDocsSchema,
+    MSSQLDocsSchema,
+    MySQLDocsSchema,
+    OktaDocsSchema,
+    PostgreSQLDocsSchema,
+    RDSMySQLDocsSchema,
+    RDSPostgresDocsSchema,
+    RedshiftDocsSchema,
     S3DocsSchema,
+    SaaSSchema,
     ScyllaDocsSchema,
+    SnowflakeDocsSchema,
+    SovrnDocsSchema,
+    TimescaleDocsSchema,
+    WebsiteSchema,
 ]

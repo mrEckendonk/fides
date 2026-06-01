@@ -75,8 +75,8 @@ pytest --collect-only
 To run a subset of tests, provide a filename or directory; to match a specific test name, use the `-k` flag:
 
 ```bash
-# Run all tests in the tests/ctl/ directory that contain the word "api" in their name
-pytest tests/ctl/ -k api
+# Run all tests in the tests/fides/ctl/ directory that contain the word "api" in their name
+pytest tests/fides/ctl/ -k api
 ```
 
 The `--sw` flag will exit `pytest` the first time it encounters an error; subsequent runs with the same flag will skip any tests that succeeded and run the failed test first.
@@ -172,7 +172,3 @@ The `fides.toml` file should be used for configurations that should be present f
 The environment will work "out of the box", but can also be configured to enable other features like S3 storage, email notifications, etc.
 
 To configure these, you'll need to edit the `.env` file and provide some secrets - see `example.env` for what is supported.
-
-### Automated Cypress E2E Tests
-
-The test environment is also used to run automated end-to-end (E2E) tests via Cypress. Use `nox -s e2e_test` to run this locally.

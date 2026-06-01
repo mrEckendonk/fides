@@ -9,7 +9,8 @@ import {
   PingData,
   SignalStatus,
 } from "@iabgpp/cmpapi";
-import { GPP_FRAME_NAME, addFrame, locateFrame } from "../cmp-stubs";
+
+import { addFrame, GPP_FRAME_NAME, locateFrame } from "../cmp-stubs";
 import { GppCallback, GppFunction } from "./types";
 
 /* eslint-disable no-underscore-dangle */
@@ -17,7 +18,7 @@ import { GppCallback, GppFunction } from "./types";
 interface GppEvent {
   id: number;
   callback: GppCallback;
-  parameter: any;
+  parameter: unknown;
 }
 
 interface MessageData {
@@ -33,7 +34,7 @@ const isMessageData = (data: unknown): data is MessageData =>
   typeof data === "object" && data != null && "__gppCall" in data;
 
 export const makeStub = () => {
-  const queue: any[] = [];
+  const queue: unknown[] = [];
   const events: GppEvent[] = [];
   let lastId: number | undefined;
 
@@ -79,7 +80,7 @@ export const makeStub = () => {
           data: true, // positive signal
           pingData,
         },
-        true
+        true,
       );
     } else if (cmd === "removeEventListener") {
       let success = false;
@@ -98,7 +99,7 @@ export const makeStub = () => {
           data: success, // status info
           pingData,
         },
-        true
+        true,
       );
     } else if (cmd === "hasSection") {
       callback(false, true);
@@ -148,13 +149,12 @@ export const makeStub = () => {
           if (event && event.source && event.source.postMessage) {
             event.source.postMessage(
               msgIsString ? JSON.stringify(returnMsg) : returnMsg,
-              //   @ts-ignore
-              "*"
+              "*" as never,
             );
           }
         },
         "parameter" in i ? i.parameter : undefined,
-        "version" in i ? i.version : "1.1"
+        "version" in i ? i.version : "1.1",
       );
     }
     return null;

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from fideslang.validation import FidesKey
 from loguru import logger
@@ -14,10 +14,33 @@ from fides.api.graph.config import (
     FieldAddress,
     FieldPath,
     GraphDataset,
+    PropertyScope,
     SeedAddress,
 )
 
 DataCategoryFieldMapping = Dict[CollectionAddress, Dict[FidesKey, List[FieldPath]]]
+
+# Hook registry for dataset graph filters applied before traversal.
+# Fidesplus registers property-based filtering here at startup.
+DatasetGraphFilter = Callable[[List[GraphDataset], Optional[str]], List[GraphDataset]]
+_dataset_graph_filters: List[DatasetGraphFilter] = []
+
+
+def register_dataset_graph_filter(fn: DatasetGraphFilter) -> None:
+    """Register a filter function applied to dataset graphs before traversal.
+
+    Filters receive (dataset_graphs, property_id) and return a filtered list.
+    """
+    _dataset_graph_filters.append(fn)
+
+
+def apply_dataset_graph_filters(
+    dataset_graphs: List[GraphDataset], property_id: Optional[str]
+) -> List[GraphDataset]:
+    """Apply all registered dataset graph filters."""
+    for fn in _dataset_graph_filters:
+        dataset_graphs = fn(dataset_graphs, property_id)
+    return dataset_graphs
 
 
 class Node:
@@ -34,6 +57,15 @@ class Node:
         self.address = CollectionAddress(dataset.name, collection.name)
         self.dataset = dataset
         self.collection = collection
+
+    @property
+    def in_scope(self) -> bool:
+        """Whether this node is in-scope for property-based filtering.
+
+        Returns False for TRAVERSAL_ONLY bridge nodes that are only included
+        for FK traversal.
+        """
+        return self.collection.property_scope == PropertyScope.IN_SCOPE
 
     def __repr__(self) -> str:
         return f"Node({self.address})"
@@ -180,8 +212,19 @@ class DatasetGraph:
         this is a destructive operation on the input datasets, as it
         will alter references within them"""
 
-        # build nodes
-        nodes = [Node(dr, ds) for dr in datasets for ds in dr.collections]
+        # build nodes, filtering out collections with skip_processing=True
+        nodes = []
+        for dr in datasets:
+            for ds in dr.collections:
+                if ds.skip_processing:
+                    logger.debug(
+                        "Skipping collection {} on dataset {} marked with skip_processing",
+                        ds.name,
+                        dr.name,
+                    )
+                    continue
+                nodes.append(Node(dr, ds))
+
         self.nodes: dict[CollectionAddress, Node] = {
             node.address: node for node in nodes
         }
@@ -196,11 +239,10 @@ class DatasetGraph:
                 )
                 for dest_field_address, direction in ref_list:
                     if dest_field_address.collection_address() not in self.nodes:
-                        logger.warning(
-                            "Referenced object {} does not exist", dest_field_address
-                        )
+                        message = f"Referenced object {dest_field_address} from dataset {node_address.dataset} does not exist"
+                        logger.warning(message)
                         raise ValidationError(
-                            f"Referred to object {dest_field_address} does not exist"
+                            message, errors=[dest_field_address.value]
                         )
                     self.edges.add(
                         Edge.create_edge(

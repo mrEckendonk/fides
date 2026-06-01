@@ -1,8 +1,11 @@
 /* eslint-disable*/
-
+import { PREVIEW_CONTAINER_ID } from "~/constants";
 import {
+  ComponentType,
   ExperienceConfigCreate,
   ExperienceTranslation,
+  Layer1ButtonOption,
+  LimitedPrivacyNoticeResponseSchema,
   PrivacyNoticeResponse,
   SupportedLanguage,
 } from "~/types/api";
@@ -13,6 +16,7 @@ const defaultTranslation: ExperienceTranslation = {
   acknowledge_button_label: "OK",
   banner_description: "",
   banner_title: "",
+  purpose_header: "",
   description: "Description",
   privacy_policy_link_label: "",
   privacy_policy_url: "",
@@ -22,10 +26,17 @@ const defaultTranslation: ExperienceTranslation = {
   save_button_label: "Save",
   title: "Manage your consent preferences",
   is_default: true,
+  // GPC fields
+  gpc_label: "Global Privacy Control",
+  gpc_description:
+    "Your global privacy control preference has been honored. You have been automatically opted out of data use cases which adhere to global privacy control.",
+  gpc_title: "Global Privacy Control detected",
+  gpc_status_applied_label: "Applied",
+  gpc_status_overridden_label: "Overridden",
 };
 
 export const buildExperienceTranslation = (
-  config: Partial<ExperienceConfigCreate>
+  config: Partial<ExperienceConfigCreate>,
 ): ExperienceTranslation => ({
   ...defaultTranslation,
   ...(config.translations ? config.translations[0] : {}),
@@ -33,57 +44,101 @@ export const buildExperienceTranslation = (
 
 export const buildBaseConfig = (
   experienceConfig: Partial<ExperienceConfigCreate>,
-  notices: PrivacyNoticeResponse[]
-) => ({
-  options: {
-    debug: false,
-    geolocationApiUrl: "",
-    isGeolocationEnabled: false,
-    isOverlayEnabled: true,
-    isPrefetchEnabled: false,
-    overlayParentId: "preview-container",
-    modalLinkId: null,
-    privacyCenterUrl: "http://localhost:3000",
-    fidesApiUrl: "http://localhost:8080/api/v1",
-    preventDismissal: experienceConfig.dismissable ?? false,
-    allowHTMLDescription: true,
-    serverSideFidesApiUrl: "",
-    fidesString: null,
-    fidesJsBaseUrl: "",
-    base64Cookie: false,
-    fidesLocale: experienceConfig.translations?.[0].language,
-  },
-  experience: {
-    id: "pri_111",
-    region: "us_ca",
-    component: "banner_and_modal",
-    experience_config: {
-      id: "pri_222",
-      regions: ["us_ca"],
-      component: "banner_and_modal",
-      disabled: false,
-      is_default: true,
-      dismissable: experienceConfig.dismissable,
-      allow_language_selection: true,
-      auto_detect_language: true,
-      language: "en",
-      // in preview mode, we show the first translation in the main window, even when multiple translations are configured
-      translations: [buildExperienceTranslation(experienceConfig)],
+  notices: PrivacyNoticeResponse[],
+) => {
+  const baseConfig: any = {
+    options: {
+      allowHTMLDescription: true,
+      base64Cookie: false,
+      debug: false,
+      fidesApiUrl: "http://localhost:8080/api/v1",
+      fidesClearCookie: true,
+      fidesDisableSaveApi: true,
+      fidesDisableNoticesServedApi: true,
+      fidesJsBaseUrl: "",
+      fidesLocale: experienceConfig.translations?.[0]?.language,
+      fidesString: null,
+      geolocationApiUrl: "",
+      isGeolocationEnabled: false,
+      isOverlayEnabled: true,
+      isPrefetchEnabled: false,
+      overlayParentId: PREVIEW_CONTAINER_ID,
+      preventDismissal: experienceConfig.dismissable ?? false,
+      privacyCenterUrl: "http://localhost:3000",
+      showFidesBrandLink: true,
     },
-    privacy_notices: notices,
-  },
-  geolocation: {
-    country: "US",
-    location: "US-CA",
-    region: "CA",
-  },
-});
+    experience: {
+      available_locales: experienceConfig.translations?.map((t) => t.language),
+      component: experienceConfig.component,
+      experience_config: {
+        allow_language_selection: true,
+        auto_detect_language: true,
+        auto_subdomain_cookie_deletion: true,
+        cookie_deletion_based_on_host_domain: true,
+        component: experienceConfig.component,
+        disabled: false,
+        dismissable: experienceConfig.dismissable,
+        id: "pri_222",
+        is_default: true,
+        language: "en",
+        layer1_button_options: Layer1ButtonOption.OPT_IN_OPT_OUT,
+        properties: [],
+        regions: ["us_ca"],
+        show_layer1_notices: false,
+        // in preview mode, we show the first translation in the main window, even when multiple translations are configured
+        translations: [buildExperienceTranslation(experienceConfig)],
+      },
+      id: "pri_111",
+      privacy_notices: notices,
+      region: "us_ca",
+    },
+    geolocation: {
+      country: "US",
+      location: "US-CA",
+      region: "CA",
+    },
+  };
+  if (experienceConfig.component === ComponentType.TCF_OVERLAY) {
+    baseConfig.options.fidesTcfGdprApplies = true;
+    baseConfig.options.tcf_enabled = true;
+    baseConfig.geolocation = { location: "eea", country: "eea" };
+    baseConfig.experience.experience_config.regions = ["eea"];
+    baseConfig.experience = {
+      ...baseConfig.experience,
+      ...{
+        region: "eea",
+        minimal_tcf: true,
+        gvl: { vendors: {} },
+        tcf_purpose_names: [
+          // DEFERRED (LJ-614): replace with applicable purpose names from new endpoint
+          "Store and/or access information on a device",
+          "Use limited data to select advertising",
+          "Create profiles for personalised advertising",
+          "Use profiles to select personalised advertising",
+          "Create profiles to personalise content",
+          "Use profiles to select personalised content",
+          "Measure advertising performance",
+          "Measure content performance",
+          "Understand audiences through statistics or combinations of data from different sources",
+          "Develop and improve services",
+          "Use limited data to select content",
+        ],
+      },
+    };
+    baseConfig.options.apiOptions = {
+      getPrivacyExperienceFn: async () => {
+        return baseConfig.experience;
+      },
+    };
+  }
+  return baseConfig;
+};
 
 /**
  * fill in any empty strings in a translation with the defaults from `buildBaseConfig`
  */
 export const translationOrDefault = (
-  translation: ExperienceTranslation
+  translation: ExperienceTranslation,
 ): ExperienceTranslation => {
   const { language, is_default, ...textFields } = defaultTranslation;
   const newTextFields = Object.keys(textFields)
@@ -102,4 +157,34 @@ export const translationOrDefault = (
     is_default: translation.is_default,
     ...newTextFields,
   };
+};
+
+export const generateMockNotices = (
+  privacyNoticeIds: string[],
+  component: ComponentType,
+  allPrivacyNotices: (LimitedPrivacyNoticeResponseSchema | undefined)[],
+) => {
+  if (!privacyNoticeIds) {
+    return [];
+  }
+  return privacyNoticeIds
+    .map((id) => allPrivacyNotices.find((notice) => notice?.id === id))
+    .map((notice) => {
+      if (component === ComponentType.TCF_OVERLAY && notice !== undefined) {
+        return {
+          ...notice,
+          translations: [
+            {
+              language: "en",
+              text: notice?.name,
+            },
+          ],
+        };
+      }
+      return notice;
+    })
+    .filter(
+      (notice): notice is PrivacyNoticeResponse =>
+        notice !== undefined && !notice.disabled,
+    );
 };

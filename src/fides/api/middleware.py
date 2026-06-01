@@ -7,9 +7,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.types import Message
 
-from fides.api.api import deps
 from fides.api.models.sql_models import AuditLogResource  # type: ignore[attr-defined]
 from fides.api.oauth.utils import extract_token_and_load_client
+from fides.common.session_management import get_api_session
 
 
 async def handle_audit_log_resource(request: Request) -> None:
@@ -33,7 +33,7 @@ async def handle_audit_log_resource(request: Request) -> None:
         "fides_keys": None,
         "extra_data": None,
     }
-    db: Session = deps.get_api_session()
+    db: Session = get_api_session()
 
     # get the user id associated with the request
     token = request.headers.get("authorization")
@@ -45,7 +45,7 @@ async def handle_audit_log_resource(request: Request) -> None:
     await set_body(request, await request.body())
 
     body = await get_body(request)
-    fides_keys = await extract_data_from_body(body)
+    fides_keys: List = await extract_data_from_body(body)
     audit_log_resource_data["fides_keys"] = fides_keys
 
     # write record to server
@@ -79,7 +79,7 @@ async def extract_data_from_body(body: bytes) -> List:
     the request found in the request body.
     """
 
-    fides_keys = []
+    fides_keys: List[str] = []
     if body:
         body = json.loads(body)
         if isinstance(body, dict):

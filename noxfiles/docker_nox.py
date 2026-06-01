@@ -1,5 +1,6 @@
 """Contains the nox sessions for docker-related tasks."""
 
+import os
 from typing import Callable, Dict, List, Optional, Tuple
 
 import nox
@@ -17,7 +18,8 @@ from constants_nox import (
 )
 from git_nox import get_current_tag, recognized_tag
 
-DOCKER_PLATFORMS = "linux/amd64,linux/arm64"
+DOCKER_PLATFORMS = os.getenv("DOCKER_PLATFORMS", "linux/amd64,linux/arm64")
+IMAGE_SUFFIX = os.getenv("IMAGE_SUFFIX", "")  # Empty by default for local builds
 
 
 def verify_git_tag(session: nox.Session) -> Optional[str]:
@@ -48,25 +50,34 @@ def generate_buildx_command(
     image_tags: List[str],
     docker_build_target: str,
     dockerfile_path: str = ".",
+    build_args: Dict[str, str] = None,
 ) -> Tuple[str, ...]:
     """
     Generate the command for building and publishing an image.
 
     See tests for example usage in `test_docker_nox.py`
     """
+    build_args = build_args or {}
+
     buildx_command: Tuple[str, ...] = (
         "docker",
         "buildx",
         "build",
         "--push",
+        "--provenance=false",
         f"--target={docker_build_target}",
         "--platform",
         DOCKER_PLATFORMS,
-        dockerfile_path,
     )
 
+    # Add build arguments
+    for arg_name, arg_value in build_args.items():
+        buildx_command += ("--build-arg", f"{arg_name}={arg_value}")
+
+    buildx_command += (dockerfile_path,)
+
     for tag in image_tags:
-        buildx_command += ("--tag", tag)
+        buildx_command += ("--tag", f"{tag}{IMAGE_SUFFIX}")
 
     return buildx_command
 
@@ -102,7 +113,7 @@ def build(session: nox.Session, image: str, machine_type: str = "") -> None:
     # This check needs to be here so it has access to the session to throw an error
     if image == "prod":
         try:
-            import git  # pylint: disable=unused-import
+            import git  # noqa: F401
         except ModuleNotFoundError:
             session.error(
                 "Building the prod image requires the GitPython module! Please run 'pip install gitpython' and try again"
@@ -112,7 +123,7 @@ def build(session: nox.Session, image: str, machine_type: str = "") -> None:
     # This allows the dev deployment to run without requirements
     build_matrix = {
         "prod": {"tag": get_current_image, "target": "prod"},
-        "test": {"tag": lambda: IMAGE_LOCAL, "target": "prod"},
+        "test": {"tag": lambda: IMAGE_LOCAL, "target": "test"},
         "dev": {"tag": lambda: IMAGE_LOCAL, "target": "dev"},
         "admin_ui": {"tag": lambda: IMAGE_LOCAL_UI, "target": "frontend"},
         "privacy_center": {"tag": lambda: IMAGE_LOCAL_PC, "target": "frontend"},
@@ -122,6 +133,8 @@ def build(session: nox.Session, image: str, machine_type: str = "") -> None:
     # to get built. These images are outside of the primary `ethyca/fides`
     # image so some additional logic is required.
     if image in ("test", "prod"):
+        tag_name = None
+
         if image == "prod":
             tag_name = get_current_tag()
         if image == "test":
@@ -152,12 +165,15 @@ def build(session: nox.Session, image: str, machine_type: str = "") -> None:
     # Build the main ethyca/fides image
     target = build_matrix[image]["target"]
     tag = build_matrix[image]["tag"]
+    # Read IMAGE_SUFFIX at runtime (not module load time) to support dynamic tagging
+    image_suffix = os.getenv("IMAGE_SUFFIX", "")
+    final_tag = f"{tag()}{image_suffix}"
     build_command = (
         "docker",
         "build",
         f"--target={target}",
         "--tag",
-        tag(),
+        final_tag,
         ".",
     )
     if "nocache" in session.posargs:
@@ -233,11 +249,17 @@ def push(session: nox.Session, tag: str, app: str) -> None:
     }
 
     app_info_map = {
-        "fides": {"image": IMAGE, "target": "prod", "path": "."},
+        "fides": {
+            "image": IMAGE,
+            "target": "prod",
+            "path": ".",
+            "build_args": {"IS_TEST": "true"} if tag == "dev" else {},
+        },
         "privacy_center": {
             "image": PRIVACY_CENTER_IMAGE,
             "target": "prod_pc",
             "path": ".",
+            "build_args": {"IS_TEST": "true"} if tag == "dev" else {},
         },
         "sample_app": {
             "image": SAMPLE_APP_IMAGE,
@@ -259,12 +281,12 @@ def push(session: nox.Session, tag: str, app: str) -> None:
         f"{app_info['image']}:{tag_suffix}" for tag_suffix in tag_suffixes
     ]
 
-    # Parallel build the various images
-
+    # Build and push using buildx
     buildx_command: Tuple[str, ...] = generate_buildx_command(
         image_tags=full_tags,
         docker_build_target=app_info["target"],
         dockerfile_path=app_info["path"],
+        build_args=app_info.get("build_args", {}),
     )
 
     session.run(*buildx_command, external=True)

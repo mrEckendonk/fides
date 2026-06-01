@@ -1,0 +1,815 @@
+import { Edge, Node } from "@xyflow/react";
+import yaml from "js-yaml";
+
+import { ConstraintNodeData } from "./ConstraintNode";
+import { ActionNodeData } from "./DecisionNode";
+import { ConditionNodeData } from "./MatchNode";
+import { PolicyNodeData } from "./PolicyNode";
+import {
+  AccessPolicyYaml,
+  ActionBlock,
+  ActionType,
+  ConditionOperator,
+  ConditionProperty,
+  ConsentRequirement,
+  ConstraintType,
+  DataFlowDirection,
+  DataFlowOperator,
+  GeoOperator,
+  MatchBlock,
+  MatchDimension,
+  UnlessItem,
+} from "./types";
+
+export const parseYaml = (yamlString: string): AccessPolicyYaml | null => {
+  if (!yamlString.trim()) {
+    return null;
+  }
+  try {
+    const parsed = yaml.load(yamlString);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const obj = parsed as Record<string, unknown>;
+    // Require either decision or name to be present for a valid policy
+    if (typeof obj.decision !== "string" && typeof obj.name !== "string") {
+      return null;
+    }
+    return parsed as AccessPolicyYaml;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Extract top-level fields from a policy YAML string for list display.
+ * Avoids building the full node graph — just reads the scalar fields.
+ */
+export const extractPolicyFields = (
+  yamlString?: string,
+): { enabled: boolean; priority: number; decision?: ActionType } => {
+  if (!yamlString) {
+    return { enabled: true, priority: 0 };
+  }
+  const parsed = parseYaml(yamlString);
+  if (!parsed) {
+    return { enabled: true, priority: 0 };
+  }
+  return {
+    enabled: parsed.enabled ?? true,
+    priority: parsed.priority ?? 0,
+    decision: parsed.decision,
+  };
+};
+
+/**
+ * Update a single field in a policy YAML string without disturbing the rest.
+ * Returns the modified YAML string.
+ */
+export const updateYamlField = (
+  yamlString: string,
+  field: string,
+  value: unknown,
+): string => {
+  try {
+    const parsed = yaml.load(yamlString) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") {
+      return yamlString;
+    }
+    parsed[field] = value;
+    return yaml.dump(parsed, { lineWidth: 120 });
+  } catch {
+    return yamlString;
+  }
+};
+
+export const POLICY_NODE_ID = "policy";
+
+/**
+ * Canonical render order for built-in taxonomies — independent of YAML key
+ * order. Custom taxonomy keys (anything not in this list) follow, in YAML
+ * insertion order.
+ */
+const BUILT_IN_RENDER_ORDER: string[] = [
+  ConditionProperty.DATA_CATEGORIES,
+  ConditionProperty.DATA_USE,
+  ConditionProperty.DATA_SUBJECTS,
+  ConditionProperty.SYSTEM_GROUP,
+];
+
+/**
+ * Extract taxonomy keys from a match block. Built-in keys come first in the
+ * canonical render order; anything else (custom taxonomies) follows in YAML
+ * insertion order.
+ */
+const extractMatchKeys = (matchBlock: MatchBlock): string[] => {
+  const hasDimension = (k: string) => {
+    const dim = matchBlock[k];
+    return !!dim && (Array.isArray(dim.all) || Array.isArray(dim.any));
+  };
+  const builtIns = BUILT_IN_RENDER_ORDER.filter(hasDimension);
+  const builtInSet = new Set(builtIns);
+  const custom = Object.keys(matchBlock).filter(
+    (k) => !builtInSet.has(k) && hasDimension(k),
+  );
+  return [...builtIns, ...custom];
+};
+
+/**
+ * Build display edges using a chain topology:
+ *   action ──when──▶ cond1 ──and──▶ cond2 ──and──▶ cond3
+ *                     │
+ *                     └──unless──▶ constraint1 ──and──▶ constraint2
+ *
+ * Horizontal edges use default Left/Right handles.
+ * Vertical "and" edges use Bottom→Top handles so dagre-independent
+ * rendering draws them top-to-bottom within a column.
+ */
+export const yamlToNodesAndEdges = (
+  yamlString: string,
+): { nodes: Node[]; edges: Edge[] } | null => {
+  const policy = parseYaml(yamlString);
+  if (!policy) {
+    return null;
+  }
+
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  // Policy node — callbacks are injected by PolicyCanvasPanel at render time
+  const policyNode: Node<PolicyNodeData, "policyNode"> = {
+    id: POLICY_NODE_ID,
+    type: "policyNode",
+    position: { x: 0, y: 0 },
+    style: { width: 300 },
+    data: {
+      name: policy.name ?? "",
+      description: policy.description ?? "",
+      fidesKey: policy.fides_key ?? "",
+      enabled: policy.enabled ?? true,
+      priority: policy.priority ?? 0,
+      control: policy.control ?? null,
+      controlOptions: [],
+      actionMessage: policy.action?.message ?? "",
+      onNameChange: () => {},
+      onDescriptionChange: () => {},
+      onFidesKeyChange: () => {},
+      onEnabledChange: () => {},
+      onPriorityChange: () => {},
+      onControlChange: () => {},
+      onActionMessageChange: () => {},
+    },
+  };
+  nodes.push(policyNode);
+
+  const { decision } = policy;
+  const matchBlock: MatchBlock | undefined = policy.match;
+
+  if (!decision || !matchBlock) {
+    return { nodes, edges };
+  }
+
+  // Action node
+  const actionType = decision === "DENY" ? ActionType.DENY : ActionType.ALLOW;
+  const actionId = "action-1";
+  const actionNode: Node<ActionNodeData, "actionNode"> = {
+    id: actionId,
+    type: "actionNode",
+    position: { x: 0, y: 0 },
+    style: { width: 300 },
+    data: {
+      actionType,
+      actionMessage: policy.action?.message ?? "",
+    },
+  };
+  nodes.push(actionNode);
+  edges.push({
+    id: `e-${POLICY_NODE_ID}-${actionId}`,
+    source: POLICY_NODE_ID,
+    target: actionId,
+    type: "labeledEdge",
+  });
+
+  // Condition nodes — chain: first from action ("when"), rest vertical ("and").
+  // Iterate the match block in YAML insertion order so any taxonomy key
+  // (built-in or custom) is supported.
+  const presentProperties = extractMatchKeys(matchBlock);
+
+  presentProperties.forEach((property, idx) => {
+    const dimension = matchBlock[property] as MatchDimension;
+    let operator = ConditionOperator.ALL;
+    if (dimension.any) {
+      operator = ConditionOperator.ANY;
+    }
+    const values = dimension.all ?? dimension.any ?? [];
+    const conditionId = `condition-${idx + 1}`;
+
+    const conditionNode: Node<ConditionNodeData, "conditionNode"> = {
+      id: conditionId,
+      type: "conditionNode",
+      position: { x: 0, y: 0 },
+      style: { width: 300 },
+      data: {
+        property,
+        values,
+        operator,
+      },
+    };
+    nodes.push(conditionNode);
+
+    if (idx === 0) {
+      // First condition: horizontal from action
+      edges.push({
+        id: `e-${actionId}-${conditionId}`,
+        source: actionId,
+        target: conditionId,
+        type: "labeledEdge",
+        data: { label: "when" },
+      });
+    } else {
+      // Subsequent conditions: vertical "and" from previous
+      const prevConditionId = `condition-${idx}`;
+      edges.push({
+        id: `e-${prevConditionId}-${conditionId}`,
+        source: prevConditionId,
+        target: conditionId,
+        sourceHandle: "bottom",
+        targetHandle: "top",
+        type: "labeledEdge",
+        data: { label: "and" },
+      });
+    }
+  });
+
+  // Constraint nodes from `unless` — flat array, all AND'd
+  const constraintList: UnlessItem[] = policy.unless ?? [];
+
+  if (constraintList.length > 0 && presentProperties.length > 0) {
+    constraintList.forEach((item, idx) => {
+      const constraintId = `constraint-${idx + 1}`;
+      let data: ConstraintNodeData = {};
+
+      if (item.type === "consent") {
+        data = {
+          constraintType: ConstraintType.CONSENT,
+          privacyNoticeKey: item.privacy_notice_key ?? "",
+          consentRequirement: item.requirement as ConsentRequirement,
+        };
+      } else if (item.type === "geo_location") {
+        data = {
+          constraintType: ConstraintType.GEO_LOCATION,
+          geoField: item.field ?? "",
+          geoOperator: item.operator as GeoOperator,
+          geoValues: item.values ?? [],
+        };
+      } else if (item.type === "data_flow") {
+        data = {
+          constraintType: ConstraintType.DATA_FLOW,
+          dataFlowDirection: item.direction as DataFlowDirection,
+          dataFlowOperator: item.operator as DataFlowOperator,
+          dataFlowSystems: item.systems ?? [],
+        };
+      }
+
+      const constraintNode: Node<ConstraintNodeData, "constraintNode"> = {
+        id: constraintId,
+        type: "constraintNode",
+        position: { x: 0, y: 0 },
+        style: { width: 300 },
+        data,
+      };
+      nodes.push(constraintNode);
+
+      if (idx === 0) {
+        // First constraint: horizontal from first condition
+        edges.push({
+          id: `e-condition-1-${constraintId}`,
+          source: "condition-1",
+          target: constraintId,
+          type: "labeledEdge",
+          data: { label: "unless" },
+        });
+      } else {
+        // Subsequent constraints: vertical "and" from previous
+        const prevConstraintId = `constraint-${idx}`;
+        edges.push({
+          id: `e-${prevConstraintId}-${constraintId}`,
+          source: prevConstraintId,
+          target: constraintId,
+          sourceHandle: "bottom",
+          targetHandle: "top",
+          type: "labeledEdge",
+          data: { label: "and" },
+        });
+      }
+    });
+  }
+
+  return { nodes, edges };
+};
+
+/**
+ * Collect all conditionNode nodes reachable from actionNodeId via BFS.
+ * Works with both fan-out and chain topologies.
+ */
+const collectConditionNodes = (
+  actionNodeId: string,
+  nodes: Node[],
+  edges: Edge[],
+): Node<ConditionNodeData>[] => {
+  const result: Node<ConditionNodeData>[] = [];
+  const visited = new Set<string>();
+
+  const walk = (sourceId: string) => {
+    edges
+      .filter((e) => e.source === sourceId && !visited.has(e.target))
+      .forEach((e) => {
+        const target = nodes.find((n) => n.id === e.target);
+        if (!target || target.type !== "conditionNode") {
+          return;
+        }
+        visited.add(target.id);
+        result.push(target as Node<ConditionNodeData>);
+        walk(target.id);
+      });
+  };
+  walk(actionNodeId);
+
+  return result;
+};
+
+/**
+ * Collect all constraintNode nodes reachable from the given condition node IDs,
+ * walking through constraint chains.
+ */
+const collectConstraintNodes = (
+  conditionNodeIds: Set<string>,
+  nodes: Node[],
+  edges: Edge[],
+): Node<ConstraintNodeData>[] => {
+  const result: Node<ConstraintNodeData>[] = [];
+  const visited = new Set<string>();
+  const queue = [...conditionNodeIds];
+
+  while (queue.length > 0) {
+    const sourceId = queue.shift()!;
+    edges
+      .filter((e) => e.source === sourceId && !visited.has(e.target))
+      .forEach((e) => {
+        visited.add(e.target);
+        const target = nodes.find((n) => n.id === e.target);
+        if (!target) {
+          return;
+        }
+        if (target.type === "constraintNode") {
+          result.push(target as Node<ConstraintNodeData>);
+          queue.push(target.id);
+        }
+      });
+  }
+
+  return result;
+};
+
+const buildUnlessItem = (data: ConstraintNodeData): UnlessItem | null => {
+  if (data.constraintType === ConstraintType.CONSENT) {
+    if (!data.privacyNoticeKey && !data.consentRequirement) {
+      return null;
+    }
+    return {
+      type: "consent",
+      privacy_notice_key: data.privacyNoticeKey ?? "",
+      requirement: data.consentRequirement as ConsentRequirement,
+    };
+  }
+  if (data.constraintType === ConstraintType.GEO_LOCATION) {
+    if (!data.geoField && !data.geoValues?.length) {
+      return null;
+    }
+    return {
+      type: "geo_location",
+      field: data.geoField || "environment.geo_location",
+      operator: (data.geoOperator as GeoOperator) ?? GeoOperator.IN,
+      values: data.geoValues ?? [],
+    };
+  }
+  if (data.constraintType === ConstraintType.DATA_FLOW) {
+    if (!data.dataFlowSystems?.length) {
+      return null;
+    }
+    return {
+      type: "data_flow",
+      direction:
+        (data.dataFlowDirection as DataFlowDirection) ??
+        DataFlowDirection.EGRESS,
+      operator:
+        (data.dataFlowOperator as DataFlowOperator) ?? DataFlowOperator.ANY_OF,
+      systems: data.dataFlowSystems ?? [],
+    };
+  }
+  return null;
+};
+
+export const nodesToYaml = (nodes: Node[], edges: Edge[]): string => {
+  const policyNode = nodes.find(
+    (n): n is Node<PolicyNodeData> => n.id === POLICY_NODE_ID,
+  );
+  if (!policyNode) {
+    return "";
+  }
+
+  const { name, description, fidesKey, enabled, priority, control } =
+    policyNode.data as PolicyNodeData;
+
+  // Find action node (connected from policy)
+  const actionEdge = edges.find((e) => e.source === POLICY_NODE_ID);
+  const actionNode = actionEdge
+    ? nodes.find((n): n is Node<ActionNodeData> => n.id === actionEdge.target)
+    : undefined;
+
+  // Build the YAML object following PRD schema
+  const policyYaml: Record<string, unknown> = {};
+
+  if (fidesKey) {
+    policyYaml.fides_key = fidesKey;
+  }
+  if (name) {
+    policyYaml.name = name;
+  }
+  if (description) {
+    policyYaml.description = description;
+  }
+  if (enabled === false) {
+    policyYaml.enabled = false;
+  }
+  if (priority !== undefined && priority !== 0) {
+    policyYaml.priority = priority;
+  }
+  if (control) {
+    policyYaml.control = control;
+  }
+
+  if (!actionNode) {
+    return yaml.dump(policyYaml, { lineWidth: 120 });
+  }
+
+  const { actionType } = actionNode.data as ActionNodeData;
+
+  // Decision
+  policyYaml.decision = actionType === ActionType.DENY ? "DENY" : "ALLOW";
+
+  // Match block
+  const conditionNodes = collectConditionNodes(actionNode.id, nodes, edges);
+  const matchBlock: MatchBlock = conditionNodes.reduce<MatchBlock>(
+    (acc, condNode) => {
+      const { property, values, operator } = condNode.data as ConditionNodeData;
+      if (!property || !values?.length) {
+        return acc;
+      }
+      const dimension: MatchDimension =
+        operator === ConditionOperator.ALL ? { all: values } : { any: values };
+      return { ...acc, [property]: dimension };
+    },
+    {},
+  );
+  policyYaml.match = matchBlock;
+
+  // Unless block — flat array, all AND'd
+  const conditionIds = new Set(conditionNodes.map((n) => n.id));
+  const constraintNodes = collectConstraintNodes(conditionIds, nodes, edges);
+  const unlessItems: UnlessItem[] = constraintNodes
+    .map((n) => buildUnlessItem(n.data as ConstraintNodeData))
+    .filter((item): item is UnlessItem => !!item);
+
+  if (unlessItems.length > 0) {
+    policyYaml.unless = unlessItems;
+  }
+
+  // Action block — read from the action node
+  const { actionMessage } = actionNode.data as ActionNodeData;
+  if (actionMessage) {
+    policyYaml.action = { message: actionMessage } satisfies ActionBlock;
+  }
+
+  return yaml.dump(policyYaml, { lineWidth: 120 });
+};
+
+// ---------------------------------------------------------------------------
+// Agent-update transition helpers.
+//
+// The agent reports its edits as three buckets of node ids (added/changed/
+// removed) — see PolicyUpdate in agent-chat.slice.ts. The frontend just maps
+// each id to the corresponding React Flow node (by content, not by positional
+// id) and applies a className the SCSS animations key off.
+// ---------------------------------------------------------------------------
+
+type ChangeStatus = "added" | "modified" | "removed";
+
+/**
+ * Compute the content-based id for a node, matching the format the LLM is
+ * taught in the system prompt:
+ *   "policy" | "action" | "condition:<dim>" | "constraint:<type>:<key>"
+ *
+ * Returns null when the node doesn't have enough data to identify (e.g. a
+ * blank constraintNode the user just dragged in).
+ */
+export const nodeContentId = (node: Node): string | null => {
+  if (node.id === POLICY_NODE_ID || node.type === "policyNode") {
+    return "policy";
+  }
+  if (node.type === "actionNode") {
+    return "action";
+  }
+  if (node.type === "conditionNode") {
+    const { property } = node.data as ConditionNodeData;
+    return property ? `condition:${property}` : null;
+  }
+  if (node.type === "constraintNode") {
+    const data = node.data as ConstraintNodeData;
+    if (data.constraintType === ConstraintType.CONSENT) {
+      return `constraint:consent:${data.privacyNoticeKey ?? ""}`;
+    }
+    if (data.constraintType === ConstraintType.GEO_LOCATION) {
+      return `constraint:geo_location:${data.geoField ?? ""}`;
+    }
+    if (data.constraintType === ConstraintType.DATA_FLOW) {
+      return `constraint:data_flow:${data.dataFlowDirection ?? ""}`;
+    }
+  }
+  return null;
+};
+
+/**
+ * Tag each node and edge with a className driving the CSS animation. Bumping
+ * `diffKey` on a fresh transition restarts the animation even if the status
+ * is unchanged.
+ */
+export const tagNodesWithDiff = (
+  nodes: Node[],
+  edges: Edge[],
+  added: readonly string[],
+  changed: readonly string[],
+  diffKey: number,
+): { nodes: Node[]; edges: Edge[] } => {
+  const addedSet = new Set(added);
+  const changedSet = new Set(changed);
+  const statusById = new Map<string, ChangeStatus>();
+
+  const taggedNodes = nodes.map((node) => {
+    let status: ChangeStatus | undefined;
+    if (node.id.startsWith("removed-")) {
+      status = "removed";
+    } else {
+      const contentId = nodeContentId(node);
+      if (contentId) {
+        if (addedSet.has(contentId)) {
+          status = "added";
+        } else if (changedSet.has(contentId)) {
+          status = "modified";
+        }
+      }
+    }
+    if (!status) {
+      return node;
+    }
+    statusById.set(node.id, status);
+    const className = [
+      node.className,
+      `diffStatus-${status}`,
+      `diffKey-${diffKey}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return { ...node, className };
+  });
+
+  const taggedEdges = edges.map((edge) => {
+    const sourceStatus = statusById.get(edge.source);
+    const targetStatus = statusById.get(edge.target);
+    let edgeStatus: ChangeStatus | undefined;
+    if (sourceStatus === "removed" || targetStatus === "removed") {
+      edgeStatus = "removed";
+    } else if (sourceStatus === "added" || targetStatus === "added") {
+      edgeStatus = "added";
+    }
+    if (!edgeStatus) {
+      return edge;
+    }
+    const className = [edge.className, `diffStatus-${edgeStatus}`]
+      .filter(Boolean)
+      .join(" ");
+    return { ...edge, className };
+  });
+
+  return { nodes: taggedNodes, edges: taggedEdges };
+};
+
+/**
+ * Build a transient graph that overlays the new YAML's nodes with ghost
+ * copies of the conditions/constraints the agent reported as removed.
+ *
+ * Ghost ids are prefixed with `removed-` so they (a) won't collide with the
+ * positional id counter regex in PolicyCanvasPanel.syncCounters, and (b) are
+ * easy for tagNodesWithDiff to recognize as ghosts.
+ *
+ * Policy and action ids are intentionally not ghostable — they're always
+ * present in any non-empty graph.
+ */
+export const buildUnionGraph = (
+  oldYaml: string | undefined,
+  newYaml: string,
+  removed: readonly string[],
+): { nodes: Node[]; edges: Edge[] } => {
+  const newGraph = yamlToNodesAndEdges(newYaml);
+  if (!newGraph) {
+    return { nodes: [], edges: [] };
+  }
+  if (!oldYaml || removed.length === 0) {
+    return newGraph;
+  }
+  const oldGraph = yamlToNodesAndEdges(oldYaml);
+  if (!oldGraph) {
+    return newGraph;
+  }
+
+  const ghostNodes: Node[] = [];
+  const ghostEdges: Edge[] = [];
+
+  const newActionNode = newGraph.nodes.find((n) => n.type === "actionNode");
+  const newFirstCondition = newGraph.nodes.find(
+    (n) => n.type === "conditionNode",
+  );
+
+  // First pass: create all ghost nodes so the edge pass can resolve parents
+  // that are themselves removed (the `removed` array isn't guaranteed to be
+  // ordered ancestor-first).
+  const ghostByOldId = new Map<string, Node>();
+  removed.forEach((contentId) => {
+    const oldNode = oldGraph.nodes.find((n) => nodeContentId(n) === contentId);
+    if (
+      !oldNode ||
+      (oldNode.type !== "conditionNode" && oldNode.type !== "constraintNode")
+    ) {
+      return;
+    }
+    const sanitized = contentId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const ghostId = `removed-${sanitized}`;
+    const ghostNode: Node = {
+      ...oldNode,
+      id: ghostId,
+      position: { x: 0, y: 0 },
+      selectable: false,
+      draggable: false,
+    };
+    ghostNodes.push(ghostNode);
+    ghostByOldId.set(oldNode.id, ghostNode);
+  });
+
+  // Second pass: wire ghost edges, mirroring the live edge conventions from
+  // yamlToNodesAndEdges:
+  //   action → condition  : default L/R handles, label "when"
+  //   condition → condition: bottom→top handles, label "and"
+  //   condition → constraint: default L/R handles, label "unless"
+  //   constraint → constraint: bottom→top handles, label "and"
+  ghostNodes.forEach((ghostNode) => {
+    const oldNode = oldGraph.nodes.find(
+      (n) =>
+        `removed-${nodeContentId(n)?.replace(/[^a-zA-Z0-9_-]/g, "_")}` ===
+        ghostNode.id,
+    );
+    if (!oldNode) {
+      return;
+    }
+    const parentEdge = oldGraph.edges.find((e) => e.target === oldNode.id);
+    const oldParent = parentEdge
+      ? oldGraph.nodes.find((n) => n.id === parentEdge.source)
+      : undefined;
+
+    // Resolve the parent in the new graph: prefer the same-content surviving
+    // node, then a sibling ghost (parent was also removed), then degrade.
+    const oldParentContentId = oldParent ? nodeContentId(oldParent) : null;
+    const matchingNewParent = oldParentContentId
+      ? newGraph.nodes.find((n) => nodeContentId(n) === oldParentContentId)
+      : undefined;
+    const matchingGhostParent = oldParent
+      ? ghostByOldId.get(oldParent.id)
+      : undefined;
+    const resolvedParent = matchingNewParent ?? matchingGhostParent;
+
+    if (ghostNode.type === "conditionNode") {
+      // Removed conditions always hang off the action via "when". The action
+      // node is never removed, so fall back to newActionNode directly.
+      const parentIsSiblingCondition = resolvedParent?.type === "conditionNode";
+      const sourceId = parentIsSiblingCondition
+        ? resolvedParent.id
+        : newActionNode?.id;
+      if (!sourceId) {
+        return;
+      }
+      ghostEdges.push({
+        id: `e-ghost-${sourceId}-${ghostNode.id}`,
+        source: sourceId,
+        target: ghostNode.id,
+        ...(parentIsSiblingCondition
+          ? { sourceHandle: "bottom", targetHandle: "top" }
+          : {}),
+        type: "labeledEdge",
+        data: { label: parentIsSiblingCondition ? "and" : "when" },
+      });
+      return;
+    }
+
+    // constraintNode
+    if (resolvedParent?.type === "constraintNode") {
+      // sibling chain: vertical "and"
+      ghostEdges.push({
+        id: `e-ghost-${resolvedParent.id}-${ghostNode.id}`,
+        source: resolvedParent.id,
+        target: ghostNode.id,
+        sourceHandle: "bottom",
+        targetHandle: "top",
+        type: "labeledEdge",
+        data: { label: "and" },
+      });
+      return;
+    }
+    if (resolvedParent?.type === "conditionNode") {
+      // first-constraint anchor: horizontal "unless"
+      ghostEdges.push({
+        id: `e-ghost-${resolvedParent.id}-${ghostNode.id}`,
+        source: resolvedParent.id,
+        target: ghostNode.id,
+        type: "labeledEdge",
+        data: { label: "unless" },
+      });
+      return;
+    }
+    // Final fallback: parent chain is gone entirely. Anchor to the first
+    // condition in the new graph (or any surviving ghost condition) so the
+    // ghost still reads as a constraint instead of floating.
+    const fallbackSourceId =
+      newFirstCondition?.id ??
+      ghostNodes.find((n) => n.type === "conditionNode")?.id;
+    if (fallbackSourceId) {
+      ghostEdges.push({
+        id: `e-ghost-${fallbackSourceId}-${ghostNode.id}`,
+        source: fallbackSourceId,
+        target: ghostNode.id,
+        type: "labeledEdge",
+        data: { label: "unless" },
+      });
+    }
+  });
+
+  return {
+    nodes: [...newGraph.nodes, ...ghostNodes],
+    edges: [...newGraph.edges, ...ghostEdges],
+  };
+};
+
+/**
+ * Derive fan-out edges from display edges for dagre positioning.
+ * Dagre uses these to assign same-rank to same-type sibling nodes,
+ * while the original chain edges are rendered by React Flow.
+ */
+export const deriveLayoutEdges = (nodes: Node[], edges: Edge[]): Edge[] => {
+  const layoutEdges: Edge[] = [];
+
+  // Keep policy → action edge
+  const policyToAction = edges.find((e) => e.source === POLICY_NODE_ID);
+  if (policyToAction) {
+    layoutEdges.push(policyToAction);
+  }
+
+  const actionNode = nodes.find((n) => n.type === "actionNode");
+  if (!actionNode) {
+    return layoutEdges;
+  }
+
+  // Fan out: action → all conditions (forces same dagre rank)
+  const conditionNodes = nodes.filter((n) => n.type === "conditionNode");
+  conditionNodes.forEach((cond) => {
+    layoutEdges.push({
+      id: `layout-${actionNode.id}-${cond.id}`,
+      source: actionNode.id,
+      target: cond.id,
+      type: "labeledEdge",
+    });
+  });
+
+  // Fan out: first condition → all constraints (forces same dagre rank)
+  const constraintNodes = nodes.filter((n) => n.type === "constraintNode");
+  const firstCondition = conditionNodes[0];
+  if (firstCondition && constraintNodes.length > 0) {
+    constraintNodes.forEach((cons) => {
+      layoutEdges.push({
+        id: `layout-${firstCondition.id}-${cons.id}`,
+        source: firstCondition.id,
+        target: cons.id,
+        type: "labeledEdge",
+      });
+    });
+  }
+
+  return layoutEdges;
+};

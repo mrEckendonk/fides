@@ -1,4 +1,4 @@
-import { ListItem } from "fidesui";
+import { ChakraListItem as ListItem } from "fidesui";
 
 import {
   InfoCodeBlock,
@@ -10,8 +10,9 @@ import {
   InfoUnorderedList,
 } from "~/features/common/copy/components";
 import ShowMoreContent from "~/features/common/copy/ShowMoreContent";
-import { ConnectionCategory } from "~/features/integrations/ConnectionCategory";
 import { AccessLevel, ConnectionType } from "~/types/api";
+import { ConnectionCategory } from "~/types/api/models/ConnectionCategory";
+import { IntegrationFeature } from "~/types/api/models/IntegrationFeature";
 
 const PROJECT_CREATION_GUIDE_URL =
   "https://cloud.google.com/resource-manager/docs/creating-managing-projects#creating_a_project";
@@ -41,12 +42,7 @@ export const BQ_PLACEHOLDER = {
   created_at: "",
 };
 
-export const BIGQUERY_TAGS = [
-  "Data Warehouse",
-  "BigQuery",
-  "Discovery",
-  "Inventory",
-];
+export const BIGQUERY_TAGS = ["DSR Automation", "Discovery", "Detection"];
 
 export const BigQueryOverview = () => (
   <>
@@ -97,7 +93,7 @@ export const BigQueryOverview = () => (
         <ListItem>bigquery.tables.getData</ListItem>
         <ListItem>bigquery.tables.list</ListItem>
         <ListItem>bigquery.tables.updateData</ListItem>
-        <ListItem>bigquery.projects.get</ListItem>
+        <ListItem>resourcemanager.projects.get</ListItem>
       </InfoUnorderedList>
     </ShowMoreContent>
   </>
@@ -144,7 +140,7 @@ const MONITORED_PROJECT_PERMISSIONS = [
     description: "List all tables in the specified dataset.",
   },
   {
-    permission: "bigquery.projects.get",
+    permission: "resourcemanager.projects.get",
     description: "Retrieve metadata for the specified project.",
   },
 ];
@@ -178,7 +174,7 @@ export const BigQueryInstructions = () => (
         by your Fides service account to run queries:
       </InfoText>
       <InfoPermissionsTable data={FIDES_PERMISSIONS} />
-      <InfoHeading text="Step 4: Assign permissions to any project you’d like Fides to monitor" />
+      <InfoHeading text="Step 4: Assign permissions to any project you'd like Fides to monitor" />
       <InfoText>
         Grant the following permissions to the Fides service account in every
         project where you would like Fides detection and discovery monitoring.
@@ -219,6 +215,11 @@ const BIGQUERY_TYPE_INFO = {
   overview: <BigQueryOverview />,
   instructions: <BigQueryInstructions />,
   tags: BIGQUERY_TAGS,
+  enabledFeatures: [
+    IntegrationFeature.DATA_DISCOVERY,
+    IntegrationFeature.QUERY_LOGGING,
+    IntegrationFeature.IDENTITY_RESOLUTION,
+  ],
 };
 
 export default BIGQUERY_TYPE_INFO;

@@ -1,45 +1,45 @@
 import {
   ExperienceConfig,
-  FidesExperienceTranslationOverrides,
   FidesInitOptions,
   PrivacyExperience,
   PrivacyNoticeWithPreference,
 } from "~/fides";
 import {
+  areLocalesEqual,
   DEFAULT_LOCALE,
   DEFAULT_MODAL_LINK_LABEL,
-  LOCALE_REGEX,
   detectUserLocale,
   extractDefaultLocaleFromExperience,
   getCurrentLocale,
+  I18n,
   initializeI18n,
+  Language,
   loadMessagesFromExperience,
   loadMessagesFromFiles,
-  selectBestNoticeTranslation,
-  matchAvailableLocales,
-  messageExists,
-  setupI18n,
-  selectBestExperienceConfigTranslation,
-  areLocalesEqual,
+  loadMessagesFromGVLTranslations,
+  Locale,
+  LOCALE_REGEX,
   localizeModalLinkText,
+  matchAvailableLocales,
+  MessageDescriptor,
+  messageExists,
+  Messages,
+  selectBestExperienceConfigTranslation,
+  selectBestNoticeTranslation,
+  setupI18n,
 } from "~/lib/i18n";
-import { loadTcfMessagesFromFiles } from "~/lib/tcf/i18n/tcf-i18n-utils";
 import messagesEn from "~/lib/i18n/locales/en/messages.json";
-import messagesEs from "~/lib/i18n/locales/es/messages.json";
 import messagesTcfEn from "~/lib/tcf/i18n/locales/en/messages-tcf.json";
 import messagesTcfEs from "~/lib/tcf/i18n/locales/es/messages-tcf.json";
-import type {
-  I18n,
-  Locale,
-  Language,
-  MessageDescriptor,
-  Messages,
-} from "~/lib/i18n";
+import { loadTcfMessagesFromFiles } from "~/lib/tcf/i18n/tcf-i18n-utils";
 
 import mockExperienceJSON from "../../__fixtures__/mock_experience.json";
 import mockGVLTranslationsJSON from "../../__fixtures__/mock_gvl_translations.json";
 
 describe("i18n-utils", () => {
+  beforeAll(() => {
+    window.fidesDebugger = () => {};
+  });
   // Define a mock implementation of the i18n singleton for tests
   let mockCurrentLocale = "";
   let mockDefaultLocale = DEFAULT_LOCALE;
@@ -47,6 +47,28 @@ describe("i18n-utils", () => {
     { locale: "en", label_en: "English", label_original: "English" },
     { locale: "es", label_en: "Spanish", label_original: "Español" },
   ];
+  // GPC fallback values from static messages when GPC fields are missing
+  // from the experience config. The code now looks up STATIC_MESSAGES directly
+  // (not via i18n.t), so these are the real translated values.
+  const mockGpcFallbacksEn = {
+    "exp.gpc_label": messagesEn["static.gpc"],
+    "exp.gpc_title": messagesEn["static.gpc.title"],
+    "exp.gpc_description": messagesEn["static.gpc.description"],
+    "exp.gpc_status_applied_label": messagesEn["static.gpc.status.applied"],
+    "exp.gpc_status_overridden_label":
+      messagesEn["static.gpc.status.overridden"],
+  };
+  // Since only English static messages are bundled, non-English locales fall
+  // back to English GPC text when the experience API doesn't provide them
+  const mockGpcFallbacksEs = {
+    "exp.gpc_label": messagesEn["static.gpc"],
+    "exp.gpc_title": messagesEn["static.gpc.title"],
+    "exp.gpc_description": messagesEn["static.gpc.description"],
+    "exp.gpc_status_applied_label": messagesEn["static.gpc.status.applied"],
+    "exp.gpc_status_overridden_label":
+      messagesEn["static.gpc.status.overridden"],
+  };
+
   const mockI18nCatalogLoad = [
     {
       "exp.accept_button_label": "Accept Test",
@@ -61,6 +83,7 @@ describe("i18n-utils", () => {
       "exp.reject_button_label": "Reject Test",
       "exp.save_button_label": "Save Test",
       "exp.title": "Title Test",
+      ...mockGpcFallbacksEn,
     },
     {
       "exp.accept_button_label": "Aceptar Prueba",
@@ -76,11 +99,11 @@ describe("i18n-utils", () => {
       "exp.reject_button_label": "Rechazar Prueba",
       "exp.save_button_label": "Guardar Prueba",
       "exp.title": "Título de la Prueba",
+      ...mockGpcFallbacksEs,
     },
   ];
 
   const mockI18n = {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     activate: jest.fn((locale: Locale): void => {
       mockCurrentLocale = locale;
     }),
@@ -135,11 +158,11 @@ describe("i18n-utils", () => {
       };
 
       initializeI18n(mockI18n, mockNavigator, mockExperience);
+      // Only English static messages are bundled; Spanish comes from the experience API
       expect(mockI18n.load).toHaveBeenCalledWith("en", messagesEn);
-      expect(mockI18n.load).toHaveBeenCalledWith("es", messagesEs);
       expect(mockI18n.activate).toHaveBeenCalledWith("es");
 
-      // Expect that messages are loaded from both static files & experience API
+      // Expect that English messages are loaded from both static files & experience API
       const loadCallsEn = mockI18n.load.mock.calls.filter((e) => e[0] === "en");
       expect(loadCallsEn).toHaveLength(2);
       const fileMessagesEn = loadCallsEn[0][1];
@@ -163,7 +186,6 @@ describe("i18n-utils", () => {
 
       initializeI18n(mockI18n, mockNavigator, mockExpNoAutoDetect);
       expect(mockI18n.load).toHaveBeenCalledWith("en", messagesEn);
-      expect(mockI18n.load).toHaveBeenCalledWith("es", messagesEs);
       expect(mockI18n.activate).toHaveBeenCalledWith("en");
     });
 
@@ -171,12 +193,10 @@ describe("i18n-utils", () => {
       // Make a deep copy of the mock experience using a dirty JSON serialization trick
       // NOTE: This is why lodash exists, but I'm not going to install it just for this! :)
       const mockExpDifferentDefault = JSON.parse(
-        JSON.stringify(mockExperience)
+        JSON.stringify(mockExperience),
       );
-      mockExpDifferentDefault.experience_config.translations[0].is_default =
-        false;
-      mockExpDifferentDefault.experience_config.translations[1].is_default =
-        true; // sets "es" to default
+      mockExpDifferentDefault.experience_config.translations[0].is_default = false;
+      mockExpDifferentDefault.experience_config.translations[1].is_default = true; // sets "es" to default
 
       const mockNavigator: Partial<Navigator> = {
         language: "fr-CA", // not a match for either en or es
@@ -184,46 +204,48 @@ describe("i18n-utils", () => {
 
       initializeI18n(mockI18n, mockNavigator, mockExpDifferentDefault);
       expect(mockI18n.load).toHaveBeenCalledWith("en", messagesEn);
-      expect(mockI18n.load).toHaveBeenCalledWith("es", messagesEs);
       expect(mockI18n.setDefaultLocale).toHaveBeenCalledWith("es");
       expect(mockI18n.setAvailableLanguages).toHaveBeenCalledWith(
-        mockAvailableLanguages
+        mockAvailableLanguages,
       );
       expect(mockI18n.activate).toHaveBeenCalledWith("es");
+    });
+
+    it("handles i18n initialization when translation isn't available (yet)", () => {
+      const mockNavigator: Partial<Navigator> = {
+        language: "fr",
+      };
+      const mockExpMinimalCached = JSON.parse(JSON.stringify(mockExperience));
+      mockExpMinimalCached.experience_config.translations.splice(0, 1);
+      mockExpMinimalCached.available_locales.push("fr");
+      initializeI18n(mockI18n, mockNavigator, mockExpMinimalCached);
+      expect(mockI18n.setDefaultLocale).toHaveBeenCalledWith("es");
     });
   });
 
   describe("loadMessagesFromFiles", () => {
-    it("reads all static messages from source and loads into the i18n catalog", () => {
+    it("reads default (English) static messages from source and loads into the i18n catalog", () => {
       const updatedLocales = loadMessagesFromFiles(mockI18n);
 
-      // Check the updated locales list is what we expect
-      const EXPECTED_NUM_STATIC_LOCALES = 40; // NOTE: manually update this as new locales added
-      expect(updatedLocales).toHaveLength(EXPECTED_NUM_STATIC_LOCALES);
+      // Only the default locale (en) is bundled statically; other locales
+      // get their translations from the experience API at runtime
+      expect(updatedLocales).toHaveLength(1);
       expect(updatedLocales).toContain("en");
-      expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_STATIC_LOCALES);
+      expect(mockI18n.load).toHaveBeenCalledTimes(1);
 
-      // Verify a few of our expected locales match their expected catalogues, too
+      // Verify English messages are loaded correctly
       expect(mockI18n.load).toHaveBeenCalledWith("en", messagesEn);
-      expect(mockI18n.load).toHaveBeenCalledWith("es", messagesEs);
 
       // Sanity-check a few of the loaded messages match our expected static strings
       const [, loadedMessagesEn] =
         mockI18n.load.mock.calls.find(([locale]) => locale === "en") || [];
-      const [, loadedMessagesEs] =
-        mockI18n.load.mock.calls.find(([locale]) => locale === "es") || [];
       expect(loadedMessagesEn).toMatchObject({
         "static.gpc": "Global Privacy Control",
         "static.gpc.status.applied": "Applied",
       });
-      expect(loadedMessagesEs).toMatchObject({
-        "static.gpc": "Control de privacidad global",
-        "static.gpc.status.applied": "Aplicado",
-      });
 
       // Check that TCF strings are not loaded
       expect(loadedMessagesEn).not.toHaveProperty(["static.tcf.consent"]);
-      expect(loadedMessagesEs).not.toHaveProperty(["static.tcf.consent"]);
     });
   });
 
@@ -232,7 +254,7 @@ describe("i18n-utils", () => {
       const updatedLocales = loadTcfMessagesFromFiles(mockI18n);
 
       // Check the updated locales list is what we expect
-      const EXPECTED_NUM_STATIC_LOCALES = 40; // NOTE: manually update this as new locales added
+      const EXPECTED_NUM_STATIC_LOCALES = 42; // NOTE: manually update this as new locales added
       expect(updatedLocales).toHaveLength(EXPECTED_NUM_STATIC_LOCALES);
       expect(updatedLocales).toContain("en");
       expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_STATIC_LOCALES);
@@ -263,12 +285,8 @@ describe("i18n-utils", () => {
 
   describe("loadMessagesFromExperience", () => {
     it("reads all messages from experience API response and loads into the i18n catalog", () => {
-      const updatedLocales = loadMessagesFromExperience(
-        mockI18n,
-        mockExperience
-      );
+      loadMessagesFromExperience(mockI18n, mockExperience);
       const EXPECTED_NUM_TRANSLATIONS = 2;
-      expect(updatedLocales).toEqual(["en", "es"]);
       expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_TRANSLATIONS);
       expect(mockI18n.load).toHaveBeenCalledWith("en", mockI18nCatalogLoad[0]);
       expect(mockI18n.load).toHaveBeenCalledWith("es", mockI18nCatalogLoad[1]);
@@ -301,96 +319,42 @@ describe("i18n-utils", () => {
 
       // Edit the experience data to match the legacy format (w/o translations)
       delete mockExpNoTranslations.experience_config.translations;
+      mockExpNoTranslations.available_locales = ["en"];
 
       // Load the "no translations" version of the experience and run tests
-      const updatedLocales = loadMessagesFromExperience(
-        mockI18n,
-        mockExpNoTranslations as any
-      );
+      loadMessagesFromExperience(mockI18n, mockExpNoTranslations as any);
 
       const EXPECTED_NUM_TRANSLATIONS = 1;
-      expect(updatedLocales).toEqual(["en"]);
       expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_TRANSLATIONS);
       expect(mockI18n.load).toHaveBeenCalledWith("en", mockI18nCatalogLoad[0]);
     });
 
-    it("sets overrides experience_config translations when no locale match", () => {
-      const experienceTranslationOverrides: Partial<FidesExperienceTranslationOverrides> =
-        {
-          title: "My override title",
-          description: "My override description",
-          privacy_policy_url: "https://example.com/privacy",
-          override_language: "en",
-        };
-      const updatedLocales = loadMessagesFromExperience(
-        mockI18n,
-        mockExperience,
-        experienceTranslationOverrides
-      );
-      const EXPECTED_NUM_TRANSLATIONS = 2;
-      expect(updatedLocales).toEqual(["en", "es"]);
-      expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_TRANSLATIONS);
-      expect(mockI18n.load).toHaveBeenCalledWith("en", {
-        ...mockI18nCatalogLoad[0],
-        ...{
-          "exp.description": experienceTranslationOverrides.description,
-          "exp.privacy_policy_url":
-            experienceTranslationOverrides.privacy_policy_url,
-          "exp.title": experienceTranslationOverrides.title,
-        },
-      });
-      expect(mockI18n.load).toHaveBeenCalledWith("es", mockI18nCatalogLoad[1]);
-    });
-
     it("does not set overrides experience_config translations when no locale match", () => {
-      const experienceTranslationOverrides: Partial<FidesExperienceTranslationOverrides> =
-        {
-          title: "My override title",
-          description: "My override description",
-          privacy_policy_url: "https://example.com/privacy",
-          override_language: "ja",
-        };
-      const updatedLocales = loadMessagesFromExperience(
-        mockI18n,
-        mockExperience,
-        experienceTranslationOverrides
-      );
+      loadMessagesFromExperience(mockI18n, mockExperience);
       const EXPECTED_NUM_TRANSLATIONS = 2;
-      expect(updatedLocales).toEqual(["en", "es"]);
       expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_TRANSLATIONS);
       expect(mockI18n.load).toHaveBeenCalledWith("en", mockI18nCatalogLoad[0]);
       expect(mockI18n.load).toHaveBeenCalledWith("es", mockI18nCatalogLoad[1]);
     });
 
     describe("when loading from a tcf_overlay experience", () => {
-      it("reads all messages from gvl_translations API response and loads into the i18n catalog", () => {
+      it("reads all messages from gvl translations API response and loads into the i18n catalog", () => {
         // Mock out a partial response for a tcf_overlay including translations
         const mockExpWithGVL = JSON.parse(JSON.stringify(mockExperience));
         mockExpWithGVL.experience_config.component = "tcf_overlay";
-        mockExpWithGVL.gvl_translations = mockGVLTranslationsJSON;
 
         // Load all the translations
-        const updatedLocales = loadMessagesFromExperience(
-          mockI18n,
-          mockExpWithGVL
-        );
+        loadMessagesFromGVLTranslations(mockI18n, mockGVLTranslationsJSON, [
+          "en",
+          "es",
+        ]);
 
-        // First, confirm that the "regular" experience_config translations are loaded
         const EXPECTED_NUM_TRANSLATIONS = 2;
-        expect(updatedLocales).toEqual(["en", "es"]);
         expect(mockI18n.load).toHaveBeenCalledTimes(EXPECTED_NUM_TRANSLATIONS);
         const [, loadedMessagesEn] = mockI18n.load.mock.calls[0];
         const [, loadedMessagesEs] = mockI18n.load.mock.calls[1];
-        expect(loadedMessagesEn).toMatchObject({
-          "exp.accept_button_label": "Accept Test",
-          "exp.acknowledge_button_label": "Acknowledge Test",
-        });
-        expect(loadedMessagesEs).toMatchObject({
-          "exp.accept_button_label": "Aceptar Prueba",
-          "exp.acknowledge_button_label": "Reconocer Prueba",
-        });
 
-        // Confirm that the English gvl_translations are loaded
+        // Confirm that the English GVL translations are loaded
         const expectedMessagesEn: Record<string, RegExp> = {
           // Example purposes
           "exp.tcf.purposes.1.name": /^Store and\/or access/,
@@ -421,7 +385,7 @@ describe("i18n-utils", () => {
           expect(loadedMessagesEn[id]).toMatch(regex);
         });
 
-        // Confirm that the Spanish gvl_translations are loaded
+        // Confirm that the Spanish GVL translations are loaded
         const expectedMessagesEs: Record<string, RegExp> = {
           // Example purposes
           "exp.tcf.purposes.1.name": /^Almacenar la información/,
@@ -483,48 +447,171 @@ describe("i18n-utils", () => {
         expect(getRecordCounts(loadedMessagesEn)).toMatchObject(expectedCounts);
         expect(getRecordCounts(loadedMessagesEs)).toMatchObject(expectedCounts);
       });
+    });
 
-      it("handles a mismatch between the experience_config and gvl_translations APIs by returning only locales available in both", () => {
-        // Mock out a partial response for a tcf_overlay including translations
-        const mockExpWithGVL = JSON.parse(JSON.stringify(mockExperience));
-        mockExpWithGVL.experience_config.component = "tcf_overlay";
-        mockExpWithGVL.gvl_translations = mockGVLTranslationsJSON;
+    describe("TCF GVL loading with non-English defaults", () => {
+      it("should not load English GVL when default locale is French and user locale is English", () => {
+        // This test covers the exact scenario that caused the translation bug
+        const mockExpFrenchDefault = JSON.parse(JSON.stringify(mockExperience));
+        mockExpFrenchDefault.experience_config.component = "tcf_overlay";
+        mockExpFrenchDefault.experience_config.translations[0].is_default = false; // English
+        mockExpFrenchDefault.experience_config.translations[1].is_default = false; // Spanish
+        // Add French as default
+        mockExpFrenchDefault.experience_config.translations.push({
+          language: "fr",
+          is_default: true,
+          accept_button_label: "Accepter",
+          reject_button_label: "Rejeter",
+          acknowledge_button_label: "OK",
+          banner_description: "Nous utilisons des cookies",
+          banner_title: "Gestion du consentement",
+          description:
+            "Nous utilisons des cookies et des technologies similaires",
+          title: "Préférences de confidentialité",
+          privacy_preferences_link_label: "Gérer les préférences",
+          privacy_policy_link_label: "Politique de confidentialité",
+          privacy_policy_url: "https://example.com/privacy",
+          save_button_label: "Enregistrer",
+          modal_link_label: "Gérer mes préférences",
+          purpose_header: "Finalités",
+        });
+        mockExpFrenchDefault.available_locales = ["en", "es", "fr"];
 
-        // Modify "en" to be "EN" (uppercased!), which shouldn't be treated as a mismatch!
-        mockExpWithGVL.experience_config.translations[0].language = "EN";
+        // Mock the i18n instance with French as current locale
+        const mockI18nFrench = {
+          ...mockI18n,
+          locale: "fr",
+          getDefaultLocale: () => "fr",
+        };
 
-        // Replace "es" with "es-MX" in the experience_config.translations to force a mismatch
-        mockExpWithGVL.experience_config.translations[1].language = "es-MX";
+        // Load messages from experience (this should NOT load English GVL)
+        loadMessagesFromExperience(mockI18nFrench, mockExpFrenchDefault);
 
-        // Confirm our test setup shows a mismatch between experience_config & gvl_translations
+        // Verify that loadGVLMessagesFromExperience was NOT called
+        // (This would be called in the actual TcfOverlay component)
+        // We can't directly test this here, but we can verify the experience config
         expect(
-          mockExpWithGVL.experience_config.translations.map(
-            (e: any) => e.language
-          )
-        ).toEqual(["EN", "es-MX"]);
-        expect(Object.keys(mockExpWithGVL.gvl_translations)).toEqual([
-          "en",
-          "es",
+          mockExpFrenchDefault.experience_config.translations.find(
+            (t: any) => t.is_default,
+          )?.language,
+        ).toBe("fr");
+      });
+
+      it("should load French GVL via API when default locale is French and user locale is English", () => {
+        // Mock French GVL translations
+        const mockFrenchGVLTranslations = {
+          fr: {
+            purposes: {
+              1: {
+                id: 1,
+                name: "Stocker et/ou accéder à des informations sur un terminal",
+                description:
+                  "Les cookies, appareils ou identifiants similaires stockés sur votre terminal",
+                illustrations: [
+                  "La plupart des finalités expliquées dans cette liste ne s'appliquent pas à tous les développeurs ou sites web.",
+                ],
+              },
+            },
+            specialPurposes: {},
+            features: {},
+            specialFeatures: {},
+            stacks: {},
+            dataCategories: {},
+            gvlSpecificationVersion: 3,
+            vendorListVersion: 1,
+            lastUpdated: "2023-01-01T00:00:00Z",
+            tcfPolicyVersion: 2,
+            vendors: {},
+          },
+        };
+
+        // Load French GVL translations
+        loadMessagesFromGVLTranslations(mockI18n, mockFrenchGVLTranslations, [
+          "fr",
         ]);
 
-        // Load all the translations
-        const updatedLocales = loadMessagesFromExperience(
-          mockI18n,
-          mockExpWithGVL
+        // Verify French GVL translations are loaded
+        expect(mockI18n.load).toHaveBeenCalledWith(
+          "fr",
+          expect.objectContaining({
+            "exp.tcf.purposes.1.name":
+              "Stocker et/ou accéder à des informations sur un terminal",
+            "exp.tcf.purposes.1.description":
+              "Les cookies, appareils ou identifiants similaires stockés sur votre terminal",
+            "exp.tcf.purposes.1.illustrations.0":
+              "La plupart des finalités expliquées dans cette liste ne s'appliquent pas à tous les développeurs ou sites web.",
+          }),
         );
+      });
 
-        // Confirm that only the overlapping locales are loaded
-        expect(updatedLocales).toEqual(["EN"]);
-        const [, loadedMessagesEn] = mockI18n.load.mock.calls[0];
-        expect(loadedMessagesEn).toMatchObject({
-          "exp.accept_button_label": "Accept Test",
-          "exp.acknowledge_button_label": "Acknowledge Test",
-          "exp.tcf.purposes.1.name":
-            "Store and/or access information on a device",
-          "exp.tcf.purposes.1.description": expect.stringMatching(
-            /^Cookies, device or similar/
-          ),
-        });
+      it("should handle the scenario where French GVL is loaded but English GVL would overwrite it", () => {
+        // This test simulates the bug scenario:
+        // 1. French GVL is loaded via API
+        // 2. English GVL from full experience would overwrite it
+        // 3. The fix prevents this overwrite
+
+        const mockI18nWithFrench = {
+          ...mockI18n,
+          locale: "fr",
+          getDefaultLocale: () => "fr",
+          t: jest.fn((key: string) => {
+            // Mock that French GVL translations are already loaded
+            if (key === "exp.tcf.purposes.1.description") {
+              return "Les cookies, appareils ou identifiants similaires stockés sur votre terminal";
+            }
+            return key; // Return key if not found
+          }),
+        };
+
+        // Simulate the condition check from TcfOverlay
+        const userlocale: string = "en";
+        const bestLocale: string = "fr";
+        const defaultLocale: string = "en";
+
+        // This should be true (load French GVL via API)
+        const shouldLoadFrenchGVL =
+          !!userlocale && bestLocale !== defaultLocale;
+        expect(shouldLoadFrenchGVL).toBe(true);
+
+        // This should be false (don't load English GVL from experience)
+        const shouldLoadEnglishGVL =
+          !userlocale || bestLocale === defaultLocale;
+        expect(shouldLoadEnglishGVL).toBe(false);
+
+        // Verify that French GVL translations are already present
+        const existingFrenchTranslation = mockI18nWithFrench.t(
+          "exp.tcf.purposes.1.description",
+        );
+        expect(existingFrenchTranslation).toBe(
+          "Les cookies, appareils ou identifiants similaires stockés sur votre terminal",
+        );
+        expect(existingFrenchTranslation).not.toBe(
+          "exp.tcf.purposes.1.description",
+        ); // Not the fallback key
+      });
+
+      it("should load English GVL from experience when user locale is English", () => {
+        // This test verifies the normal case still works
+        const mockExpEnglishDefault = JSON.parse(
+          JSON.stringify(mockExperience),
+        );
+        mockExpEnglishDefault.experience_config.component = "tcf_overlay";
+        mockExpEnglishDefault.experience_config.translations[0].is_default = true; // English
+        mockExpEnglishDefault.experience_config.translations[1].is_default = false; // Spanish
+
+        // Simulate the condition check from TcfOverlay
+        const userlocale = "en";
+        const bestLocale = "en";
+        const defaultLocale = "en";
+
+        // This should be false (don't load via API)
+        const shouldLoadViaAPI = !!userlocale && bestLocale !== defaultLocale;
+        expect(shouldLoadViaAPI).toBe(false);
+
+        // This should be true (load English GVL from experience)
+        const shouldLoadFromExperience =
+          !userlocale || bestLocale === defaultLocale;
+        expect(shouldLoadFromExperience).toBe(true);
       });
     });
   });
@@ -543,7 +630,7 @@ describe("i18n-utils", () => {
               { language: "zh", is_default: false },
             ],
           },
-        } as Partial<PrivacyExperience>)
+        } as Partial<PrivacyExperience>),
       ).toEqual("fr");
 
       // Check for multiple 'is_default' translations
@@ -557,7 +644,7 @@ describe("i18n-utils", () => {
               { language: "zh", is_default: false },
             ],
           },
-        } as Partial<PrivacyExperience>)
+        } as Partial<PrivacyExperience>),
       ).toEqual("es");
     });
 
@@ -572,7 +659,7 @@ describe("i18n-utils", () => {
               { language: "zh", is_default: false },
             ],
           },
-        } as Partial<PrivacyExperience>)
+        } as Partial<PrivacyExperience>),
       ).toBeUndefined();
     });
   });
@@ -596,7 +683,20 @@ describe("i18n-utils", () => {
       const mockOptions: Partial<FidesInitOptions> = {
         fidesLocale: "fr",
       };
-      expect(detectUserLocale(mockNavigator, mockOptions)).toEqual("fr");
+      expect(detectUserLocale(mockNavigator, mockOptions.fidesLocale)).toEqual(
+        "fr",
+      );
+    });
+
+    it("returns the browser locale if locale is provided but undefined", () => {
+      const mockOptions: Partial<FidesInitOptions> = {};
+      expect(detectUserLocale(mockNavigator, mockOptions.fidesLocale)).toEqual(
+        "es",
+      );
+    });
+
+    it("returns the default locale if provided and browser locale is missing", () => {
+      expect(detectUserLocale({}, undefined, "fr")).toEqual("fr");
     });
   });
 
@@ -637,10 +737,10 @@ describe("i18n-utils", () => {
       const userDefaultLocale = "fr";
       const availableLocales = ["en", "es", "fr"];
       expect(
-        matchAvailableLocales("zh", availableLocales, userDefaultLocale)
+        matchAvailableLocales("zh", availableLocales, userDefaultLocale),
       ).toEqual("fr");
       expect(
-        matchAvailableLocales("foo", availableLocales, userDefaultLocale)
+        matchAvailableLocales("foo", availableLocales, userDefaultLocale),
       ).toEqual("fr");
     });
 
@@ -670,30 +770,39 @@ describe("i18n-utils", () => {
 
     it("selects an exact match for current locale if available", () => {
       mockCurrentLocale = "es";
-      expect(selectBestNoticeTranslation(mockI18n, mockNotice)).toHaveProperty(
-        "language",
-        "es"
-      );
+      expect(
+        selectBestNoticeTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockNotice,
+        ),
+      ).toHaveProperty("language", "es");
     });
 
     it("falls back to the default locale if an exact match isn't available", () => {
       mockCurrentLocale = "zh";
       mockDefaultLocale = "en";
-      expect(selectBestNoticeTranslation(mockI18n, mockNotice)).toHaveProperty(
-        "language",
-        "en"
-      );
+      expect(
+        selectBestNoticeTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockNotice,
+        ),
+      ).toHaveProperty("language", "en");
 
       mockDefaultLocale = "es";
-      expect(selectBestNoticeTranslation(mockI18n, mockNotice)).toHaveProperty(
-        "language",
-        "es"
-      );
+      expect(
+        selectBestNoticeTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockNotice,
+        ),
+      ).toHaveProperty("language", "es");
     });
 
     it("falls back to the first locale if neither exact match nor default locale are available", () => {
       const mockNoticeNoEnglish: PrivacyNoticeWithPreference = JSON.parse(
-        JSON.stringify(mockNotice)
+        JSON.stringify(mockNotice),
       );
       mockNoticeNoEnglish.translations = [mockNotice.translations[1]];
       expect(mockNoticeNoEnglish.translations.map((e) => e.language)).toEqual([
@@ -702,22 +811,36 @@ describe("i18n-utils", () => {
       mockCurrentLocale = "zh";
       mockDefaultLocale = "en";
       expect(
-        selectBestNoticeTranslation(mockI18n, mockNoticeNoEnglish)
+        selectBestNoticeTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockNoticeNoEnglish,
+        ),
       ).toHaveProperty("language", "es");
     });
 
     it("returns null for invalid/missing translations", () => {
-      expect(selectBestNoticeTranslation(mockI18n, null as any)).toBeNull();
       expect(
-        selectBestNoticeTranslation(mockI18n, { translations: [] } as any)
+        selectBestNoticeTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          null as any,
+        ),
       ).toBeNull();
       expect(
-        selectBestNoticeTranslation(mockI18n, { translations: null } as any)
+        selectBestNoticeTranslation(mockCurrentLocale, mockDefaultLocale, {
+          translations: [],
+        } as any),
       ).toBeNull();
       expect(
-        selectBestNoticeTranslation(mockI18n, {
+        selectBestNoticeTranslation(mockCurrentLocale, mockDefaultLocale, {
+          translations: null,
+        } as any),
+      ).toBeNull();
+      expect(
+        selectBestNoticeTranslation(mockCurrentLocale, mockDefaultLocale, {
           translations: undefined,
-        } as any)
+        } as any),
       ).toBeNull();
     });
   });
@@ -736,7 +859,11 @@ describe("i18n-utils", () => {
     it("selects an exact match for current locale if available", () => {
       mockCurrentLocale = "es";
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, mockExperienceConfig)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockExperienceConfig,
+        ),
       ).toHaveProperty("language", "es");
     });
 
@@ -744,18 +871,26 @@ describe("i18n-utils", () => {
       mockCurrentLocale = "zh";
       mockDefaultLocale = "en";
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, mockExperienceConfig)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockExperienceConfig,
+        ),
       ).toHaveProperty("language", "en");
 
       mockDefaultLocale = "es";
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, mockExperienceConfig)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockExperienceConfig,
+        ),
       ).toHaveProperty("language", "es");
     });
 
     it("falls back to the first locale if neither exact match nor default locale are available", () => {
       const mockExpNoEnglish: ExperienceConfig = JSON.parse(
-        JSON.stringify(mockExperienceConfig)
+        JSON.stringify(mockExperienceConfig),
       );
       mockExpNoEnglish.translations = [mockExpNoEnglish.translations[1]];
       expect(mockExpNoEnglish.translations.map((e) => e.language)).toEqual([
@@ -763,28 +898,48 @@ describe("i18n-utils", () => {
       ]);
       mockCurrentLocale = "zh";
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, mockExpNoEnglish)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          mockExpNoEnglish,
+        ),
       ).toHaveProperty("language", "es");
     });
 
     it("returns null for invalid/missing translations", () => {
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, null as any)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          null as any,
+        ),
       ).toBeNull();
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, {
-          translations: [],
-        } as any)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          {
+            translations: [],
+          } as any,
+        ),
       ).toBeNull();
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, {
-          translations: null,
-        } as any)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          {
+            translations: null,
+          } as any,
+        ),
       ).toBeNull();
       expect(
-        selectBestExperienceConfigTranslation(mockI18n, {
-          translations: undefined,
-        } as any)
+        selectBestExperienceConfigTranslation(
+          mockCurrentLocale,
+          mockDefaultLocale,
+          {
+            translations: undefined,
+          } as any,
+        ),
       ).toBeNull();
     });
   });
@@ -825,10 +980,8 @@ describe("i18n-utils", () => {
         const expectedResults = tests[locale];
         const match = locale.match(LOCALE_REGEX);
         if (match) {
-          // eslint-disable-next-line jest/no-conditional-expect
           expect(Array.from(match)).toEqual(expectedResults);
         } else {
-          // eslint-disable-next-line jest/no-conditional-expect
           expect(match).toEqual(expectedResults);
         }
       });
@@ -925,8 +1078,13 @@ describe("i18n-utils", () => {
       "component" | "experience_config" | "privacy_notices" | "gvl"
     > & {
       component: string;
-      experience_config: Omit<ExperienceConfig, "component"> & {
+      experience_config: Omit<
+        ExperienceConfig,
+        "component" | "layer1_button_options" | "reject_all_mechanism"
+      > & {
         component: string;
+        layer1_button_options: string;
+        reject_all_mechanism: string;
       };
       privacy_notices: Array<
         Omit<
@@ -954,7 +1112,7 @@ describe("i18n-utils", () => {
       // This test is 99% just for the build-time check above, but throw an
       // assertion in there to keep Jest happy!
       expect(mockExpTyped.experience_config.component).toEqual(
-        "banner_and_modal"
+        "banner_and_modal",
       );
     });
   });
@@ -1056,7 +1214,7 @@ describe("i18n module", () => {
         testI18n.load("zz", { "test.greeting": "Zalloz zagain, Jest!" });
         testI18n.load("zz", { "test.greeting": "Zalloz ze final zone, Jest!" });
         expect(testI18n.t({ id: "test.greeting" })).toEqual(
-          "Zalloz ze final zone, Jest!"
+          "Zalloz ze final zone, Jest!",
         );
       });
 

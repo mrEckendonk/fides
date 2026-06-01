@@ -1,17 +1,23 @@
 /// <reference types="cypress" />
 
+import "@testing-library/cypress/add-commands";
+
+import { RootState } from "~/app/store";
 import { STORAGE_ROOT_KEY } from "~/constants";
 import { RoleRegistryEnum, ScopeRegistryEnum } from "~/types/api";
 
 Cypress.Commands.add("getByTestId", (selector, options) =>
-  cy.get(`[data-testid='${selector}']`, options)
+  cy.get(`[data-testid='${selector}']`, options),
 );
 
 Cypress.Commands.add("getByTestIdPrefix", (prefix, options) =>
-  cy.get(`[data-testid^='${prefix}']`, options)
+  cy.get(`[data-testid^='${prefix}']`, options),
 );
 
-Cypress.Commands.add("login", () => {
+/**
+ * @arg initialStorage - allow an initial storage to be passed both for convenience and simulating real world usage where some state can be retained after logout
+ */
+Cypress.Commands.add("login", (initialStorage?: RootState) => {
   cy.fixture("login.json").then((body) => {
     const authState = {
       user: body.user_data,
@@ -23,8 +29,9 @@ Cypress.Commands.add("login", () => {
         // redux-persist stringifies the root object _and_ the first layer of children.
         // https://github.com/rt2zz/redux-persist/issues/489#issuecomment-336928988
         JSON.stringify({
+          ...initialStorage,
           auth: JSON.stringify(authState),
-        })
+        }),
       );
     });
     cy.intercept("/api/v1/user/*/permission", {
@@ -36,10 +43,6 @@ Cypress.Commands.add("login", () => {
 const getSelectOptionList = (selectorId: string) =>
   cy.getByTestId(selectorId).click().find(`.custom-select__menu-list`);
 
-Cypress.Commands.add("getSelectValueContainer", (selectorId) =>
-  cy.getByTestId(selectorId).find(`.custom-select__value-container`)
-);
-
 Cypress.Commands.add("selectOption", (selectorId, optionText) => {
   getSelectOptionList(selectorId).contains(optionText).click();
 });
@@ -48,14 +51,14 @@ Cypress.Commands.add(
   "removeMultiValue",
   (selectorId: string, optionText: string) =>
     cy
-      .getSelectValueContainer(selectorId)
+      .getByTestId(selectorId)
       .contains(optionText)
       .siblings(".custom-select__multi-value__remove")
-      .click()
+      .click(),
 );
 
 Cypress.Commands.add("clearSingleValue", (selectorId) =>
-  cy.getByTestId(selectorId).find(".custom-select__clear-indicator").click()
+  cy.getByTestId(selectorId).find(".custom-select__clear-indicator").click(),
 );
 
 Cypress.Commands.add("assumeRole", (role) => {
@@ -75,12 +78,79 @@ Cypress.Commands.add("assumeRole", (role) => {
   });
 });
 
+Cypress.Commands.add("overrideFeatureFlag", (flagName, value) => {
+  cy.window().then((win) => {
+    // Get or initialize the persisted state from localStorage
+    const storageKey = STORAGE_ROOT_KEY;
+    const persistedStateStr = win.localStorage.getItem(storageKey);
+    const persistedState = persistedStateStr
+      ? JSON.parse(persistedStateStr)
+      : {};
+
+    // Parse the features slice (redux-persist double-stringifies nested objects)
+    const featuresStr = persistedState.features;
+    const features = featuresStr ? JSON.parse(featuresStr) : { flags: {} };
+
+    // Get or create the flag configuration
+    const currentFlag = features.flags[flagName] || {
+      development: value,
+      test: value,
+      production: value,
+    };
+
+    // Update the flag for the current environment
+    const env = process.env.NEXT_PUBLIC_APP_ENV || "test";
+    features.flags[flagName] = {
+      ...currentFlag,
+      [env]: value,
+    };
+
+    // Save back to localStorage
+    persistedState.features = JSON.stringify(features);
+    win.localStorage.setItem(storageKey, JSON.stringify(persistedState));
+
+    // If the Redux store is available (app already loaded), also dispatch to it
+    // eslint-disable-next-line no-underscore-dangle
+    if ((win as any).__REDUX_STORE__) {
+      // eslint-disable-next-line no-underscore-dangle
+      (win as any).__REDUX_STORE__.dispatch({
+        type: "features/override",
+        payload: {
+          flag: flagName,
+          env,
+          value,
+        },
+      });
+    }
+  });
+});
+
+Cypress.Commands.add("visitWithLanguage", (url: string, language: string) => {
+  cy.visit(url, {
+    onBeforeLoad(win) {
+      Object.defineProperty(win.navigator, "language", {
+        value: language,
+        writable: true,
+      });
+      Object.defineProperty(win.navigator, "languages", {
+        value: [language],
+        writable: true,
+      });
+    },
+  });
+});
+
 // this prevents an infinite loop that occurs sometimes and causes tests to
 // fail-- see https://github.com/cypress-io/cypress/issues/20341
 Cypress.on("uncaught:exception", (err) => {
   if (err.message.includes("ResizeObserver")) {
     // returning false here prevents Cypress from
     // failing the test
+    return false;
+  }
+  if (err.message.includes("setting 'locale'")) {
+    // Ant v6 can throw a transient locale error when components unmount
+    // during Next.js page transitions while a message is being displayed.
     return false;
   }
   return true;
@@ -95,7 +165,7 @@ declare global {
           Cypress.Timeoutable &
           Cypress.Withinable &
           Cypress.Shadow
-      >
+      >,
     ) => Chainable<JQuery<HTMLElement>>;
 
     interface Chainable {
@@ -119,27 +189,20 @@ declare global {
       /**
        * Programmatically login with a mock user
        */
-      login(): void;
+      login(initialStorage?: RootState): void;
       /**
        * Stub a user with the scopes associated with a role
        * @example cy.assumeRole(RoleRegistryEnum.OWNER)
        */
       assumeRole(role: RoleRegistryEnum): void;
       /**
-       * Get the container of a CustomSelect
-       * @example cy.selectValueContainer("input-allow_list_id")
-       */
-      getSelectValueContainer(
-        selectorId: string
-      ): Chainable<JQuery<HTMLElement>>;
-      /**
-       * Selects an option from a CustomSelect component
+       * @deprecated Selects an option from a CustomSelect component
        *
-       * @example cy.selectOption("input-allow_list_id", "Prime numbers");
+       * @example cy.getByTestId("input-allow_list_id").antSelect("Prime numbers")
        */
       selectOption(
         selectorId: string,
-        optionText: string
+        optionText: string,
       ): Chainable<JQuery<HTMLElement>>;
       /**
        * Removes a value from a CustomSelect that is a multiselect
@@ -153,6 +216,25 @@ declare global {
        * @example removeMultiValue("input-singlefield");
        */
       clearSingleValue(selectorId: string): void;
+      /**
+       * Override a feature flag value in the Redux store for testing.
+       * This allows you to toggle feature flags on/off during tests
+       * without needing to modify the UI.
+       *
+       * @example cy.overrideFeatureFlag("webMonitor", false)
+       */
+      overrideFeatureFlag(
+        flagName: string,
+        value: boolean | string | number,
+      ): void;
+      /**
+       * Visit a URL with a specific language/locale setting.
+       * This sets the browser's navigator.language before loading the page.
+       *
+       * @example cy.visitWithLanguage("/privacy-requests", "en-US")
+       * @example cy.visitWithLanguage("/settings", "es-ES")
+       */
+      visitWithLanguage(url: string, language: string): Chainable<any>;
     }
   }
 }

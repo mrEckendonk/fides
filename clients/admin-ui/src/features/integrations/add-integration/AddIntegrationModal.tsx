@@ -1,11 +1,17 @@
-import { UseDisclosureReturn } from "fidesui";
+import { Button, Flex } from "fidesui";
 import { useState } from "react";
 
-import AddModal from "~/features/configure-consent/AddModal";
-import { IntegrationTypeInfo } from "~/features/integrations/add-integration/allIntegrationTypes";
-import ConfigureIntegrationForm from "~/features/integrations/add-integration/ConfigureIntegrationForm";
+import ConfirmCloseModal from "~/features/common/modals/ConfirmCloseModal";
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
+import getIntegrationTypeInfo, {
+  IntegrationTypeInfo,
+} from "~/features/integrations/add-integration/allIntegrationTypes";
+import { ConfigureIntegrationForm } from "~/features/integrations/add-integration/ConfigureIntegrationForm";
 import IntegrationTypeDetail from "~/features/integrations/add-integration/IntegrationTypeDetail";
-import SelectIntegrationType from "~/features/integrations/add-integration/SelectIntegrationType";
+import SelectIntegrationType, {
+  useIntegrationFilters,
+} from "~/features/integrations/add-integration/SelectIntegrationType";
+import { SaasConnectionTypes } from "~/features/integrations/types/SaasConnectionTypes";
 import useIntegrationOption from "~/features/integrations/useIntegrationOption";
 
 enum IntegrationModalStep {
@@ -14,24 +20,53 @@ enum IntegrationModalStep {
   FORM = "form",
 }
 
-const AddIntegrationModal = ({
-  isOpen,
-  onClose,
-}: Pick<UseDisclosureReturn, "isOpen" | "onClose">) => {
+interface AddIntegrationModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+interface FormState {
+  dirty: boolean;
+  isValid: boolean;
+  submitForm: () => void;
+  loading: boolean;
+}
+
+const AddIntegrationModal = ({ isOpen, onClose }: AddIntegrationModalProps) => {
   const [step, setStep] = useState<IntegrationModalStep>(
-    IntegrationModalStep.LIST_VIEW
+    IntegrationModalStep.LIST_VIEW,
+  );
+  const [previousStep, setPreviousStep] = useState<IntegrationModalStep | null>(
+    null,
   );
 
   const [integrationType, setIntegrationType] = useState<IntegrationTypeInfo>();
+  const [formState, setFormState] = useState<FormState | null>(null);
+
+  const { filterBar, filteredTypes, isFiltering } = useIntegrationFilters();
 
   const connectionOption = useIntegrationOption(
-    integrationType?.placeholder.connection_type
+    integrationType?.placeholder.connection_type,
+    integrationType?.placeholder?.saas_config?.type as SaasConnectionTypes,
+  );
+
+  const { description } = getIntegrationTypeInfo(
+    integrationType?.placeholder.connection_type,
+    integrationType?.placeholder.saas_config?.type,
   );
 
   const handleCancel = () => {
     setStep(IntegrationModalStep.LIST_VIEW);
+    setPreviousStep(null);
     setIntegrationType(undefined);
+    setFormState(null);
     onClose();
+  };
+
+  const handleIntegrationClick = (typeInfo: IntegrationTypeInfo) => {
+    setIntegrationType(typeInfo);
+    setPreviousStep(IntegrationModalStep.LIST_VIEW);
+    setStep(IntegrationModalStep.FORM);
   };
 
   const handleDetailClick = (typeInfo: IntegrationTypeInfo) => {
@@ -39,38 +74,126 @@ const AddIntegrationModal = ({
     setIntegrationType(typeInfo);
   };
 
-  const handleConfigure = (typeInfo: IntegrationTypeInfo) => {
+  const handleConfigure = () => {
+    setPreviousStep(IntegrationModalStep.DETAIL);
     setStep(IntegrationModalStep.FORM);
-    setIntegrationType(typeInfo);
   };
 
-  const modalTitle = integrationType
-    ? `${integrationType.placeholder.name} Integration`
-    : "Add integration";
+  const handleBack = () => {
+    if (previousStep) {
+      setStep(previousStep);
+      setPreviousStep(null);
+    }
+  };
+
+  const handleSave = () => {
+    if (formState && formState.submitForm) {
+      formState.submitForm();
+    }
+  };
+
+  const modalTitle =
+    integrationType && step !== IntegrationModalStep.LIST_VIEW
+      ? `${integrationType.placeholder.name} integration`
+      : "Select an integration";
+
+  const renderFooter = () => {
+    if (step === IntegrationModalStep.LIST_VIEW) {
+      return null;
+    }
+
+    if (step === IntegrationModalStep.DETAIL) {
+      return (
+        <Flex justify="space-between" className="w-full">
+          <Button onClick={() => setStep(IntegrationModalStep.LIST_VIEW)}>
+            Back
+          </Button>
+          <Button
+            onClick={handleConfigure}
+            type="primary"
+            data-testid="configure-modal-btn"
+          >
+            Next
+          </Button>
+        </Flex>
+      );
+    }
+
+    if (step === IntegrationModalStep.FORM) {
+      return (
+        <Flex justify="space-between" className="w-full">
+          <Button onClick={handleBack}>Back</Button>
+          <Button
+            type="primary"
+            onClick={handleSave}
+            disabled={!formState || !formState.isValid || !formState.dirty}
+            loading={formState?.loading}
+            data-testid="save-btn"
+          >
+            Save
+          </Button>
+        </Flex>
+      );
+    }
+
+    return null;
+  };
 
   return (
-    <AddModal isOpen={isOpen} onClose={handleCancel} title={modalTitle}>
+    <ConfirmCloseModal
+      open={isOpen}
+      onClose={handleCancel}
+      getIsDirty={() =>
+        step === IntegrationModalStep.FORM && (formState?.dirty ?? false)
+      }
+      title={modalTitle}
+      centered
+      destroyOnHidden
+      width={MODAL_SIZE.xl}
+      footer={renderFooter()}
+      styles={{
+        body: {
+          height: 700,
+          padding: 0,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+        },
+      }}
+      wrapProps={{ "data-testid": "add-modal-content" }}
+    >
       {step === IntegrationModalStep.LIST_VIEW && (
-        <SelectIntegrationType
-          onCancel={handleCancel}
-          onDetailClick={handleDetailClick}
-          onConfigureClick={handleConfigure}
-        />
+        <>
+          <Flex className="py-4">{filterBar}</Flex>
+          <Flex vertical flex={1} className="overflow-y-auto pb-4">
+            <SelectIntegrationType
+              filteredTypes={filteredTypes}
+              isFiltering={isFiltering}
+              onIntegrationClick={handleIntegrationClick}
+              onDetailClick={handleDetailClick}
+            />
+          </Flex>
+        </>
       )}
       {step === IntegrationModalStep.DETAIL && (
-        <IntegrationTypeDetail
-          integrationType={integrationType}
-          onConfigure={() => setStep(IntegrationModalStep.FORM)}
-          onCancel={handleCancel}
-        />
+        <Flex vertical flex={1} className="overflow-y-auto py-6">
+          <IntegrationTypeDetail
+            integrationType={integrationType}
+            onConfigure={handleConfigure}
+          />
+        </Flex>
       )}
       {step === IntegrationModalStep.FORM && (
-        <ConfigureIntegrationForm
-          connectionOption={connectionOption!}
-          onCancel={handleCancel}
-        />
+        <Flex vertical flex={1} className="overflow-y-auto py-6">
+          <ConfigureIntegrationForm
+            connectionOption={connectionOption!}
+            onClose={handleCancel}
+            description={description}
+            onFormStateChange={setFormState}
+          />
+        </Flex>
       )}
-    </AddModal>
+    </ConfirmCloseModal>
   );
 };
 

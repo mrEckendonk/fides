@@ -1,9 +1,9 @@
-import { ComponentChildren, VNode, h } from "preact";
+import { ComponentChildren, VNode } from "preact";
 import { HTMLAttributes } from "preact/compat";
 
-import { Attributes } from "../lib/a11y-dialog";
-import type { I18n } from "../lib/i18n";
-
+import { A11yDialogAttributes } from "../lib/a11y-dialog";
+import { useEvent } from "../lib/providers/event-context";
+import { useFidesGlobal } from "../lib/providers/fides-global-context";
 import CloseButton from "./CloseButton";
 import ConsentContent from "./ConsentContent";
 
@@ -11,25 +11,32 @@ const ConsentModal = ({
   attributes,
   children,
   dismissable,
-  i18n,
+  onVendorPageClick,
   renderModalFooter,
+  headerContent,
+  isVendorAssetDisclosureView,
 }: {
-  attributes: Attributes;
+  attributes: A11yDialogAttributes;
   children: ComponentChildren;
   dismissable: boolean | undefined;
-  i18n: I18n;
   onVendorPageClick?: () => void;
-  renderModalFooter: () => VNode;
+  renderModalFooter: () => VNode | null;
+  headerContent: {
+    title: string;
+    description: string;
+  };
+  isVendorAssetDisclosureView?: boolean;
 }) => {
-  const { container, overlay, dialog, title, closeButton } = attributes;
-
+  const { container, dialog, title, closeButton } = attributes;
+  const { setTrigger } = useEvent();
+  const { fidesGlobal } = useFidesGlobal();
   return (
     <div
       data-testid="consent-modal"
       {...(container as Partial<HTMLAttributes<HTMLDivElement>>)}
       className="fides-modal-container"
     >
-      <div {...overlay} className="fides-modal-overlay" />
+      <div className="fides-modal-overlay" />
       <div
         data-testid="fides-modal-content"
         {...dialog}
@@ -39,14 +46,22 @@ const ConsentModal = ({
           <div />
           <CloseButton
             ariaLabel="Close modal"
-            onClick={closeButton.onClick}
-            hidden={window.Fides.options.preventDismissal || !dismissable}
+            onClick={() => {
+              setTrigger({
+                type: "button",
+                label: "Close modal",
+              });
+              closeButton.onClick();
+            }}
+            hidden={fidesGlobal?.options.preventDismissal || !dismissable}
           />
         </div>
         <ConsentContent
           titleProps={title}
-          i18n={i18n}
           renderModalFooter={renderModalFooter}
+          onVendorPageClick={onVendorPageClick}
+          headerContent={headerContent}
+          isVendorAssetDisclosureView={isVendorAssetDisclosureView}
         >
           {children}
         </ConsentContent>

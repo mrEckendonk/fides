@@ -8,7 +8,7 @@ from fides.api.graph.execution import ExecutionNode
 from fides.api.models.connectionconfig import ConnectionConfig, ConnectionTestStatus
 from fides.api.models.policy import Policy
 from fides.api.models.privacy_request import PrivacyRequest, RequestTask
-from fides.api.service.connectors.query_config import QueryConfig
+from fides.api.service.connectors.query_configs.query_config import QueryConfig
 from fides.api.util.collection_util import Row
 from fides.config import CONFIG
 
@@ -82,6 +82,7 @@ class BaseConnector(Generic[DB_CONNECTOR_TYPE], ABC):
         privacy_request: PrivacyRequest,
         request_task: RequestTask,
         rows: List[Row],
+        input_data: Optional[Dict[str, List[Any]]] = None,
     ) -> int:
         """Execute a masking request. Return the number of rows that have been updated
 
@@ -115,3 +116,45 @@ class BaseConnector(Generic[DB_CONNECTOR_TYPE], ABC):
     @abstractmethod
     def close(self) -> None:
         """Close any held resources"""
+
+    def execute_standalone_retrieval_query(
+        self, node: ExecutionNode, fields: List[str], filters: Dict[str, List[Any]]
+    ) -> List[Row]:
+        """
+        Execute a standalone retrieval query, where the executed query is not dependent on the
+        structure of the provided ExecutionNode. The node is used just to provide the collection.
+
+        - node: ExecutionNode for the collection; incoming and outgoing edges do not affect the query
+        - fields: List of fields to retrieve from the collection, e.g column names
+        - filters: Dict of field_name, field_value pairs to filter the query
+
+        Returns the list of matched rows
+        """
+        raise NotImplementedError(
+            "execute_standalone_retrieval_query must be implemented in a concrete subclass"
+        )
+
+    @property
+    def requires_primary_keys(self) -> bool:
+        """
+        Indicates if datasets linked to this connector require primary keys for erasures.
+        Defaults to True.
+        """
+
+        # Defaulting to true for now so we can keep the default behavior and
+        # incrementally determine the need for primary keys across all connectors
+        return True
+
+    def get_qualified_table_name(self, node: ExecutionNode) -> str:
+        """
+        Get the fully qualified table name for the given execution node.
+        """
+        raise NotImplementedError(
+            "get_qualified_table_name is not implemented by this connector"
+        )
+
+    def table_exists(self, qualified_table_name: str) -> bool:
+        """
+        Check if a table exists in the datastore.
+        """
+        raise NotImplementedError("table_exists is not implemented by this connector")

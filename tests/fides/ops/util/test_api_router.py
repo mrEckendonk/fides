@@ -1,0 +1,177 @@
+from unittest import mock
+from unittest.mock import Mock
+
+import pytest
+from starlette.status import HTTP_200_OK, HTTP_404_NOT_FOUND
+from starlette.testclient import TestClient
+
+from fides.api.common_exceptions import MalisciousUrlException
+from fides.api.main import sanitise_url_path
+from fides.api.models.client import ClientDetail
+from fides.common.scope_registry import PRIVACY_REQUEST_READ
+from fides.common.urn_registry import PRIVACY_REQUESTS, V1_URL_PREFIX
+
+
+class TestApiRouter:
+    @pytest.fixture(scope="function")
+    def url(self, oauth_client: ClientDetail) -> str:
+        return V1_URL_PREFIX + PRIVACY_REQUESTS
+
+    def test_no_trailing_slash(
+        self, api_client: TestClient, generate_auth_header, url
+    ) -> None:
+        auth_header = generate_auth_header(scopes=[PRIVACY_REQUEST_READ])
+        resp = api_client.get(url, headers=auth_header)
+        assert resp.status_code == HTTP_200_OK
+
+    def test_trailing_slash(
+        self, api_client: TestClient, generate_auth_header, url
+    ) -> None:
+        auth_header = generate_auth_header(scopes=[PRIVACY_REQUEST_READ])
+        resp = api_client.get(f"{url}/", headers=auth_header)
+        assert resp.status_code == HTTP_200_OK
+
+    def test_non_existent_route_404(
+        self, api_client: TestClient, generate_auth_header, url
+    ) -> None:
+        auth_header = generate_auth_header(scopes=[PRIVACY_REQUEST_READ])
+        resp = api_client.get(f"{url}/route/does/not/exist", headers=auth_header)
+        assert resp.status_code == HTTP_404_NOT_FOUND
+
+        resp_2 = api_client.get(f"{url}/route/does/not/exist/", headers=auth_header)
+        assert resp_2.status_code == HTTP_404_NOT_FOUND
+
+        resp_3 = api_client.get(
+            f"{V1_URL_PREFIX}/route/does/not/exist", headers=auth_header
+        )
+        assert resp_3.status_code == HTTP_404_NOT_FOUND
+
+        resp_4 = api_client.get(
+            f"{V1_URL_PREFIX}/route/does/not/exist/", headers=auth_header
+        )
+        assert resp_4.status_code == HTTP_404_NOT_FOUND
+
+    @mock.patch("fides.api.main.get_admin_index_as_response")
+    def test_malicious_url(
+        self,
+        mock_admin_index_response: Mock,
+        api_client: TestClient,
+        url,
+    ) -> None:
+        """
+        Assert that malicious URLs that attempt path traversal attacks
+        are NOT treated as legitimate URLs, and instead the basic "admin" index
+        response is returned.
+        """
+
+        # admin index response changes depending on environment.
+        # we mock the value here to give ourselves a consistent response to evaluate against.
+        # what we want to ensure is that the admin index response is what gets returned,
+        # indicating that the attempted path traversal does not occur.
+        mock_admin_index_response.return_value = "<h1>Privacy is a Human Right!</h1>"
+
+        malicious_paths = [
+            "../../../../../../../../../etc/passwd",
+            "..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2fetc/passwd",
+            "%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+            "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc/passwd",
+            "..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f/etc/passwd",
+            ".../...//.../...//.../...//.../...//.../...//.../...//.../...//.../...//.../...//etc/passwd",
+            "...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2fetc/passwd",
+            "%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//etc/passwd",
+            "%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2fetc/passwd",
+        ]
+        for path in malicious_paths:
+            resp = api_client.get(f"{url}/{path}")
+            assert resp.status_code == 200
+            assert resp.text == "<h1>Privacy is a Human Right!</h1>"
+
+    @pytest.mark.parametrize(
+        "path, should_be_malicious",
+        (
+            (
+                "/_next/static/chunks/pages/dataset/[datasetId]/[collectionName]/[...subfieldNames]-6596c3d4607847d0.js",
+                False,
+            ),
+            (
+                "/_next/static/chunks/pages/dataset/[datasetId]/[...collectionName]/6596c3d4607847d0.js",
+                False,
+            ),
+            (
+                "/_next/static/chunks/pages/dataset/[...datasetId]/[collectionName]/6596c3d4607847d0.js",
+                False,
+            ),
+            (
+                "[datasetName]/[collectionName]/[...subFields]-js/../../../../etc/passwd",
+                True,
+            ),
+            (
+                "/_next/static/chunks/pages/dataset/[datasetId]/[collectionName]/[[...subfieldNames]]-6596c3d4607847d0.js",
+                False,
+            ),
+            (
+                "/_next/static/chunks/pages/dataset/[datasetId]/[[...collectionName]]/6596c3d4607847d0.js",
+                False,
+            ),
+            (
+                "/_next/static/chunks/pages/dataset/[[...datasetId]]/[collectionName]/6596c3d4607847d0.js",
+                False,
+            ),
+            (
+                "[datasetName]/[collectionName]/[[...subFields]]-js/../../../../etc/passwd",
+                True,
+            ),
+            # Turbopack (Next.js 16+) chunk filenames can embed ".." before the
+            # extension. These must not be flagged as traversal attempts.
+            ("/_next/static/chunks/0y3j4e~tvxaz..js", False),
+            ("/_next/static/chunks/foo_bar~baz..js", False),
+            # Turbopack chunks may also include further dots after the "..",
+            # e.g. when the trailing segment itself contains multiple parts.
+            ("/_next/static/chunks/0~9kfdw7..yey.js", False),
+            ("/_next/static/chunks/abc-123..part.min.js", False),
+            # Turbopack chunks can include dots *before* the ".." too.
+            ("/_next/static/chunks/0te-shorr2._..js", False),
+            ("/_next/static/chunks/a.b.c..js", False),
+            # Minimal trailing segment after the "..": ensures the "+"
+            # quantifier isn't accidentally tightened to require a multi-char
+            # suffix.
+            ("/_next/static/chunks/a..b.js", False),
+            ("../../../../../../../../../etc/passwd", True),
+            ("..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2fetc/passwd", True),
+            (
+                "%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+                True,
+            ),
+            (
+                "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc/passwd",
+                True,
+            ),
+            (
+                "..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f..%c0%2f/etc/passwd",
+                True,
+            ),
+            (
+                ".../...//.../...//.../...//.../...//.../...//.../...//.../...//.../...//.../...//etc/passwd",
+                True,
+            ),
+            (
+                "...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2f...%2f...%2f%2fetc/passwd",
+                True,
+            ),
+            (
+                "%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//%2e%2e%2e/%2e%2e%2e//etc/passwd",
+                True,
+            ),
+            (
+                "%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2f%2e%2e%2e%2f%2e%2e%2e%2f%2fetc/passwd",
+                True,
+            ),
+        ),
+    )
+    def test_sanitise_url_path(self, path, should_be_malicious):
+        if should_be_malicious:
+            with pytest.raises(MalisciousUrlException):
+                sanitise_url_path(path)
+
+        else:
+            assert sanitise_url_path(path) == path

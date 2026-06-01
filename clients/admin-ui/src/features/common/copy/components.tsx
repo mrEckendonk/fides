@@ -1,22 +1,26 @@
 import {
-  Code,
-  Heading,
-  Link,
-  OrderedList,
-  Table,
-  Tag,
-  Tbody,
-  Td,
-  Text,
-  Th,
-  Thead,
-  Tr,
-  UnorderedList,
+  ChakraCode as Code,
+  ChakraHeading as Heading,
+  ChakraHeadingProps as HeadingProps,
+  ChakraLink as Link,
+  ChakraOrderedList as OrderedList,
+  ChakraTable as Table,
+  ChakraTag as Tag,
+  ChakraTbody as Tbody,
+  ChakraTd as Td,
+  ChakraText as Text,
+  ChakraTh as Th,
+  ChakraThead as Thead,
+  ChakraTr as Tr,
+  ChakraUnorderedList as UnorderedList,
 } from "fidesui";
 import { ReactNode } from "react";
 
-export const InfoHeading = ({ text }: { text: string }) => (
-  <Heading fontSize="sm" mt={4} mb={1}>
+export const InfoHeading = ({
+  text,
+  ...props
+}: { text: string } & HeadingProps) => (
+  <Heading fontSize="sm" mt={4} mb={1} {...props}>
     {text}
   </Heading>
 );

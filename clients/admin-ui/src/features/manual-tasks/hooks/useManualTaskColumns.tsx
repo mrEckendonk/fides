@@ -1,0 +1,186 @@
+import { ColumnsType, SelectInline, Tag, Typography } from "fidesui";
+
+import DaysLeftTag from "~/features/common/DaysLeftTag";
+import { EllipsisCell } from "~/features/common/table/cells/EllipsisCell";
+import { formatUser } from "~/features/common/utils";
+import { SubjectRequestActionTypeMap } from "~/features/privacy-requests/constants";
+import {
+  ActionType,
+  ManualFieldListItem,
+  ManualFieldRequestType,
+  ManualFieldStatus,
+  ManualFieldUser,
+  PrivacyRequestStatus,
+} from "~/types/api";
+
+import { ActionButtons } from "../components/ActionButtons";
+import {
+  REQUEST_TYPE_FILTER_OPTIONS,
+  STATUS_FILTER_OPTIONS,
+  STATUS_MAP,
+} from "../constants";
+
+interface FilterOption {
+  text: string;
+  value: string;
+}
+
+interface ManualTaskFilters {
+  status?: string;
+  systemName?: string;
+  requestType?: string;
+  assignedUsers?: string;
+  privacyRequestId?: string;
+}
+
+interface UserOption {
+  label: string;
+  value: string;
+}
+
+interface UseManualTaskColumnsProps {
+  systemFilters: FilterOption[];
+  userFilters: FilterOption[];
+  onUserClick: (userId: string) => void;
+  currentFilters: ManualTaskFilters;
+  hasAccessToAllTasks: boolean;
+}
+
+export const useManualTaskColumns = ({
+  systemFilters,
+  userFilters,
+  onUserClick,
+  currentFilters,
+  hasAccessToAllTasks,
+}: UseManualTaskColumnsProps): ColumnsType<ManualFieldListItem> => {
+  const allColumns: ColumnsType<ManualFieldListItem> = [
+    {
+      title: "Task name",
+      dataIndex: "name",
+      key: "name",
+      minWidth: 100,
+      render: (name) => <EllipsisCell>{name}</EllipsisCell>,
+    },
+    {
+      title: "Status",
+      dataIndex: "status",
+      key: "status",
+      width: 110,
+      render: (status: ManualFieldStatus) => (
+        <Tag
+          color={STATUS_MAP[status].color}
+          data-testid="manual-task-status-tag"
+        >
+          {STATUS_MAP[status].label}
+        </Tag>
+      ),
+      filters: STATUS_FILTER_OPTIONS,
+      filterMultiple: false,
+    },
+    {
+      title: "System",
+      dataIndex: ["system", "name"],
+      key: "system_name",
+      minWidth: 100,
+      render: (systemName: string) => <EllipsisCell>{systemName}</EllipsisCell>,
+      filters: systemFilters,
+      filterMultiple: false,
+    },
+    {
+      title: "Type",
+      dataIndex: "request_type",
+      key: "request_type",
+      width: 80,
+      render: (type: ManualFieldRequestType) => {
+        // Map request type to ActionType for display
+        const requestTypeToActionType: Record<
+          ManualFieldRequestType,
+          ActionType
+        > = {
+          [ManualFieldRequestType.ACCESS]: ActionType.ACCESS,
+          [ManualFieldRequestType.ERASURE]: ActionType.ERASURE,
+          [ManualFieldRequestType.CONSENT]: ActionType.CONSENT,
+        };
+        const actionType = requestTypeToActionType[type];
+        const displayName = SubjectRequestActionTypeMap.get(actionType) || type;
+        return <EllipsisCell>{displayName}</EllipsisCell>;
+      },
+      filters: REQUEST_TYPE_FILTER_OPTIONS,
+      filterMultiple: false,
+    },
+    {
+      title: "Assigned to",
+      dataIndex: "assigned_users",
+      key: "assigned_users",
+      minWidth: 100,
+      render: (assignedUsers: ManualFieldUser[]) => {
+        if (!assignedUsers || assignedUsers.length === 0) {
+          return <Typography.Text>-</Typography.Text>;
+        }
+
+        const userOptions: UserOption[] = assignedUsers.map((user) => ({
+          label: formatUser(user),
+          value: user.id,
+        }));
+
+        const currentAssignedUserIds = assignedUsers.map((user) => user.id);
+
+        return (
+          <SelectInline
+            value={currentAssignedUserIds}
+            options={userOptions}
+            readonly
+            onTagClick={(userId) => onUserClick(String(userId))}
+          />
+        );
+      },
+      filters: userFilters,
+      filterMultiple: false,
+      defaultFilteredValue: currentFilters.assignedUsers
+        ? [currentFilters.assignedUsers]
+        : undefined,
+    },
+    {
+      title: "Days left",
+      dataIndex: ["privacy_request", "days_left"],
+      key: "days_left",
+      width: 90,
+      render: (daysLeft: number | null) => (
+        <DaysLeftTag
+          daysLeft={daysLeft || 0}
+          includeText={false}
+          status={PrivacyRequestStatus.PENDING}
+        />
+      ),
+    },
+    {
+      title: "Subject identity",
+      dataIndex: ["privacy_request", "subject_identities"],
+      key: "subject_identities",
+      minWidth: 120,
+      render: (subjectIdentities: Record<string, string>) => {
+        if (!subjectIdentities) {
+          return <Typography.Text>-</Typography.Text>;
+        }
+
+        // Display email or phone_number if available
+        const identity =
+          subjectIdentities.email || subjectIdentities.phone_number || "";
+        return <EllipsisCell>{identity}</EllipsisCell>;
+      },
+    },
+    {
+      title: "Actions",
+      key: "actions",
+      width: 145,
+      render: (_, record) => <ActionButtons task={record} />,
+    },
+  ];
+
+  // If user doesn't have access to all tasks, remove the "Assigned to" column
+  if (!hasAccessToAllTasks) {
+    return allColumns.filter((column) => column.key !== "assigned_users");
+  }
+
+  return allColumns;
+};

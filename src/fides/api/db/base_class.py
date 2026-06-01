@@ -7,7 +7,7 @@ import re
 from typing import Any, Optional, Type, TypeVar
 from uuid import uuid4
 
-from fideslang.models import FidesKey  # type: ignore
+from fideslang.validation import validate_fides_key
 from sqlalchemy import Column, DateTime, String
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.ext.mutable import MutableDict
@@ -21,7 +21,12 @@ from fides.api.util.custom_json_encoder import CustomJSONEncoder, _custom_decode
 from fides.api.util.text import to_snake_case
 
 T = TypeVar("T", bound="OrmWrappedFidesBase")
-ALLOWED_CHARS = re.compile(r"[A-Za-z0-9\-_]")
+ALLOWED_CHARS_PATTERN = r"[A-Za-z0-9\-_]"
+DISALLOWED_CHARS_PATTERN = (
+    r"[^A-Za-z0-9\-_]"  # anything that's _not_ matched by ALLOWED_CHARS_PATTERN above
+)
+ALLOWED_CHARS = re.compile(ALLOWED_CHARS_PATTERN)
+DISALLOWED_CHARS = re.compile(DISALLOWED_CHARS_PATTERN)
 
 
 class JSONTypeOverride(JSONType):  # pylint: disable=W0223
@@ -57,12 +62,16 @@ def get_key_from_data(data: dict[str, Any], cls_name: str) -> str:
     If no key, uses a snake-cased name. Will be used as the URL onupdate
     applicable classes.
     """
-    key = FidesKey.validate(data.get("key")) if data.get("key") else None
+    supplied_key = data.get("key")
+    if supplied_key and not isinstance(supplied_key, str):  # Mypy check
+        raise KeyValidationError("Supplied key must be a string")
+
+    key = validate_fides_key(supplied_key) if supplied_key else None
     if key is None:
         name = data.get("name")
         if name is None:
             raise KeyValidationError(f"{cls_name} requires a name.")
-        key = FidesKey.validate(to_snake_case(name))
+        key = validate_fides_key(to_snake_case(name))
     return key
 
 
@@ -104,6 +113,19 @@ class FidesBase:
         __tablename__ attribute
         """
         return f"{self.__tablename__}.id"
+
+    @classmethod
+    def sanitize_key(cls, proposed_key: str) -> str:
+        """
+        Sanitize the key by removing invalid characters.
+
+        Invalid characters are based on the allowed characters defined in this module.
+        Note that this differs slightly from the allowed characters in `sanitize_fides_key`
+        from `core/utils.py`; specifically, `.` are disallowed (converted to `_`) here, while
+        they are allowed in `sanitize_fides_key`. This is because `.` must be allowed in
+        `fides_key`s, but they are not allowed in `key`s.
+        """
+        return DISALLOWED_CHARS.sub("_", proposed_key)
 
     id = Column(String(255), primary_key=True, index=True, default=generate_uuid)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

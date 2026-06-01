@@ -1,36 +1,57 @@
 from __future__ import annotations
 
-from asyncio import sleep
+import json
+from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, DefaultDict, Dict, Generator, List, Optional, Set, Union
 
+import sqlalchemy
 from httpx import AsyncClient
 from loguru import logger
-from sqlalchemy import text
-from sqlalchemy.orm import Query
+from sqlalchemy import cast, null, text
+from sqlalchemy.orm import Query, Session
 from sqlalchemy.sql.elements import TextClause
 
-from fides.api.common_exceptions import PrivacyRequestNotFound
-from fides.api.models.policy import Policy
+from fides.api.common_exceptions import PrivacyRequestError
+from fides.api.graph.config import ROOT_COLLECTION_ADDRESS, TERMINATOR_ADDRESS
+from fides.api.models.audit_log import AuditLog
+from fides.api.models.connectionconfig import ConnectionConfig
 from fides.api.models.privacy_request import (
+    COMPLETED_EXECUTION_LOG_STATUSES,
     EXITED_EXECUTION_LOG_STATUSES,
-    ExecutionLogStatus,
+    ExecutionLog,
     PrivacyRequest,
-    PrivacyRequestStatus,
+    RequestTask,
 )
+from fides.api.models.privacy_request.request_task import AsyncTaskType
+from fides.api.models.worker_task import ExecutionLogStatus
 from fides.api.schemas.drp_privacy_request import DrpPrivacyRequestCreate
-from fides.api.schemas.masking.masking_secrets import MaskingSecretCache
 from fides.api.schemas.policy import ActionType
-from fides.api.schemas.privacy_request import PrivacyRequestResponse
+from fides.api.schemas.privacy_request import PrivacyRequestStatus
 from fides.api.schemas.redis_cache import Identity
-from fides.api.service.masking.strategy.masking_strategy import MaskingStrategy
-from fides.api.tasks import DatabaseTask, celery_app
+from fides.api.tasks import DSR_QUEUE_NAME, DatabaseTask, celery_app
 from fides.api.tasks.scheduled.scheduler import scheduler
-from fides.common.api.v1.urn_registry import PRIVACY_REQUESTS, V1_URL_PREFIX
+from fides.api.util.cache import (
+    FidesopsRedis,
+    celery_tasks_in_flight,
+    get_cache,
+    get_dsr_cache_store,
+    get_privacy_request_retry_count,
+    increment_privacy_request_retry_count,
+    reset_privacy_request_retry_count,
+)
+from fides.api.util.lock import redis_lock
 from fides.config import CONFIG
 
 PRIVACY_REQUEST_STATUS_CHANGE_POLL = "privacy_request_status_change_poll"
 DSR_DATA_REMOVAL = "dsr_data_removal"
+INTERRUPTED_TASK_REQUEUE_POLL = "interrupted_task_requeue_poll"
+REQUEUE_INTERRUPTED_TASKS_LOCK = "requeue_interrupted_tasks_lock"
+ASYNC_TASKS_STATUS_POLLING = "async_tasks_status_polling"
+ASYNC_TASKS_STATUS_POLLING_LOCK = "async_tasks_status_polling_lock"
+ASYNC_TASKS_STATUS_POLLING_LOCK_TIMEOUT = (
+    300  # Starting timeout is shorter because the task goes directly to the workers.
+)
 
 
 def build_required_privacy_request_kwargs(
@@ -58,7 +79,6 @@ def build_required_privacy_request_kwargs(
 
 def cache_data(
     privacy_request: PrivacyRequest,
-    policy: Policy,
     identity: Identity,
     encryption_key: Optional[str],
     drp_request_body: Optional[DrpPrivacyRequestCreate],
@@ -71,23 +91,6 @@ def cache_data(
     privacy_request.cache_custom_privacy_request_fields(custom_privacy_request_fields)
     privacy_request.cache_encryption(encryption_key)  # handles None already
 
-    # Store masking secrets in the cache
-    logger.info("Caching masking secrets for privacy request {}", privacy_request.id)
-    erasure_rules = policy.get_rules_for_action(action_type=ActionType.erasure)
-    unique_masking_strategies_by_name: Set[str] = set()
-    for rule in erasure_rules:
-        strategy_name: str = rule.masking_strategy["strategy"]  # type: ignore
-        configuration = rule.masking_strategy["configuration"]  # type: ignore
-        if strategy_name in unique_masking_strategies_by_name:
-            continue
-        unique_masking_strategies_by_name.add(strategy_name)
-        masking_strategy = MaskingStrategy.get_strategy(strategy_name, configuration)
-        if masking_strategy.secrets_required():
-            masking_secrets: List[MaskingSecretCache] = (
-                masking_strategy.generate_secrets_for_cache()
-            )
-            for masking_secret in masking_secrets:
-                privacy_request.cache_masking_secret(masking_secret)
     if drp_request_body:
         privacy_request.cache_drp_request_body(drp_request_body)
 
@@ -97,62 +100,6 @@ def get_async_client() -> AsyncClient:
     return AsyncClient()
 
 
-async def poll_server_for_completion(
-    privacy_request_id: str,
-    server_url: str,
-    token: str,
-    *,
-    poll_interval_seconds: int = 30,
-    timeout_seconds: int = 1800,  # 30 minutes
-    client: AsyncClient | None = None,
-) -> PrivacyRequestResponse:
-    """Poll a server for privacy request completion.
-
-    Requests will report complete with if they have a status of canceled, complete,
-    denied, or error. By default the polling will time out if not completed in 30
-    minutes, time can be overridden by setting the timeout_seconds.
-    """
-    url = (
-        f"{server_url}{V1_URL_PREFIX}{PRIVACY_REQUESTS}?request_id={privacy_request_id}"
-    )
-    start_time = datetime.now()
-    elapsed_time = 0.0
-    while elapsed_time < timeout_seconds:
-        if client:
-            response = await client.get(
-                url, headers={"Authorization": f"Bearer {token}"}
-            )
-        else:
-            async_client = get_async_client()
-            response = await async_client.get(
-                url, headers={"Authorization": f"Bearer {token}"}
-            )
-        response.raise_for_status()
-
-        # Privacy requests are returned paginated. Since this is searching for a specific
-        # privacy request there should only be one value present in items.
-        items = response.json()["items"]
-        if not items:
-            raise PrivacyRequestNotFound(
-                f"No privacy request found with id '{privacy_request_id}'"
-            )
-        status = PrivacyRequestResponse(**items[0])
-        if status.status and status.status in (
-            PrivacyRequestStatus.complete,
-            PrivacyRequestStatus.canceled,
-            PrivacyRequestStatus.error,
-            PrivacyRequestStatus.denied,
-        ):
-            return status
-
-        await sleep(poll_interval_seconds)
-        time_delta = datetime.now() - start_time
-        elapsed_time = time_delta.seconds
-    raise TimeoutError(
-        f"Timeout of {timeout_seconds} seconds has been exceeded while waiting for privacy request {privacy_request_id}"
-    )
-
-
 def initiate_poll_for_exited_privacy_request_tasks() -> None:
     """Initiates scheduler to check if a Privacy Request's status needs to be flipped when all
     Request Tasks have had a chance to run"""
@@ -160,9 +107,9 @@ def initiate_poll_for_exited_privacy_request_tasks() -> None:
     if CONFIG.test_mode:
         return
 
-    assert (
-        scheduler.running
-    ), "Scheduler is not running! Cannot add Privacy Request Status Change job."
+    assert scheduler.running, (
+        "Scheduler is not running! Cannot add Privacy Request Status Change job."
+    )
 
     logger.info("Initiating scheduler for Privacy Request Status Change")
     scheduler.add_job(
@@ -193,44 +140,69 @@ def poll_for_exited_privacy_request_tasks(self: DatabaseTask) -> Set[str]:
         # Privacy Requests that didn't need approval are "In Processing".
         # Privacy Requests in these states should be examined to see if all of its Request Tasks have had a chance
         # to complete.
+        # Use query_without_large_columns to prevent OOM errors when processing many privacy requests
         in_progress_privacy_requests = (
-            db.query(PrivacyRequest)
+            PrivacyRequest.query_without_large_columns(db)
             .filter(
                 PrivacyRequest.status.in_(
-                    [PrivacyRequestStatus.in_processing, PrivacyRequestStatus.approved]
+                    [
+                        PrivacyRequestStatus.in_processing,
+                        PrivacyRequestStatus.approved,
+                        PrivacyRequestStatus.requires_input,
+                        PrivacyRequestStatus.pending_external,
+                    ]
                 )
             )
+            # Only look at Privacy Requests that haven't been deleted
+            .filter(PrivacyRequest.deleted_at.is_(None))
             .order_by(PrivacyRequest.created_at)
         )
 
-        def some_errored(tasks: Query) -> bool:
-            """All statuses have exited and at least one is errored"""
-            statuses: List[ExecutionLogStatus] = [tsk.status for tsk in tasks]
+        # TODO: With this approach, we're making 3*n queries , where n is the number of in-progress privacy requests.
+        # We could optimize this to just get all the RequestTasks for all in-progress privacy requests in one single
+        # query and then process them in-memory. This could be more efficient.
+        def privacy_request_has_errored_tasks(
+            privacy_request: PrivacyRequest, task_type: ActionType
+        ) -> bool:
+            """Check if a privacy request has exited all its tasks of the given type,
+            and at least one of the tasks has errored.
+            We specifically only query for the RequestTask.status column to avoid
+            querying for the entire RequestTask row.
+            """
+            tasks_statuses_query = db.query(RequestTask.status).filter(
+                RequestTask.privacy_request_id == privacy_request.id,
+                RequestTask.action_type == task_type,
+            )
+
+            statuses = set(status for (status,) in tasks_statuses_query.all())
             all_exited = all(
                 status in EXITED_EXECUTION_LOG_STATUSES for status in statuses
             )
-            return all_exited and ExecutionLogStatus.error in statuses
+            if all_exited and ExecutionLogStatus.error in statuses:
+                logger.info(
+                    f"Marking {task_type.value} step of {privacy_request.id} as error"
+                )
+                return True
+
+            return False
 
         marked_as_errored: Set[str] = set()
         for pr in in_progress_privacy_requests.all():
             if pr.consent_tasks.count():
                 # Consent propagation tasks - these are not created until access and erasure steps are complete.
-                if some_errored(pr.consent_tasks):
-                    logger.info(f"Marking consent step of {pr.id} as error")
+                if privacy_request_has_errored_tasks(pr, ActionType.consent):
                     pr.error_processing(db)
                     marked_as_errored.add(pr.id)
 
             if pr.erasure_tasks.count():
                 # Erasure tasks are created at the same time as access tasks but if any are errored, this means
                 # we made it to the erasure section
-                if some_errored(pr.erasure_tasks):
-                    logger.info(f"Marking erasure step of {pr.id} as error")
+                if privacy_request_has_errored_tasks(pr, ActionType.erasure):
                     pr.error_processing(db)
                     marked_as_errored.add(pr.id)
 
             if pr.access_tasks.count():
-                if some_errored(pr.access_tasks):
-                    logger.info(f"Marking access step of {pr.id} as error")
+                if privacy_request_has_errored_tasks(pr, ActionType.access):
                     pr.error_processing(db)
                     marked_as_errored.add(pr.id)
 
@@ -243,9 +215,9 @@ def initiate_scheduled_dsr_data_removal() -> None:
     if CONFIG.test_mode:
         return
 
-    assert (
-        scheduler.running
-    ), "Scheduler is not running! Cannot add DSR data removal job."
+    assert scheduler.running, (
+        "Scheduler is not running! Cannot add DSR data removal job."
+    )
 
     logger.info("Initiating scheduler for DSR Data Removal")
     scheduler.add_job(
@@ -316,3 +288,763 @@ def remove_saved_dsr_data(self: DatabaseTask) -> None:
         )
 
         db.commit()
+
+
+def initiate_interrupted_task_requeue_poll() -> None:
+    """Initiates scheduler to check for and requeue interrupted tasks"""
+
+    if CONFIG.test_mode:
+        return
+
+    assert scheduler.running, (
+        "Scheduler is not running! Cannot add interrupted task requeue job."
+    )
+
+    logger.info("Initiating scheduler for interrupted task requeue")
+    scheduler.add_job(
+        func=requeue_interrupted_tasks,
+        trigger="interval",
+        kwargs={},
+        id=INTERRUPTED_TASK_REQUEUE_POLL,
+        coalesce=True,
+        replace_existing=True,
+        seconds=CONFIG.execution.interrupted_task_requeue_interval,
+    )
+
+
+def initiate_polling_task_requeue() -> None:
+    """Initiates scheduler to check for and requeue pending polling async tasks"""
+    if CONFIG.test_mode:
+        return
+
+    assert scheduler.running, (
+        "Scheduler is not running! Cannot add async tasks status polling job."
+    )
+
+    logger.info("Initiating scheduler for async tasks status polling")
+    scheduler.add_job(
+        func=requeue_polling_tasks,
+        trigger="interval",
+        kwargs={},
+        id=ASYNC_TASKS_STATUS_POLLING,
+        coalesce=True,
+        replace_existing=True,
+        seconds=CONFIG.execution.async_polling_interval_hours * 3600,
+    )
+
+
+def get_cached_task_id(entity_id: str) -> Optional[str]:
+    """Gets the cached task ID for a privacy request or request task by ID.
+
+    Raises Exception if cache operations fail, allowing callers to handle cache failures appropriately.
+    """
+    try:
+        store = get_dsr_cache_store(entity_id)
+        task_id = store.get_async_execution()
+        if isinstance(task_id, bytes):
+            return task_id.decode(CONFIG.security.encoding)
+        return task_id
+    except Exception as exc:
+        logger.error(f"Failed to get cached task ID for entity {entity_id}: {exc}")
+        raise
+
+
+def _get_task_ids_from_dsr_queue(
+    redis_client: FidesopsRedis, chunk_size: int = 100
+) -> Set[str]:
+    """
+    Get all task IDs from a Redis queue in a memory-efficient way.
+
+    Args:
+        redis_client: Redis client
+        chunk_size: Size of chunks to process
+
+    Returns:
+        Set of task IDs
+    """
+    queued_tasks_ids = set()
+    queue_length = redis_client.llen(DSR_QUEUE_NAME)
+
+    # Process the queue in chunks to avoid memory issues with large queues
+    for offset in range(0, queue_length, chunk_size):
+        # Get a chunk of tasks (at most chunk_size elements)
+        tasks_chunk = redis_client.lrange(
+            DSR_QUEUE_NAME, offset, offset + chunk_size - 1
+        )
+
+        # Extract task IDs from the chunk
+        for task in tasks_chunk:
+            try:
+                queued_tasks_ids.add(json.loads(task)["headers"]["id"])
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to parse task from queue: {e}")
+                continue
+
+    return queued_tasks_ids
+
+
+def _cancel_interrupted_tasks_and_error_privacy_request(
+    db: Session, privacy_request: PrivacyRequest, error_message: Optional[str] = None
+) -> None:
+    """
+    Cancel all tasks associated with an interrupted privacy request and set the privacy request to error state.
+
+    This function:
+    1. Logs the error message (either provided or default)
+    2. Revokes the main privacy request task and all associated request tasks
+    3. Sets the privacy request status to error
+    4. Creates an error log entry
+
+    Args:
+        db: Database session
+        privacy_request: The privacy request to cancel and error
+        error_message: Optional error message to log. If not provided, uses default message.
+    """
+    if error_message:
+        logger.error(error_message)
+    else:
+        logger.error(
+            f"Canceling interrupted tasks and marking privacy request {privacy_request.id} as error"
+        )
+
+    # Cancel all associated Celery tasks
+    privacy_request.cancel_celery_tasks()
+
+    # Set privacy request to error state using the existing method
+    try:
+        privacy_request.error_processing(db)
+        logger.info(
+            f"Privacy request {privacy_request.id} marked as error due to task interruption"
+        )
+    except Exception as exc:
+        logger.error(
+            f"Failed to mark privacy request {privacy_request.id} as error: {exc}"
+        )
+
+
+def _handle_privacy_request_requeue(
+    db: Session, privacy_request: PrivacyRequest
+) -> None:
+    """Handle retry logic for a privacy request - either requeue or cancel based on retry count."""
+    try:
+        # Check retry count and either requeue or cancel based on limit
+        current_retry_count = get_privacy_request_retry_count(privacy_request.id)
+        max_retries = CONFIG.execution.privacy_request_requeue_retry_count
+
+        if current_retry_count < max_retries:
+            # Increment retry count and attempt requeue
+            new_retry_count = increment_privacy_request_retry_count(privacy_request.id)
+            logger.info(
+                f"Requeuing privacy request {privacy_request.id} "
+                f"(attempt {new_retry_count}/{max_retries})"
+            )
+
+            from fides.service.privacy_request.privacy_request_service import (  # pylint: disable=cyclic-import
+                _requeue_privacy_request,
+            )
+
+            try:
+                _requeue_privacy_request(db, privacy_request)
+            except PrivacyRequestError as exc:
+                # If requeue fails, cancel tasks and set to error state
+                _cancel_interrupted_tasks_and_error_privacy_request(
+                    db, privacy_request, exc.message
+                )
+        else:
+            # Exceeded retry limit, cancel tasks and set to error state
+            _cancel_interrupted_tasks_and_error_privacy_request(
+                db,
+                privacy_request,
+                f"Privacy request {privacy_request.id} exceeded max retry attempts "
+                f"({max_retries}), canceling tasks and setting to error state",
+            )
+            # Reset retry count since we're giving up
+            reset_privacy_request_retry_count(privacy_request.id)
+
+    except Exception as cache_exc:
+        # If cache operations fail (Redis down, network issues, etc.), fail safe by canceling
+        _cancel_interrupted_tasks_and_error_privacy_request(
+            db,
+            privacy_request,
+            f"Cache operation failed for privacy request {privacy_request.id}, "
+            f"failing safe by canceling tasks: {cache_exc}",
+        )
+
+
+def _get_request_task_ids_in_progress(
+    db: Session, privacy_request_id: str
+) -> Generator[tuple[str, ExecutionLogStatus, bool], None, None]:
+    """Yield (task_id, status, awaiting_upstream) for in-progress request tasks.
+
+    Loads only the columns needed (avoiding large JSON blobs) and computes
+    upstream completion from a single query rather than per-task DB lookups.
+    """
+    all_tasks = (
+        db.query(
+            RequestTask.id,
+            RequestTask.status,
+            RequestTask.collection_address,
+            RequestTask.action_type,
+            RequestTask.upstream_tasks,
+        )
+        .filter(RequestTask.privacy_request_id == privacy_request_id)
+        .all()
+    )
+
+    # Build lookup for upstream completion checks
+    status_by_address: dict[tuple[str, str], ExecutionLogStatus] = {
+        (task.collection_address, task.action_type): task.status for task in all_tasks
+    }
+
+    for task in all_tasks:
+        if task.status not in (
+            ExecutionLogStatus.in_processing,
+            ExecutionLogStatus.pending,
+            ExecutionLogStatus.awaiting_processing,
+        ):
+            continue
+        awaiting_upstream = False
+        if task.status == ExecutionLogStatus.pending:
+            upstream_addrs = task.upstream_tasks or []
+            if upstream_addrs:
+                # Mirrors RequestTask.upstream_tasks_complete() — a missing
+                # upstream record returns None from the lookup, which is not
+                # in COMPLETED_EXECUTION_LOG_STATUSES, so it's treated as
+                # incomplete (same safe default as the model method).
+                awaiting_upstream = any(
+                    status_by_address.get((addr, task.action_type))
+                    not in COMPLETED_EXECUTION_LOG_STATUSES
+                    for addr in upstream_addrs
+                )
+        yield (task.id, task.status, awaiting_upstream)
+
+
+def _has_async_tasks_awaiting_external_completion(
+    db: Session, privacy_request_id: str
+) -> bool:
+    """
+    Check if a privacy request has any async task pending external completion.
+
+    Args:
+        db: Database session
+        privacy_request_id: The ID of the privacy request to check
+
+    Returns:
+        bool: True if the privacy request has async tasks awaiting external completion, False otherwise
+    """
+    return db.query(
+        db.query(RequestTask)
+        .filter(
+            RequestTask.privacy_request_id == privacy_request_id,
+            RequestTask.async_type.in_([AsyncTaskType.polling, AsyncTaskType.callback]),
+            RequestTask.status.notin_(EXITED_EXECUTION_LOG_STATUSES),
+        )
+        .exists()
+    ).scalar()
+
+
+def _task_is_orphaned(db: Session, request_task_id: str) -> bool:
+    """Check if a request task's ConnectionConfig has been deleted or disabled.
+
+    A task is orphaned when its ConnectionConfig either no longer exists
+    (hard-deleted) or has been disabled.  In both cases the task can never
+    complete and should be skipped.
+    """
+    connection_key = (
+        db.query(RequestTask.traversal_details["dataset_connection_key"].as_string())
+        .filter(RequestTask.id == request_task_id)
+        .scalar()
+    )
+    if not connection_key:
+        logger.warning(
+            f"Request task {request_task_id} has no dataset_connection_key "
+            f"in traversal_details — possible data integrity issue"
+        )
+        return False
+
+    has_enabled_connection = db.query(
+        db.query(ConnectionConfig)
+        .filter(
+            ConnectionConfig.key == connection_key,
+            ConnectionConfig.disabled.is_(False),
+        )
+        .exists()
+    ).scalar()
+    return not has_enabled_connection
+
+
+# pylint: disable=too-many-branches
+# pylint: disable=too-many-statements
+@celery_app.task(base=DatabaseTask, bind=True)
+def requeue_interrupted_tasks(self: DatabaseTask) -> None:
+    """
+    Requeue interrupted tasks for privacy requests that are in progress.
+
+    This function checks for privacy requests that are currently pending or in progress and
+    verifies if their associated tasks are still in the queue or running. If any
+    task is found to be interrupted (i.e., not in the queue and not running), the
+    privacy request is requeued to ensure its completion.
+
+    The function performs the following steps:
+    1. Retrieves all task IDs currently in the queue.
+    2. Fetches all in-progress privacy requests from the database.
+    3. Checks each privacy request to determine if its tasks are still active.
+    4. Requeues the privacy request if any of its tasks are found to be interrupted.
+    """
+    redis_conn: FidesopsRedis = get_cache()
+
+    with redis_lock(REQUEUE_INTERRUPTED_TASKS_LOCK, 600) as lock:
+        if not lock:
+            return
+        with self.get_new_session() as db:
+            logger.debug("Starting check for interrupted tasks to requeue")
+
+            # Get all in-progress privacy requests that haven't been updated in the last 5 minutes
+            # Use query_without_large_columns to prevent OOM errors when processing many privacy requests
+            in_progress_requests = (
+                PrivacyRequest.query_without_large_columns(db)
+                .filter(
+                    PrivacyRequest.status.in_(
+                        [
+                            PrivacyRequestStatus.in_processing,
+                            PrivacyRequestStatus.approved,
+                            PrivacyRequestStatus.requires_input,
+                            PrivacyRequestStatus.pending_external,
+                        ]
+                    )
+                )
+                .filter(PrivacyRequest.deleted_at.is_(None))
+                .order_by(PrivacyRequest.created_at)
+            )
+
+            if not in_progress_requests.count():
+                logger.debug("No in-progress privacy requests to check")
+                return
+
+            logger.debug(
+                f"Found {in_progress_requests.count()} privacy requests to check"
+            )
+
+            # Get task IDs from the queue in a memory-efficient way
+            try:
+                queued_tasks_ids = _get_task_ids_from_dsr_queue(redis_conn)
+            except Exception as queue_exc:
+                logger.warning(
+                    f"Failed to get task IDs from queue, skipping queue state checks: {queue_exc}"
+                )
+                return
+
+            # Check each privacy request
+            for privacy_request in in_progress_requests:
+                should_requeue = False
+                logger.debug(f"Checking tasks for privacy request {privacy_request.id}")
+
+                try:
+                    task_id = get_cached_task_id(privacy_request.id)
+                except Exception as cache_exc:
+                    # If we can't get the task ID due to cache failure, fail safe by canceling
+                    _cancel_interrupted_tasks_and_error_privacy_request(
+                        db,
+                        privacy_request,
+                        f"Cache failure when getting task ID for privacy request {privacy_request.id}, "
+                        f"failing safe by canceling tasks: {cache_exc}",
+                    )
+                    continue
+
+                # If the task ID is not cached, we can't check if it's running
+                # This means the request is stuck - cancel it
+                if not task_id:
+                    # Paused requests (manual webhook, manual task, Jira) have
+                    # no running Celery task by design — don't cancel them.
+                    if privacy_request.status in (
+                        PrivacyRequestStatus.requires_input,
+                        PrivacyRequestStatus.pending_external,
+                    ):
+                        logger.debug(
+                            f"Skipping privacy request {privacy_request.id} in "
+                            f"{privacy_request.status.value} status with no cached "
+                            f"task ID - intentionally paused"
+                        )
+                        continue
+                    _cancel_interrupted_tasks_and_error_privacy_request(
+                        db,
+                        privacy_request,
+                        f"No task ID found for privacy request {privacy_request.id}, "
+                        f"request is stuck without a running task - canceling",
+                    )
+                    continue
+
+                # Check if the main privacy request task is active
+                if task_id not in queued_tasks_ids and not celery_tasks_in_flight(
+                    [task_id]
+                ):
+                    request_tasks_count = (
+                        db.query(RequestTask)
+                        .filter(RequestTask.privacy_request_id == privacy_request.id)
+                        .count()
+                    )
+                    if request_tasks_count == 0:
+                        logger.warning(
+                            f"The task for privacy request {privacy_request.id} was terminated before it could schedule any request tasks, requeueing privacy request"
+                        )
+                        should_requeue = True
+                    elif request_tasks_count > 0:
+                        # Check for missing erasure tasks: if access tasks
+                        # exist and the policy has erasure rules, erasure
+                        # tasks should have been created alongside them.
+                        # Zero erasure tasks means creation failed.
+                        pr_policy = privacy_request.policy
+                        if pr_policy and pr_policy.get_rules_for_action(
+                            action_type=ActionType.erasure
+                        ):
+                            erasure_count = (
+                                db.query(RequestTask)
+                                .filter(
+                                    RequestTask.privacy_request_id
+                                    == privacy_request.id,
+                                    RequestTask.action_type == ActionType.erasure,
+                                )
+                                .count()
+                            )
+                            if erasure_count == 0:
+                                logger.warning(
+                                    f"Privacy request {privacy_request.id} has access tasks but zero erasure tasks despite having erasure rules, requeueing"
+                                )
+                                should_requeue = True
+
+                    request_tasks_in_progress = _get_request_task_ids_in_progress(
+                        db, privacy_request.id
+                    )
+
+                    # Check each individual request task
+                    for (
+                        request_task_id,
+                        task_status,
+                        awaiting_upstream,
+                    ) in request_tasks_in_progress:
+                        try:
+                            subtask_id = get_cached_task_id(request_task_id)
+                        except Exception as cache_exc:
+                            # If we can't get the subtask ID due to cache failure, fail safe by canceling
+                            _cancel_interrupted_tasks_and_error_privacy_request(
+                                db,
+                                privacy_request,
+                                f"Cache failure when getting subtask ID for request task {request_task_id} "
+                                f"(privacy request {privacy_request.id}), failing safe by canceling tasks: {cache_exc}",
+                            )
+                            should_requeue = False
+                            break
+
+                        # If the task ID is not cached, we can't check if it's running
+                        if not subtask_id:
+                            # Paused requests may have request tasks with no
+                            # cached subtask ID — this is expected when the
+                            # Celery worker completed and the DSR is waiting
+                            # for manual input or an external system. Don't
+                            # requeue or cancel these.
+                            if privacy_request.status in (
+                                PrivacyRequestStatus.requires_input,
+                                PrivacyRequestStatus.pending_external,
+                            ):
+                                logger.debug(
+                                    f"Request task {request_task_id} "
+                                    f"(privacy request {privacy_request.id}) has no "
+                                    f"cached subtask ID in {privacy_request.status.value} "
+                                    f"status - intentionally paused, skipping"
+                                )
+                                continue
+
+                            # A pending task awaiting upstream is not stuck — it was
+                            # never dispatched because its prerequisites aren't done.
+                            # Skip it and continue checking other tasks. (ENG-2756)
+                            if (
+                                task_status == ExecutionLogStatus.pending
+                                and awaiting_upstream
+                            ):
+                                logger.debug(
+                                    f"Request task {request_task_id} "
+                                    f"(privacy request {privacy_request.id}) is pending and "
+                                    f"waiting for upstream tasks to complete - not stuck"
+                                )
+                                continue
+
+                            # If the privacy request has async tasks awaiting an external
+                            # event (webhook callback, polling), don't requeue or cancel —
+                            # the request is intentionally waiting for that event.
+                            try:
+                                has_async = (
+                                    _has_async_tasks_awaiting_external_completion(
+                                        db, privacy_request.id
+                                    )
+                                )
+                            except Exception as async_exc:
+                                # DB error checking async tasks — fail safe: skip this PR.
+                                logger.warning(
+                                    f"Error checking async tasks for privacy request "
+                                    f"{privacy_request.id}, skipping watchdog pass for this request: {async_exc}"
+                                )
+                                should_requeue = False
+                                break
+                            if has_async:
+                                logger.warning(
+                                    f"No task ID found for request task {request_task_id} "
+                                    f"(privacy request {privacy_request.id}) contains async tasks awaiting "
+                                    f"external completion - keeping request in current status"
+                                )
+                                should_requeue = False
+                                break
+
+                            # All remaining no-subtask_id cases route through the retry
+                            # mechanism. Covers three scenarios:
+                            #   - pending + no upstream (root task): never dispatched
+                            #   - pending + upstream_complete: parent died before dispatch
+                            #   - in_processing + no_cache: cache evicted / worker crashed
+                            # _handle_privacy_request_requeue applies the retry limit;
+                            # cancellation only happens when the limit is exhausted.
+                            if task_status == ExecutionLogStatus.pending:
+                                # awaiting_upstream=True cases were already skipped via
+                                # `continue` above, so all pending tasks reaching here have
+                                # upstream complete (or no upstream). Both cases mean the
+                                # parent task died before dispatching this task.
+                                logger.warning(
+                                    f"No task ID found for request task {request_task_id} "
+                                    f"(privacy request {privacy_request.id}) is pending with no "
+                                    f"subtask_id (upstream complete or no upstream) — "
+                                    f"parent task died before dispatch, requeueing"
+                                )
+                            else:
+                                logger.warning(
+                                    f"No task ID found for request task {request_task_id} "
+                                    f"(privacy request {privacy_request.id}) is in_processing with no "
+                                    f"cache key - possible cache eviction or worker crash, requeueing"
+                                )
+                            should_requeue = True
+                            break
+
+                        if (
+                            subtask_id not in queued_tasks_ids
+                            and not celery_tasks_in_flight([subtask_id])
+                        ):
+                            # awaiting_processing tasks have a cached subtask ID
+                            # from their initial execution, but the Celery task
+                            # has finished (the task is waiting for an external
+                            # event).  Only requeue if the connection is gone —
+                            # otherwise the task is legitimately waiting.
+                            #
+                            # NOTE: For requires_input / pending_external PRs,
+                            # requeue is safe for DB-backed ManualTask input
+                            # (survives restart).  Old manual-webhook input is
+                            # Redis-only and may require re-submission if the
+                            # cache TTL expires before the requeued task runs.
+                            if task_status == ExecutionLogStatus.awaiting_processing:
+                                if not _task_is_orphaned(db, request_task_id):
+                                    continue
+                                logger.warning(
+                                    f"Request task {request_task_id} "
+                                    f"(privacy request {privacy_request.id}) is "
+                                    f"awaiting_processing but connection is "
+                                    f"deleted or disabled — requeueing"
+                                )
+
+                            else:
+                                logger.warning(
+                                    f"Request task {request_task_id} is not in the queue or running, requeueing privacy request"
+                                )
+                            should_requeue = True
+                            break
+
+                # Requeue the privacy request if needed
+                if should_requeue:
+                    _handle_privacy_request_requeue(db, privacy_request)
+
+
+@celery_app.task(base=DatabaseTask, bind=True)
+def requeue_polling_tasks(self: DatabaseTask) -> None:
+    """
+    Poll the status of async tasks that are awaiting processing.
+    """
+    with redis_lock(
+        ASYNC_TASKS_STATUS_POLLING_LOCK,
+        ASYNC_TASKS_STATUS_POLLING_LOCK_TIMEOUT,
+    ) as lock:
+        if not lock:
+            logger.debug("Async tasks status polling lock not acquired, skipping")
+            return
+        with self.get_new_session() as db:
+            logger.debug("Polling for async tasks status")
+
+            # Get all tasks that are polling and are from polling async tasks
+            # Defer large columns since we only need metadata to queue tasks
+            base_query = (
+                db.query(RequestTask)
+                .filter(RequestTask.status == ExecutionLogStatus.polling)
+                .filter(RequestTask.async_type == AsyncTaskType.polling)
+            )
+            async_tasks = RequestTask.query_with_deferred_data(base_query).all()
+            logger.info(f"Found {len(async_tasks)} async polling tasks")
+
+            if async_tasks:
+                # Avoiding cyclic imports
+                from fides.api.task.execute_request_tasks import queue_request_task
+
+                for async_task in async_tasks:
+                    logger.info(
+                        f"Requeuing polling task {async_task.id} for processing"
+                    )
+                    queue_request_task(async_task, privacy_request_proceed=True)
+
+
+EMBEDDED_EXECUTION_LOG_LIMIT = 1000
+
+# Display names for AuditLogAction values when rendering audit log rows in the
+# privacy request activity timeline. Keys must cover every AuditLogAction;
+# missing keys fall back to a raw `f"Request {action}"` rendering. A test in
+# tests/ops/service/privacy_request/test_request_service.py guards against drift.
+AUDIT_LOG_DISPLAY_NAMES = {
+    "approved": "Request approved",
+    "denied": "Request denied",
+    "email_sent": "Email sent",
+    "finished": "Request finished",
+    "imported": "Request imported",
+    "policy_evaluated": "Request policy evaluated",
+    "pre_approval_webhook_triggered": "Triggered pre-approval webhooks",
+    "pre_approval_eligible": "Request auto-approved by pre-approval webhooks",
+    "pre_approval_not_eligible": "Request flagged for manual review by pre-approval webhooks",
+    "access_package_approved": "Access package approved",
+    "access_package_redacted": "Access package redactions updated",
+}
+
+
+def batch_execution_and_audit_logs_by_dataset(
+    db: Session,
+    privacy_request_ids: List[str],
+) -> Dict[str, DefaultDict[str, List[Union["AuditLog", "ExecutionLog"]]]]:
+    """
+    Returns a mapping of privacy_request_id → {dataset_name → [logs]} for all
+    given privacy requests in a single query.
+
+    Audit Logs are for the entire privacy request as a whole, while execution logs
+    are created for specific collections. Logs are grouped by dataset, but if it is
+    an audit log, it is given a fake dataset name, "Request + status".
+    ExecutionLogs for each dataset are truncated at EMBEDDED_EXECUTION_LOG_LIMIT.
+    """
+    if not privacy_request_ids:
+        return {}
+
+    execution_log_query: Query = db.query(
+        ExecutionLog.id,
+        ExecutionLog.created_at,
+        ExecutionLog.updated_at,
+        ExecutionLog.message,
+        cast(ExecutionLog.status, sqlalchemy.String).label(
+            "status"
+        ),  # Casting to string so we can perform a union of execution log and audit log statuses
+        ExecutionLog.privacy_request_id,
+        ExecutionLog.dataset_name,
+        ExecutionLog.collection_name,
+        ExecutionLog.connection_key,
+        ExecutionLog.fields_affected,
+        ExecutionLog.action_type,
+        null().label("user_id"),
+        ExecutionLog.saas_version,
+    ).filter(ExecutionLog.privacy_request_id.in_(privacy_request_ids))
+
+    audit_log_query: Query = db.query(
+        AuditLog.id,
+        AuditLog.created_at,
+        AuditLog.updated_at,
+        AuditLog.message,
+        cast(AuditLog.action.label("status"), sqlalchemy.String).label(
+            "status"
+        ),  # Casting to string so we can perform a union of execution log and audit log statuses
+        AuditLog.privacy_request_id,
+        null().label("dataset_name"),
+        null().label("collection_name"),
+        null().label("connection_key"),
+        null().label("fields_affected"),
+        null().label("action_type"),
+        AuditLog.user_id,
+        null().label("saas_version"),
+    ).filter(AuditLog.privacy_request_id.in_(privacy_request_ids))
+
+    combined: Query = execution_log_query.union_all(audit_log_query)
+
+    result: Dict[str, DefaultDict[str, List[Union["AuditLog", "ExecutionLog"]]]] = {}
+
+    for log in combined.order_by(ExecutionLog.updated_at.asc()):
+        pr_id = log.privacy_request_id
+        if pr_id not in result:
+            result[pr_id] = defaultdict(list)
+
+        dataset_name: str = log.dataset_name or AUDIT_LOG_DISPLAY_NAMES.get(
+            log.status, f"Request {log.status}"
+        )
+
+        if len(result[pr_id][dataset_name]) > EMBEDDED_EXECUTION_LOG_LIMIT - 1:
+            continue
+        result[pr_id][dataset_name].append(log)
+
+    return result
+
+
+# Priority order for "worst" status per dataset — lower number = higher priority.
+_STATUS_PRIORITY: Dict[ExecutionLogStatus, int] = {
+    ExecutionLogStatus.error: 0,
+    ExecutionLogStatus.awaiting_processing: 1,
+    ExecutionLogStatus.polling: 2,
+    ExecutionLogStatus.retrying: 3,
+    ExecutionLogStatus.skipped: 4,
+}
+
+
+def batch_task_status_by_dataset(
+    db: Session,
+    privacy_request_ids: List[str],
+) -> Dict[str, Dict[str, str]]:
+    """
+    Returns a mapping of privacy_request_id → {dataset_name → "worst" status}
+    for all given privacy requests in a single query.
+
+    Only datasets that have a noteworthy status (error, awaiting_processing, polling,
+    retrying, skipped) are included. Datasets where all tasks are complete, pending,
+    or in_processing are omitted.
+    """
+    if not privacy_request_ids:
+        return {}
+
+    tasks = (
+        db.query(
+            RequestTask.privacy_request_id,
+            RequestTask.dataset_name,
+            RequestTask.status,
+        )
+        .filter(
+            RequestTask.privacy_request_id.in_(privacy_request_ids),
+            RequestTask.collection_address.notin_(
+                [
+                    ROOT_COLLECTION_ADDRESS.value,
+                    TERMINATOR_ADDRESS.value,
+                ]
+            ),
+        )
+        .all()
+    )
+
+    result: Dict[str, Dict[str, str]] = {}
+    worst_priority: Dict[str, Dict[str, int]] = {}
+
+    for pr_id, dataset_name, status in tasks:
+        priority = _STATUS_PRIORITY.get(status)
+        if priority is None:
+            continue
+
+        if pr_id not in result:
+            result[pr_id] = {}
+            worst_priority[pr_id] = {}
+
+        current_priority = worst_priority[pr_id].get(dataset_name)
+        if current_priority is None or priority < current_priority:
+            worst_priority[pr_id][dataset_name] = priority
+            result[pr_id][dataset_name] = status.name
+
+    return result

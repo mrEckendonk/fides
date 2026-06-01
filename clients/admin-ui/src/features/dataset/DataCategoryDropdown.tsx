@@ -1,116 +1,83 @@
-import {
-  ArrowDownLineIcon,
-  Box,
-  Button,
-  ButtonProps,
-  Menu,
-  MenuButton,
-  MenuButtonProps,
-  MenuDivider,
-  MenuItem,
-  MenuList,
-  MenuOptionGroup,
-  Text,
-} from "fidesui";
-import { useMemo } from "react";
+import { Button, Divider, Flex, Icons, Popover, Typography } from "fidesui";
+import { useMemo, useState } from "react";
 
 import CheckboxTree from "~/features/common/CheckboxTree";
 import { transformTaxonomyEntityToNodes } from "~/features/taxonomy/helpers";
 import { DataCategory } from "~/types/api";
 
+const { Text } = Typography;
+
 interface Props {
   dataCategories: DataCategory[];
   checked: string[];
   onChecked: (newChecked: string[]) => void;
-  buttonProps?: ButtonProps;
   buttonLabel?: string;
 }
 
-const DataCategoryDropdown = ({
+export const DataCategoryDropdown = ({
   dataCategories,
   checked,
   onChecked,
-  buttonProps,
   buttonLabel,
 }: Props) => {
+  const [open, setOpen] = useState(false);
+
   const dataCategoryNodes = useMemo(
     () => transformTaxonomyEntityToNodes(dataCategories),
-    [dataCategories]
+    [dataCategories],
   );
 
-  const defaultButtonProps: ButtonProps = {
-    variant: "outline",
-    fontWeight: "normal",
-    size: "sm",
-    borderRadius: "sm",
-    textAlign: "left",
-    _hover: { backgroundColor: "transparent" },
-    _active: { backgroundColor: "transparent" },
-    rightIcon: <ArrowDownLineIcon />,
-    width: "100%",
-  };
-  const menuButtonProps = buttonProps ?? defaultButtonProps;
   const label = buttonLabel ?? "Select data categories";
 
+  const content = (
+    <div className="max-h-[50vh] min-w-[300px] max-w-full overflow-y-auto">
+      <div className="sticky top-0 z-10 pt-1">
+        <Flex justify="space-between" className="mb-2 px-2">
+          <Button
+            size="small"
+            className="mr-2 !w-auto"
+            onClick={() => onChecked([])}
+            data-testid="data-category-clear-btn"
+          >
+            Clear
+          </Button>
+          <Text className="mr-2">Data Categories</Text>
+          <Button
+            size="small"
+            className="!w-auto"
+            onClick={() => setOpen(false)}
+            data-testid="data-category-done-btn"
+          >
+            Done
+          </Button>
+        </Flex>
+        <Divider />
+      </div>
+      <div className="px-2" data-testid="data-category-checkbox-tree">
+        <CheckboxTree
+          nodes={dataCategoryNodes}
+          selected={checked}
+          onSelected={onChecked}
+        />
+      </div>
+    </div>
+  );
+
   return (
-    <Menu closeOnSelect>
-      <MenuButton
-        as={Button}
-        {...(menuButtonProps as MenuButtonProps)}
+    <Popover
+      content={content}
+      trigger="click"
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <Button
+        icon={<Icons.ChevronDown />}
+        className="!bg-transparent"
+        block
         data-testid="data-category-dropdown"
       >
         {label}
-      </MenuButton>
-      <MenuList>
-        <Box maxHeight="50vh" minWidth="300px" overflowY="scroll">
-          <Box
-            position="sticky"
-            top={0}
-            zIndex={1}
-            backgroundColor="white"
-            pt={1}
-          >
-            <MenuOptionGroup>
-              <Box display="flex" justifyContent="space-between" px={2} mb={2}>
-                <MenuItem
-                  as={Button}
-                  variant="outline"
-                  size="xs"
-                  onClick={() => onChecked([])}
-                  mr={2}
-                  width="auto"
-                  closeOnSelect={false}
-                  data-testid="data-category-clear-btn"
-                >
-                  Clear
-                </MenuItem>
-                <Text mr={2}>Data Categories</Text>
-                <MenuItem
-                  as={Button}
-                  size="xs"
-                  colorScheme="primary"
-                  color="white"
-                  _hover={{ backgroundColor: "primary.600" }}
-                  width="auto"
-                  data-testid="data-category-done-btn"
-                >
-                  Done
-                </MenuItem>
-              </Box>
-            </MenuOptionGroup>
-            <MenuDivider />
-          </Box>
-          <Box px={2} data-testid="data-category-checkbox-tree">
-            <CheckboxTree
-              nodes={dataCategoryNodes}
-              selected={checked}
-              onSelected={onChecked}
-            />
-          </Box>
-        </Box>
-      </MenuList>
-    </Menu>
+      </Button>
+    </Popover>
   );
 };
-
-export default DataCategoryDropdown;

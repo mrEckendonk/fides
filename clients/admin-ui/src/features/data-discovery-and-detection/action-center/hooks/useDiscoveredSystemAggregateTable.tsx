@@ -1,0 +1,278 @@
+import { Empty, useMessage, useNotification } from "fidesui";
+import { useRouter } from "next/router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { getErrorMessage, isErrorResult } from "~/features/common/helpers";
+import {
+  ACTION_CENTER_ROUTE,
+  SYSTEM_ROUTE,
+  UNCATEGORIZED_SEGMENT,
+} from "~/features/common/nav/routes";
+import {
+  AntTableHookConfig,
+  useAntTable,
+  useTableState,
+} from "~/features/common/table/hooks";
+import ToastLink from "~/features/common/ToastLink";
+import {
+  AlertLevel,
+  ConsentAlertInfo,
+  DiffStatus,
+  SystemStagedResourcesAggregateRecord,
+} from "~/types/api";
+import { APIMonitorType } from "~/types/api/models/APIMonitorType";
+
+import {
+  useAddMonitorResultSystemsMutation,
+  useGetDiscoveredSystemAggregateQuery,
+  useIgnoreMonitorResultSystemsMutation,
+} from "../action-center.slice";
+import { DiscoveredSystemAggregateColumnKeys } from "../constants";
+import useActionCenterTabs, {
+  ActionCenterTabHash,
+} from "./useActionCenterTabs";
+import { useDiscoveredSystemAggregateColumns } from "./useDiscoveredSystemAggregateColumns";
+
+interface UseDiscoveredSystemAggregateTableConfig {
+  monitorId: string;
+}
+
+export const useDiscoveredSystemAggregateTable = ({
+  monitorId,
+}: UseDiscoveredSystemAggregateTableConfig) => {
+  const router = useRouter();
+  const message = useMessage();
+  const notification = useNotification();
+
+  const [firstPageConsentStatus, setFirstPageConsentStatus] = useState<
+    ConsentAlertInfo | undefined
+  >();
+
+  const tableState = useTableState<DiscoveredSystemAggregateColumnKeys>({
+    sorting: {
+      validColumns: Object.values(DiscoveredSystemAggregateColumnKeys),
+    },
+  });
+
+  const { pageIndex, pageSize, searchQuery, updateSearch, resetState } =
+    tableState;
+
+  const { filterTabs, activeTab, onTabChange, activeParams, actionsDisabled } =
+    useActionCenterTabs();
+
+  const { data, error, isLoading, isFetching } =
+    useGetDiscoveredSystemAggregateQuery({
+      key: monitorId,
+      page: pageIndex,
+      size: pageSize,
+      search: searchQuery,
+      ...activeParams,
+    });
+
+  const [addMonitorResultSystemsMutation, { isLoading: isAddingResults }] =
+    useAddMonitorResultSystemsMutation();
+  const [ignoreMonitorResultSystemsMutation, { isLoading: isIgnoringResults }] =
+    useIgnoreMonitorResultSystemsMutation();
+
+  const anyBulkActionIsLoading = isAddingResults || isIgnoringResults;
+
+  // Helper function to generate consistent row keys
+  const getRecordKey = useCallback(
+    (record: SystemStagedResourcesAggregateRecord) =>
+      record.id ?? record.vendor_id ?? record.name ?? UNCATEGORIZED_SEGMENT,
+    [],
+  );
+
+  const rowClickUrl = useCallback(
+    (record: SystemStagedResourcesAggregateRecord) => {
+      const recordId = record.id ?? UNCATEGORIZED_SEGMENT;
+      const activeTabHash = activeTab ? `#${activeTab}` : "";
+      return `${ACTION_CENTER_ROUTE}/${APIMonitorType.WEBSITE}/${monitorId}/${recordId}${activeTabHash}`;
+    },
+    [monitorId, activeTab],
+  );
+
+  const antTableConfig = useMemo(
+    () => ({
+      enableSelection: true,
+      getRowKey: getRecordKey,
+      isLoading,
+      isFetching,
+      dataSource: data?.items || [],
+      totalRows: data?.total || 0,
+      customTableProps: {
+        locale: {
+          emptyText: (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="All caught up!"
+            />
+          ),
+        },
+        sticky: {
+          offsetHeader: 40,
+        },
+      },
+    }),
+    [getRecordKey, isLoading, isFetching, data?.items, data?.total],
+  );
+
+  const antTable = useAntTable<
+    SystemStagedResourcesAggregateRecord,
+    DiscoveredSystemAggregateColumnKeys
+  >(
+    tableState,
+    antTableConfig as AntTableHookConfig<SystemStagedResourcesAggregateRecord>,
+  );
+
+  const { selectedRows, resetSelections } = antTable;
+
+  const handleTabChange = useCallback(
+    async (tab: ActionCenterTabHash) => {
+      setFirstPageConsentStatus(undefined);
+      await onTabChange(tab);
+      resetState();
+      resetSelections();
+    },
+    [onTabChange, resetState, resetSelections],
+  );
+
+  const { columns } = useDiscoveredSystemAggregateColumns({
+    monitorId,
+    onTabChange: handleTabChange,
+    readonly: actionsDisabled,
+    allowIgnore:
+      !("diff_status" in activeParams) ||
+      !(activeParams as { diff_status: DiffStatus[] }).diff_status.includes(
+        DiffStatus.MUTED,
+      ),
+    consentStatus: firstPageConsentStatus,
+    rowClickUrl,
+  });
+
+  // Business logic effects
+  useEffect(() => {
+    if (data?.items && !firstPageConsentStatus) {
+      // this ensures that the column header remembers the consent status
+      // even when the user navigates to a different paginated page
+      const consentStatus = data.items.find(
+        (item) => item.consent_status?.status === AlertLevel.ALERT,
+      )?.consent_status;
+      setFirstPageConsentStatus(consentStatus ?? undefined);
+    }
+  }, [data, firstPageConsentStatus]);
+
+  const handleBulkAdd = useCallback(async () => {
+    const totalUpdates = selectedRows.reduce(
+      (acc, row) => acc + row.total_updates!,
+      0,
+    );
+
+    const result = await addMonitorResultSystemsMutation({
+      monitor_config_key: monitorId,
+      resolved_system_ids: selectedRows.map((row) => row.id!),
+    });
+
+    if (isErrorResult(result)) {
+      message.error(getErrorMessage(result.error));
+    } else {
+      notification.success({
+        message: "Added to inventory",
+        description: `${totalUpdates} assets have been added to the system inventory.`,
+        actions: (
+          <ToastLink onClick={() => router.push(SYSTEM_ROUTE)}>View</ToastLink>
+        ),
+      });
+      resetSelections();
+    }
+  }, [
+    selectedRows,
+    addMonitorResultSystemsMutation,
+    monitorId,
+    message,
+    notification,
+    router,
+    resetSelections,
+  ]);
+
+  const handleBulkIgnore = useCallback(async () => {
+    const totalUpdates = selectedRows.reduce(
+      (acc, row) => acc + row.total_updates!,
+      0,
+    );
+
+    const result = await ignoreMonitorResultSystemsMutation({
+      monitor_config_key: monitorId,
+      resolved_system_ids: selectedRows.map(
+        (row) => row.id ?? UNCATEGORIZED_SEGMENT,
+      ),
+    });
+
+    if (isErrorResult(result)) {
+      message.error(getErrorMessage(result.error));
+    } else {
+      notification.success({
+        message: "Assets ignored",
+        description: `${totalUpdates} assets have been ignored and will not appear in future scans.`,
+        actions: (
+          <ToastLink
+            onClick={async () => {
+              await onTabChange(ActionCenterTabHash.IGNORED);
+            }}
+          >
+            View
+          </ToastLink>
+        ),
+      });
+      resetSelections();
+    }
+  }, [
+    selectedRows,
+    ignoreMonitorResultSystemsMutation,
+    monitorId,
+    message,
+    notification,
+    onTabChange,
+    resetSelections,
+  ]);
+
+  const uncategorizedIsSelected = selectedRows.some((row) => row.id === null);
+
+  return {
+    // Table state and data
+    columns,
+    data,
+    error,
+    isLoading,
+    isFetching,
+    searchQuery,
+    updateSearch,
+    resetState,
+
+    // Ant Design table integration
+    tableProps: antTable.tableProps,
+    selectionProps: antTable.selectionProps,
+
+    // Tab management
+    filterTabs,
+    activeTab,
+    handleTabChange,
+    activeParams,
+    actionsDisabled,
+
+    // Selection
+    selectedRows,
+    hasSelectedRows: antTable.hasSelectedRows,
+    resetSelections,
+    uncategorizedIsSelected,
+
+    // Business actions
+    handleBulkAdd,
+    handleBulkIgnore,
+
+    // Loading states
+    anyBulkActionIsLoading,
+    isAddingResults,
+    isIgnoringResults,
+  };
+};

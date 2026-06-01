@@ -1,0 +1,180 @@
+import { Button, Dropdown, Icons, Tooltip } from "fidesui";
+import { useMemo } from "react";
+
+import { PrivacyRequestStatus } from "~/types/api";
+
+import ApprovePrivacyRequestModal from "./ApprovePrivacyRequestModal";
+import DenyPrivacyRequestModal from "./DenyPrivacyRequestModal";
+import useApproveDenyPrivacyRequest from "./hooks/useApproveDenyPrivacyRequest";
+import useDownloadPrivacyRequestDiagnostics from "./hooks/useDownloadPrivacyRequestDiagnostics";
+import useDownloadPrivacyRequestResults from "./hooks/useDownloadPrivacyRequestResults";
+import { useMutations } from "./hooks/useMutations";
+import useReprocessPrivacyRequest from "./hooks/useReprocessPrivacyRequest";
+import { PrivacyRequestEntity } from "./types";
+
+interface PrivacyRequestActionsDropdownProps {
+  privacyRequest: PrivacyRequestEntity;
+}
+
+const PrivacyRequestActionsDropdown = ({
+  privacyRequest,
+}: PrivacyRequestActionsDropdownProps) => {
+  const {
+    showDownloadResults,
+    downloadResults,
+    infoTooltip,
+    isDisabled: isDownloadDisabled,
+  } = useDownloadPrivacyRequestResults({ privacyRequest });
+
+  const {
+    showDownloadTroubleshootingData,
+    downloadTroubleshootingData,
+    isLoading: isTroubleshootingDownloadLoading,
+  } = useDownloadPrivacyRequestDiagnostics({ privacyRequest });
+
+  const {
+    isModalOpen: isApproveModalOpen,
+    closeModal: closeApproveModal,
+    performAction: approveRequest,
+    openConfirmationModal: openApproveConfirmationModal,
+    showAction: showApproveRequest,
+  } = useApproveDenyPrivacyRequest({ privacyRequest, action: "approve" });
+
+  const {
+    isModalOpen: isDenyModalOpen,
+    closeModal: closeDenyModal,
+    performAction: denyRequest,
+    openConfirmationModal: openDenyConfirmationModal,
+    showAction: showDenyRequest,
+  } = useApproveDenyPrivacyRequest({
+    privacyRequest,
+    action: "deny",
+  });
+
+  const { reprocessPrivacyRequest, showReprocess } = useReprocessPrivacyRequest(
+    { privacyRequest },
+  );
+
+  const { handleFinalizeRequest, finalizeRequestResult } = useMutations({
+    subjectRequest: privacyRequest,
+  });
+
+  const menuItems = useMemo(() => {
+    const menu = [];
+    menu.push({
+      key: "approve",
+      label: <span data-testid="privacy-request-approve-btn">Approve</span>,
+      onClick: openApproveConfirmationModal,
+      disabled: !showApproveRequest,
+    });
+    menu.push({
+      key: "deny",
+      label: <span data-testid="privacy-request-deny-btn">Deny</span>,
+      onClick: openDenyConfirmationModal,
+      disabled: !showDenyRequest,
+    });
+
+    menu.push({
+      key: "reprocess",
+      label: (
+        <span data-testid="privacy-request-action-reprocess">Reprocess</span>
+      ),
+      onClick: reprocessPrivacyRequest,
+      disabled: !showReprocess,
+    });
+
+    if (
+      privacyRequest.status ===
+      PrivacyRequestStatus.REQUIRES_MANUAL_FINALIZATION
+    ) {
+      menu.push({
+        key: "finalize",
+        label: (
+          <span data-testid="privacy-request-action-finalize">Finalize</span>
+        ),
+        onClick: handleFinalizeRequest,
+        disabled: finalizeRequestResult.isLoading,
+      });
+    }
+
+    if (showDownloadResults) {
+      menu.push({
+        key: "download",
+        label: (
+          <Tooltip
+            title={isDownloadDisabled ? infoTooltip : null}
+            placement="bottom"
+          >
+            <span data-testid="download-results-btn">
+              Download request results
+            </span>
+          </Tooltip>
+        ),
+        onClick: downloadResults,
+        disabled: isDownloadDisabled,
+      });
+    }
+
+    if (showDownloadTroubleshootingData) {
+      menu.push({
+        key: "download-troubleshooting-data",
+        label: "Download troubleshooting data",
+        onClick: downloadTroubleshootingData,
+        disabled: isTroubleshootingDownloadLoading,
+      });
+    }
+
+    return menu;
+  }, [
+    showDownloadResults,
+    downloadResults,
+    infoTooltip,
+    isDownloadDisabled,
+    showDownloadTroubleshootingData,
+    downloadTroubleshootingData,
+    isTroubleshootingDownloadLoading,
+    showApproveRequest,
+    showDenyRequest,
+    openApproveConfirmationModal,
+    openDenyConfirmationModal,
+    showReprocess,
+    reprocessPrivacyRequest,
+    privacyRequest.status,
+    handleFinalizeRequest,
+    finalizeRequestResult.isLoading,
+  ]);
+
+  return (
+    <>
+      <Dropdown
+        menu={{ items: menuItems }}
+        trigger={["click"]}
+        styles={{ root: { minWidth: "160px" } }}
+      >
+        <Button
+          icon={<Icons.CaretDown />}
+          data-testid="privacy-request-actions-dropdown-btn"
+          iconPlacement="end"
+          type="primary"
+          disabled={!menuItems.length}
+          size="large"
+        >
+          Actions
+        </Button>
+      </Dropdown>
+      <ApprovePrivacyRequestModal
+        isOpen={isApproveModalOpen}
+        isLoading={false}
+        onClose={closeApproveModal}
+        onApproveRequest={() => approveRequest({ reason: "" })}
+        subjectRequest={privacyRequest}
+      />
+      <DenyPrivacyRequestModal
+        isOpen={isDenyModalOpen}
+        onClose={closeDenyModal}
+        onDenyRequest={(reason) => denyRequest({ reason })}
+      />
+    </>
+  );
+};
+export default PrivacyRequestActionsDropdown;

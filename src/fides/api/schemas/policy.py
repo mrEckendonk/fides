@@ -1,20 +1,40 @@
 from enum import Enum as EnumType
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any, Optional, Union
 
 from fideslang.validation import FidesKey
+from loguru import logger
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from fides.api.schemas.api import BulkResponse, BulkUpdateFailed
 from fides.api.schemas.base_class import FidesSchema
 from fides.api.schemas.storage.storage import StorageDestinationResponse
+from fides.api.task.conditional_dependencies.schemas import (
+    ConditionGroup,
+    ConditionLeaf,
+)
 
 
-class ActionType(str, EnumType):
+class ActionType(StrEnum):
     """The purpose of a particular privacy request"""
 
     access = "access"
     consent = "consent"
     erasure = "erasure"
     update = "update"
+
+
+class CurrentStep(EnumType):
+    pre_webhooks = "pre_webhooks"
+    access = "access"
+    upload_access = "upload_access"
+    erasure = "erasure"
+    finalize_erasure = "finalize_erasure"
+    consent = "consent"
+    finalize_consent = "finalize_consent"
+    email_post_send = "email_post_send"
+    post_webhooks = "post_webhooks"
+    finalization = "finalization"
 
 
 # action types we actively support in policies/requests
@@ -40,7 +60,7 @@ class PolicyMaskingSpec(FidesSchema):
     """Models the masking strategy definition"""
 
     strategy: str
-    configuration: Dict[str, Any]
+    configuration: dict[str, Any]
 
 
 class PolicyMaskingSpecResponse(FidesSchema):
@@ -56,29 +76,21 @@ class PolicyMaskingSpecResponse(FidesSchema):
 class RuleTarget(FidesSchema):
     """An external representation of a Rule's target DataCategory within a Fidesops Policy"""
 
-    name: Optional[str]
-    key: Optional[FidesKey]
+    name: Optional[str] = None
+    key: Optional[FidesKey] = None
     # `data_category` is type str so that we can validate its contents against the DB records
     # outside of the schemas
     data_category: str
-
-    class Config:
-        """Populate models with the raw value of enum fields, rather than the enum itself"""
-
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class RuleBase(FidesSchema):
     """An external representation of a Rule within a Fidesops Policy"""
 
     name: str
-    key: Optional[FidesKey]
+    key: Optional[FidesKey] = None
     action_type: ActionType
-
-    class Config:
-        """Populate models with the raw value of enum fields, rather than the enum itself"""
-
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class RuleCreate(RuleBase):
@@ -87,8 +99,14 @@ class RuleCreate(RuleBase):
     over a composite object.
     """
 
-    storage_destination_key: Optional[FidesKey]
-    masking_strategy: Optional[PolicyMaskingSpec]
+    storage_destination_key: Optional[FidesKey] = None
+    masking_strategy: Optional[PolicyMaskingSpec] = None
+
+
+class RuleCreateWithTargets(RuleCreate):
+    """RuleCreate extended with inline targets for policy creation."""
+
+    targets: Optional[list[RuleTarget]] = None
 
 
 class RuleResponse(RuleBase):
@@ -97,8 +115,8 @@ class RuleResponse(RuleBase):
     of the `PolicyMaskingSpec` that omits the configuration to avoid exposing secrets.
     """
 
-    storage_destination: Optional[StorageDestinationResponse]
-    masking_strategy: Optional[PolicyMaskingSpecResponse]
+    storage_destination: Optional[StorageDestinationResponse] = None
+    masking_strategy: Optional[PolicyMaskingSpecResponse] = None
 
 
 class RuleResponseWithTargets(RuleBase):
@@ -108,56 +126,99 @@ class RuleResponseWithTargets(RuleBase):
     configuration to avoid exposing secrets.
     """
 
-    targets: Optional[List[RuleTarget]]
-    storage_destination: Optional[StorageDestinationResponse]
-    masking_strategy: Optional[PolicyMaskingSpecResponse]
+    targets: Optional[list[RuleTarget]] = None
+    storage_destination: Optional[StorageDestinationResponse] = None
+    masking_strategy: Optional[PolicyMaskingSpecResponse] = None
 
 
 class Rule(RuleBase):
     """A representation of a Rule that features all storage destination data."""
 
-    storage_destination: Optional[StorageDestinationResponse]
-    masking_strategy: Optional[PolicyMaskingSpec]
+    storage_destination: Optional[StorageDestinationResponse] = None
+    masking_strategy: Optional[PolicyMaskingSpec] = None
 
 
 class Policy(FidesSchema):
     """An external representation of a Fidesops Policy"""
 
     name: str
-    key: Optional[FidesKey]
-    drp_action: Optional[DrpAction]
-    execution_timeframe: Optional[int]
+    key: Optional[FidesKey] = None
+    action_type: Optional[ActionType] = None
+    rules: Optional[list[RuleCreateWithTargets]] = None
+    drp_action: Optional[DrpAction] = None
+    execution_timeframe: Optional[int] = None
+    model_config = ConfigDict(use_enum_values=True, from_attributes=True)
 
-    class Config:
-        """Populate models with the raw value of enum fields, rather than the enum itself"""
-
-        use_enum_values = True
-        orm_mode = True
+    @model_validator(mode="after")
+    def action_type_or_rules_not_both(self) -> "Policy":
+        if self.action_type is not None and self.rules is not None:
+            raise ValueError("Provide either 'action_type' or 'rules', not both.")
+        return self
 
 
 class PolicyResponse(Policy):
     """A holistic view of a Policy record, including all foreign keys by default."""
 
-    rules: Optional[List[RuleResponse]]
-    drp_action: Optional[DrpAction]
+    action_type: Optional[ActionType] = Field(None, exclude=True)  # type: ignore[assignment]
+    rules: Optional[list[RuleResponse]] = None  # type: ignore[assignment]
+    drp_action: Optional[DrpAction] = None
+    conditions: Optional[Union[ConditionLeaf, ConditionGroup]] = None
+
+    @field_validator("conditions", mode="before")
+    @classmethod
+    def extract_conditions(
+        cls, v: Any
+    ) -> Optional[Union[dict[str, Any], ConditionLeaf, ConditionGroup]]:
+        """Extract the condition tree from the ORM conditions relationship.
+
+        With from_attributes=True, Pydantic passes the raw ORM relationship
+        (a list of PolicyCondition objects) for this field. This validator
+        transforms it into the condition_tree dict.
+
+        Each policy has at most one PolicyCondition row (enforced at creation).
+        """
+        if isinstance(v, (dict, ConditionLeaf, ConditionGroup)):
+            return v or None
+        if not v:
+            return None
+        if isinstance(v, list):
+            # Multiple rows per policy is prevented by the DB unique constraint
+            # `uq_policy_condition_policy_id` on policy_condition.policy_id
+            # (see PolicyCondition model and migration 6d5f70dd0ba5).
+            # PolicyCondition.get_condition_tree() also uses .one_or_none(),
+            # and PolicyEvaluator queries one row per policy — so the evaluation
+            # path is consistent with taking the first (only) row here.
+            # We log-and-continue rather than raise so that read endpoints
+            # never 500 on unexpected DB state.
+            if len(v) > 1:
+                logger.warning(
+                    "Policy has %d condition rows; expected at most 1. "
+                    "This indicates data corruption — the unique constraint on "
+                    "policy_id should prevent multiple condition rows. "
+                    "Using the first row.",
+                    len(v),
+                )
+            if hasattr(v[0], "condition_tree") and v[0].condition_tree:
+                return v[0].condition_tree
+        return None
 
 
 class BulkPutRuleTargetResponse(BulkResponse):
     """Schema with mixed success/failure responses for Bulk Create/Update of RuleTarget responses."""
 
-    succeeded: List[RuleTarget]
-    failed: List[BulkUpdateFailed]
+    succeeded: list[RuleTarget]
+    failed: list[BulkUpdateFailed]
 
 
 class BulkPutRuleResponse(BulkResponse):
     """Schema with mixed success/failure responses for Bulk Create/Update of Rule responses."""
 
-    succeeded: List[RuleResponse]
-    failed: List[BulkUpdateFailed]
+    succeeded: list[RuleResponse]
+    failed: list[BulkUpdateFailed]
 
 
 class BulkPutPolicyResponse(BulkResponse):
     """Schema with mixed success/failure responses for Bulk Create/Update of Policy responses."""
 
-    succeeded: List[PolicyResponse]
-    failed: List[BulkUpdateFailed]
+    succeeded: list[PolicyResponse]
+    failed: list[BulkUpdateFailed]

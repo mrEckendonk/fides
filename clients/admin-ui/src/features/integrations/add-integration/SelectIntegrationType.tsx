@@ -1,63 +1,233 @@
-import { Button, Flex, Spacer, TabList, Tabs } from "fidesui";
+import { Col, Flex, Input, Row, Select, Spin } from "fidesui";
+import { ReactNode, useMemo, useState } from "react";
 
-import { FidesTab } from "~/features/common/DataTabs";
-import FidesSpinner from "~/features/common/FidesSpinner";
-import {
+import { useFlags } from "~/features/common/features";
+import { useGetAllConnectionTypesQuery } from "~/features/connection-type";
+import getIntegrationTypeInfo, {
   INTEGRATION_TYPE_LIST,
   IntegrationTypeInfo,
 } from "~/features/integrations/add-integration/allIntegrationTypes";
-import IntegrationBox from "~/features/integrations/IntegrationBox";
-import useIntegrationFilterTabs from "~/features/integrations/useIntegrationFilterTabs";
+import SelectableIntegrationBox from "~/features/integrations/SelectableIntegrationBox";
+import { getCategoryLabel } from "~/features/integrations/utils/categoryUtils";
+import { ConnectionType } from "~/types/api";
+import { ConnectionCategory } from "~/types/api/models/ConnectionCategory";
 
-type Props = {
-  onCancel: () => void;
-  onDetailClick: (type: IntegrationTypeInfo) => void;
-  onConfigureClick: (type: IntegrationTypeInfo) => void;
+type IntegrationCategoryFilter = ConnectionCategory | "ALL";
+
+export const useIntegrationFilters = () => {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] =
+    useState<IntegrationCategoryFilter>("ALL");
+  const [isFiltering, setIsFiltering] = useState(false);
+
+  const {
+    flags: { awsMonitor, entraMonitor, webMonitor, jiraIntegration },
+  } = useFlags();
+
+  const { data: connectionTypesData } = useGetAllConnectionTypesQuery({});
+  const connectionTypes = useMemo(
+    () => connectionTypesData?.items || [],
+    [connectionTypesData],
+  );
+
+  const allIntegrationTypes = useMemo(() => {
+    let staticIntegrations = INTEGRATION_TYPE_LIST;
+
+    // Filter out Entra when entraMonitor flag is disabled
+    if (!entraMonitor) {
+      staticIntegrations = staticIntegrations.filter(
+        (integration) =>
+          integration.placeholder.connection_type !== ConnectionType.ENTRA,
+      );
+    }
+
+    // Filter out AWS when awsMonitor flag is disabled
+    if (!awsMonitor) {
+      staticIntegrations = staticIntegrations.filter(
+        (integration) =>
+          integration.placeholder.connection_type !== ConnectionType.AWS,
+      );
+    }
+
+    if (!jiraIntegration) {
+      staticIntegrations = staticIntegrations.filter(
+        (integration) =>
+          integration.placeholder.connection_type !==
+          ConnectionType.JIRA_TICKET,
+      );
+    }
+
+    const existingSaasTypes = new Set(
+      staticIntegrations
+        .filter(
+          (integration) =>
+            integration.placeholder.connection_type === ConnectionType.SAAS,
+        )
+        .map((integration) => integration.placeholder.saas_config?.type),
+    );
+
+    const dynamicSaasIntegrations = connectionTypes
+      .filter(
+        (ct) => ct.type === "saas" && !existingSaasTypes.has(ct.identifier),
+      )
+      .map((ct) =>
+        getIntegrationTypeInfo(
+          ConnectionType.SAAS,
+          ct.identifier,
+          connectionTypes,
+        ),
+      );
+
+    return [...staticIntegrations, ...dynamicSaasIntegrations];
+  }, [connectionTypes, awsMonitor, entraMonitor, jiraIntegration]);
+
+  const availableCategories = useMemo(() => {
+    const allCategories: IntegrationCategoryFilter[] = [
+      "ALL",
+      ...Object.values(ConnectionCategory).filter((category) => {
+        if (!webMonitor && category === ConnectionCategory.WEBSITE) {
+          return false;
+        }
+        if (
+          !awsMonitor &&
+          category === ConnectionCategory.CLOUD_INFRASTRUCTURE
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    ];
+
+    return allCategories;
+  }, [awsMonitor, webMonitor]);
+
+  const filteredTypes = useMemo(() => {
+    let filtered = allIntegrationTypes;
+
+    if (selectedCategory !== "ALL") {
+      filtered = filtered.filter((i) => i.category === selectedCategory);
+    }
+
+    if (!webMonitor) {
+      filtered = filtered.filter(
+        (i) => i.category !== ConnectionCategory.WEBSITE,
+      );
+    }
+
+    // Filter out Entra when entraMonitor flag is disabled
+    if (!entraMonitor) {
+      filtered = filtered.filter(
+        (i) => i.placeholder.connection_type !== ConnectionType.ENTRA,
+      );
+    }
+
+    // Filter out AWS when awsMonitor flag is disabled
+    if (!awsMonitor) {
+      filtered = filtered.filter(
+        (i) => i.placeholder.connection_type !== ConnectionType.AWS,
+      );
+    }
+
+    // Filter by search term (name only)
+    if (searchTerm.trim()) {
+      const searchLower = searchTerm.toLowerCase();
+      filtered = filtered.filter((i) =>
+        (i.placeholder.name || "").toLowerCase().includes(searchLower),
+      );
+    }
+
+    return filtered.sort((a, b) => {
+      const nameA = a.placeholder.name || "";
+      const nameB = b.placeholder.name || "";
+      return nameA.localeCompare(nameB);
+    });
+  }, [
+    searchTerm,
+    selectedCategory,
+    webMonitor,
+    entraMonitor,
+    awsMonitor,
+    allIntegrationTypes,
+  ]);
+
+  const handleCategoryChange = (value: IntegrationCategoryFilter) => {
+    setIsFiltering(true);
+    setSelectedCategory(value);
+    setTimeout(() => setIsFiltering(false), 100);
+  };
+
+  const categoryOptions = availableCategories
+    .map((category) => {
+      if (category === "ALL") {
+        return { label: "All", value: category };
+      }
+      return {
+        label: getCategoryLabel(category),
+        value: category,
+      };
+    })
+    .sort((a, b) => {
+      if (a.label === "All") {
+        return -1;
+      }
+      if (b.label === "All") {
+        return 1;
+      }
+      return a.label.localeCompare(b.label);
+    });
+
+  const filterBar: ReactNode = (
+    <Flex align="center" justify="space-between" gap="large" className="w-full">
+      <Input
+        placeholder="Search by name..."
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        className="w-64"
+        allowClear
+      />
+      <Select
+        value={selectedCategory}
+        onChange={handleCategoryChange}
+        options={categoryOptions}
+        className="w-48"
+        placeholder="Select category"
+        aria-label="Select a category"
+        data-testid="category-filter-select"
+      />
+    </Flex>
+  );
+
+  return { filterBar, filteredTypes, isFiltering };
 };
+
+interface Props {
+  filteredTypes: IntegrationTypeInfo[];
+  isFiltering: boolean;
+  onIntegrationClick: (type: IntegrationTypeInfo) => void;
+  onDetailClick: (type: IntegrationTypeInfo) => void;
+}
 
 const SelectIntegrationType = ({
-  onCancel,
+  filteredTypes,
+  isFiltering,
+  onIntegrationClick,
   onDetailClick,
-  onConfigureClick,
-}: Props) => {
-  const { tabIndex, onChangeFilter, isFiltering, filteredTypes, tabs } =
-    useIntegrationFilterTabs(INTEGRATION_TYPE_LIST);
-
-  return (
-    <>
-      <Tabs index={tabIndex} onChange={onChangeFilter} mb={4}>
-        <TabList>
-          {tabs.map((label) => (
-            <FidesTab label={label} key={label} />
-          ))}
-        </TabList>
-      </Tabs>
-      {isFiltering ? (
-        <FidesSpinner />
-      ) : (
-        <Flex direction="column">
-          {filteredTypes.map((i) => (
-            <IntegrationBox
-              integration={i.placeholder}
-              key={i.placeholder.key}
-              onConfigureClick={() => onConfigureClick(i)}
-              otherButtons={
-                <Button onClick={() => onDetailClick(i)} variant="outline">
-                  Details
-                </Button>
-              }
-            />
-          ))}
-        </Flex>
-      )}
-      <Flex>
-        <Spacer />
-        <Button variant="outline" onClick={onCancel} size="sm">
-          Cancel
-        </Button>
-      </Flex>
-    </>
+}: Props) =>
+  isFiltering ? (
+    <Spin />
+  ) : (
+    <Row gutter={[24, 24]}>
+      {filteredTypes.map((i) => (
+        <Col span={8} key={i.placeholder.key}>
+          <SelectableIntegrationBox
+            integration={i.placeholder}
+            integrationTypeInfo={i}
+            onClick={() => onIntegrationClick(i)}
+            onDetailsClick={() => onDetailClick(i)}
+          />
+        </Col>
+      ))}
+    </Row>
   );
-};
 
 export default SelectIntegrationType;

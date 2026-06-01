@@ -1,16 +1,30 @@
-import { stubPlus } from "cypress/support/stubs";
+import {
+  stubDatamap,
+  stubDatasetCrud,
+  stubLocations,
+  stubOpenIdProviders,
+  stubOrganizationCrud,
+  stubPlus,
+  stubPrivacyRequests,
+  stubTaxonomyEntities,
+} from "cypress/support/stubs";
 
 import {
   ADD_SYSTEMS_ROUTE,
   DATAMAP_ROUTE,
   LOCATIONS_ROUTE,
   PRIVACY_NOTICES_ROUTE,
-} from "~/features/common/nav/v2/routes";
+} from "~/features/common/nav/routes";
 import { RoleRegistryEnum } from "~/types/api";
 
 describe("Routes", () => {
   beforeEach(() => {
     cy.login();
+    stubOpenIdProviders();
+    stubPrivacyRequests();
+    stubTaxonomyEntities();
+    stubLocations();
+    stubDatamap();
   });
 
   describe("permissions", () => {
@@ -27,15 +41,10 @@ describe("Routes", () => {
 
     it("admins can access many routes", () => {
       cy.assumeRole(RoleRegistryEnum.OWNER);
-      cy.visit("/");
       cy.visit(ADD_SYSTEMS_ROUTE);
-      cy.wait("@getSystems");
       cy.getByTestId("add-systems");
       cy.visit("/privacy-requests");
       cy.getByTestId("privacy-requests");
-      cy.visit("/datastore-connection");
-      cy.wait("@getConnectors");
-      cy.getByTestId("connection-grid");
       cy.visit("/privacy-requests/configure");
       cy.getByTestId("privacy-requests-configure");
       cy.visit(LOCATIONS_ROUTE);
@@ -61,10 +70,6 @@ describe("Routes", () => {
         cy.visit(ADD_SYSTEMS_ROUTE);
         cy.getByTestId("add-systems").should("not.exist");
         cy.getByTestId("home-content");
-        // cannot access /datastore-connection
-        cy.visit("/datastore-connection");
-        cy.getByTestId("connection-grid").should("not.exist");
-        cy.getByTestId("home-content");
         // can access /privacy-requests
         cy.visit("/privacy-requests");
         cy.getByTestId("privacy-requests");
@@ -80,7 +85,7 @@ describe("Routes", () => {
       stubPlus(false);
       cy.visit(DATAMAP_ROUTE);
       cy.getByTestId("home-content");
-      cy.getByTestId("cytoscape-graph").should("not.exist");
+      cy.getByTestId("reactflow-graph").should("not.exist");
       cy.visit(PRIVACY_NOTICES_ROUTE);
       cy.getByTestId("home-content");
       // cannot access locations route
@@ -91,7 +96,7 @@ describe("Routes", () => {
     it("plus can access plus routes", () => {
       stubPlus(true);
       cy.visit(DATAMAP_ROUTE);
-      cy.getByTestId("cytoscape-graph");
+      cy.getByTestId("reactflow-graph");
     });
   });
 });

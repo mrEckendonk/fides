@@ -1,7 +1,13 @@
-import { UseDisclosureReturn } from "fidesui";
+import {
+  Button,
+  ChakraUseDisclosureReturn as UseDisclosureReturn,
+} from "fidesui";
+import { useMemo, useState } from "react";
 
-import AddModal from "~/features/configure-consent/AddModal";
-import ConfigureIntegrationForm from "~/features/integrations/add-integration/ConfigureIntegrationForm";
+import ConfirmCloseModal from "~/features/common/modals/ConfirmCloseModal";
+import { ConfigureIntegrationForm } from "~/features/integrations/add-integration/ConfigureIntegrationForm";
+import { useGetSystemLinksQuery } from "~/features/integrations/system-links.slice";
+import { SaasConnectionTypes } from "~/features/integrations/types/SaasConnectionTypes";
 import useIntegrationOption from "~/features/integrations/useIntegrationOption";
 import { ConnectionConfigurationResponse } from "~/types/api";
 
@@ -9,23 +15,78 @@ const ConfigureIntegrationModal = ({
   isOpen,
   onClose,
   connection,
+  description,
 }: Pick<UseDisclosureReturn, "isOpen" | "onClose"> & {
   connection: ConnectionConfigurationResponse;
+  description: React.ReactNode;
 }) => {
-  const connectionOption = useIntegrationOption(connection.connection_type);
+  const [formState, setFormState] = useState<{
+    dirty: boolean;
+    isValid: boolean;
+    submitForm: () => void;
+    loading: boolean;
+  } | null>(null);
+
+  const connectionOption = useIntegrationOption(
+    connection.connection_type,
+    connection?.saas_config?.type as SaasConnectionTypes,
+  );
+
+  // Fetch currently linked systems for editing
+  const { data: systemLinksData } = useGetSystemLinksQuery(connection.key, {
+    skip: !connection.key,
+  });
+
+  // Get the currently linked system (prefer monitoring link type, fallback to first link)
+  const initialSystemFidesKey = useMemo(() => {
+    if (!systemLinksData || systemLinksData.length === 0) {
+      return undefined;
+    }
+    return systemLinksData[0].system_fides_key;
+  }, [systemLinksData]);
+
+  const handleSave = () => {
+    if (formState && formState.submitForm) {
+      formState.submitForm();
+    }
+  };
+
+  const modalFooter = (
+    <div className="flex w-full justify-between">
+      <Button onClick={onClose} data-testid="cancel-btn">
+        Cancel
+      </Button>
+      <Button
+        type="primary"
+        onClick={handleSave}
+        disabled={!formState || !formState.isValid || !formState.dirty}
+        loading={formState?.loading}
+        data-testid="save-btn"
+      >
+        Save
+      </Button>
+    </div>
+  );
 
   return (
-    <AddModal
-      title="Manage integration secret"
-      isOpen={isOpen}
+    <ConfirmCloseModal
+      title={`Manage ${connection?.name} integration`}
+      open={isOpen}
       onClose={onClose}
+      getIsDirty={() => formState?.dirty ?? false}
+      centered
+      destroyOnHidden
+      footer={modalFooter}
     >
       <ConfigureIntegrationForm
         connection={connection}
         connectionOption={connectionOption!}
-        onCancel={onClose}
+        onClose={onClose}
+        description={description}
+        onFormStateChange={setFormState}
+        initialSystemFidesKey={initialSystemFidesKey}
       />
-    </AddModal>
+    </ConfirmCloseModal>
   );
 };
 

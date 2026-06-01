@@ -1,0 +1,153 @@
+// Home page
+export const INDEX_ROUTE = "/";
+
+// Data map group
+export const ADD_SYSTEMS_ROUTE = "/add-systems";
+export const ADD_SYSTEMS_MANUAL_ROUTE = "/add-systems/manual";
+export const ADD_SYSTEMS_MULTIPLE_ROUTE = "/add-systems/multiple";
+export const DATAMAP_ROUTE = "/datamap";
+export const REPORTING_DATAMAP_ROUTE = "/reporting/datamap";
+export const REPORTING_ASSETS_ROUTE = "/reporting/assets";
+export const SYSTEM_ROUTE = "/systems";
+export const EDIT_SYSTEM_ROUTE = "/systems/configure/[id]";
+export const CLASSIFY_SYSTEMS_ROUTE = "/classify-systems";
+
+// Dataset
+export const DATASET_ROUTE = "/dataset";
+export const DATASET_DETAIL_ROUTE = "/dataset/[datasetId]";
+export const DATASET_COLLECTION_DETAIL_ROUTE =
+  "/dataset/[datasetId]/[collectionName]";
+export const DATASET_COLLECTION_SUBFIELD_DETAIL_ROUTE =
+  "/dataset/[datasetId]/[collectionName]/[...subfieldNames]";
+export const DATASET_GRAPH_EDITOR_ROUTE = "/dataset/[datasetId]/graph-editor";
+
+// Detection and discovery
+export const ACTION_CENTER_ROUTE = "/data-discovery/action-center";
+export const ACTION_CENTER_ACTIVITY_ROUTE =
+  "/data-discovery/action-center/activity";
+export const ACTION_CENTER_WEBSITE_MONITOR_ROUTE =
+  "/data-discovery/action-center/website/[monitorId]";
+export const ACTION_CENTER_DATASTORE_MONITOR_ROUTE =
+  "/data-discovery/action-center/datastore/[monitorId]";
+export const ACTION_CENTER_DATASTORE_MONITOR_ACTIVITY_ROUTE =
+  "/data-discovery/action-center/datastore/[monitorId]/activity";
+export const ACTION_CENTER_INFRASTRUCTURE_MONITOR_ROUTE =
+  "/data-discovery/action-center/infrastructure/[monitorId]";
+export const ACTION_CENTER_INFRASTRUCTURE_MONITOR_ACTIVITY_ROUTE =
+  "/data-discovery/action-center/infrastructure/[monitorId]/activity";
+export const ACTION_CENTER_CLOUD_INFRASTRUCTURE_MONITOR_ROUTE =
+  "/data-discovery/action-center/cloud_infrastructure/[monitorId]";
+export const ACTION_CENTER_CLOUD_INFRASTRUCTURE_MONITOR_ACTIVITY_ROUTE =
+  "/data-discovery/action-center/cloud_infrastructure/[monitorId]/activity";
+export const UNCATEGORIZED_SEGMENT = "[undefined]";
+
+// Privacy requests group
+export const PRIVACY_REQUESTS_ROUTE = "/privacy-requests";
+export const PRIVACY_REQUESTS_CONFIGURATION_ROUTE = `${PRIVACY_REQUESTS_ROUTE}/configure`;
+export const PRIVACY_REQUEST_DETAIL_ROUTE = "/privacy-requests/[id]";
+export const POLICIES_ROUTE = "/privacy-request-policies";
+export const POLICY_DETAIL_ROUTE = "/privacy-request-policies/[key]";
+
+// Consent group
+export const PRIVACY_EXPERIENCE_ROUTE = "/consent/privacy-experience";
+export const PRIVACY_NOTICES_ROUTE = "/consent/privacy-notices";
+export const CONFIGURE_CONSENT_ROUTE = "/consent/configure";
+export const ADD_MULTIPLE_VENDORS_ROUTE = "/consent/configure/add-vendors";
+export const CONSENT_REPORTING_ROUTE = "/consent/reporting";
+
+// Management group
+export const PROPERTIES_ROUTE = "/properties";
+export const ADD_PROPERTY_ROUTE = "/properties/add-property";
+export const EDIT_PROPERTY_ROUTE = "/properties/[id]";
+
+export const API_CLIENTS_ROUTE = "/api-clients";
+export const API_CLIENT_DETAIL_ROUTE = "/api-clients/[id]";
+export const USER_MANAGEMENT_ROUTE = "/user-management";
+export const USER_PROFILE_ROUTE = "/user-management/profile/[id]";
+export const USER_DETAIL_ROUTE = "/user-management/profile/[id]";
+export const INTEGRATION_MANAGEMENT_ROUTE = "/integrations";
+export const INTEGRATION_DETAIL_ROUTE = "/integrations/[id]";
+export const ORGANIZATION_MANAGEMENT_ROUTE = "/settings/organization";
+export const LOCATIONS_ROUTE = "/settings/locations";
+export const REGULATIONS_ROUTE = "/settings/regulations";
+export const TAXONOMY_ROUTE = "/taxonomy";
+export const ABOUT_ROUTE = "/settings/about";
+export const CUSTOM_FIELDS_ROUTE = "/settings/custom-fields";
+export const EMAIL_TEMPLATES_ROUTE = "/settings/email-templates";
+export const DOMAIN_RECORDS_ROUTE = "/settings/domain-records";
+export const DOMAIN_MANAGEMENT_ROUTE = "/settings/domains";
+export const GLOBAL_CONSENT_CONFIG_ROUTE = "/settings/consent";
+export const PRIVACY_REQUESTS_SETTINGS_ROUTE = "/settings/privacy-requests";
+export const PRE_APPROVAL_WEBHOOKS_ROUTE = "/pre-approval-webhooks";
+
+// Notifications group (messaging templates and digests)
+export const NOTIFICATIONS_ROUTE = "/notifications";
+export const NOTIFICATIONS_TEMPLATES_ROUTE = "/notifications/templates";
+export const NOTIFICATIONS_ADD_TEMPLATE_ROUTE =
+  "/notifications/templates/add-template";
+export const NOTIFICATIONS_EDIT_TEMPLATE_ROUTE =
+  "/notifications/templates/[id]";
+export const NOTIFICATIONS_DIGESTS_ROUTE = "/notifications/digests";
+export const NOTIFICATIONS_ADD_DIGEST_ROUTE = "/notifications/digests/new";
+export const NOTIFICATIONS_EDIT_DIGEST_ROUTE = "/notifications/digests/[id]";
+
+// Messaging providers (now part of notifications)
+export const MESSAGING_PROVIDERS_ROUTE = "/notifications/providers";
+export const MESSAGING_PROVIDERS_EDIT_ROUTE = "/notifications/providers/[key]";
+export const MESSAGING_PROVIDERS_NEW_ROUTE = "/notifications/providers/new";
+
+// Chat providers (Slack, Teams, etc.)
+export const CHAT_PROVIDERS_ROUTE = "/notifications/chat-providers";
+export const CHAT_PROVIDERS_CONFIGURE_ROUTE =
+  "/notifications/chat-providers/configure";
+
+// OpenID Authentication group
+export const OPENID_AUTHENTICATION_ROUTE = "/settings/openid-authentication";
+
+export const ANT_POC_ROUTE = "/poc/ant-components";
+export const FORMS_POC_ROUTE = "/poc/forms";
+export const ERRORS_POC_ROUTE = "/poc/error";
+export const TABLE_MIGRATION_POC_ROUTE = "/poc/table-migration";
+export const PROMPT_EXPLORER_ROUTE = "/poc/prompt-explorer";
+export const SEED_DATA_ROUTE = "/poc/seed-data";
+export const TEST_MONITORS_ROUTE = "/poc/test-monitors";
+
+// RBAC routes
+export const RBAC_ROUTE = "/settings/rbac";
+export const RBAC_ROLES_ROUTE = "/settings/rbac/roles";
+export const RBAC_ROLE_DETAIL_ROUTE = "/settings/rbac/roles/[id]";
+export const RBAC_ROLE_NEW_ROUTE = "/settings/rbac/roles/new";
+
+// Sandbox routes
+export const SANDBOX_PRIVACY_NOTICES_ROUTE = "/sandbox/privacy-notices";
+
+// Privacy Assessments routes
+export const PRIVACY_ASSESSMENTS_ROUTE = "/privacy-assessments";
+export const PRIVACY_ASSESSMENTS_DETAIL_ROUTE = "/privacy-assessments/[id]";
+
+// Data Purposes (Core Configuration)
+export const DATA_PURPOSES_ROUTE = "/data-purposes";
+export const DATA_PURPOSES_EDIT_ROUTE = "/data-purposes/[fidesKey]";
+
+// Data Consumers (Core Configuration)
+export const DATA_CONSUMERS_ROUTE = "/data-consumers";
+export const DATA_CONSUMERS_NEW_ROUTE = "/data-consumers/new";
+export const DATA_CONSUMERS_EDIT_ROUTE = "/data-consumers/[id]";
+
+// Access Policies (Core Configuration)
+export const ACCESS_POLICIES_ROUTE = "/access-policies";
+export const ACCESS_POLICIES_ONBOARDING_ROUTE = "/access-policies/onboarding";
+export const ACCESS_POLICIES_NEW_ROUTE = "/access-policies/new";
+export const ACCESS_POLICY_EDIT_ROUTE = "/access-policies/edit/[id]";
+export const CONTROLS_ROUTE = "/access-policies/controls";
+export const CONTROLS_NEW_ROUTE = "/access-policies/controls/new";
+export const CONTROLS_EDIT_ROUTE = "/access-policies/controls/[controlKey]";
+
+// Access Control (Detection & Discovery)
+export const ACCESS_CONTROL_ROUTE = "/data-discovery/access-control";
+
+// DSR Traversal Visualizer
+export const DSR_TRAVERSAL_ROUTE = "/dsr-traversal";
+export const DSR_TRAVERSAL_PROPERTY_ROUTE = "/dsr-traversal/[propertyKey]";
+export const DSR_TRAVERSAL_PROPERTY_ACTION_ROUTE =
+  "/dsr-traversal/[propertyKey]/[[...actionType]]";

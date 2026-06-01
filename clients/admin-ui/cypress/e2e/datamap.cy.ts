@@ -1,16 +1,21 @@
-import { stubDatamap, stubPlus } from "cypress/support/stubs";
+import {
+  stubDatamap,
+  stubPlus,
+  stubTaxonomyEntities,
+} from "cypress/support/stubs";
 
 describe("Datamap table and spatial view", () => {
   beforeEach(() => {
     cy.login();
     stubDatamap();
+    stubTaxonomyEntities();
     stubPlus(true);
   });
 
   it("Can render spatial view", () => {
     cy.visit("/datamap");
     cy.wait("@getDatamap");
-    cy.getByTestId("cytoscape-graph").should("exist");
+    cy.getByTestId("reactflow-graph").should("exist");
   });
 
   it("Renders a modal to prompt the user to get started when there is no datamap yet", () => {

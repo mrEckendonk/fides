@@ -1,4 +1,4 @@
-import { Center, Spinner, Text } from "fidesui";
+import { ChakraText as Text, Spin } from "fidesui";
 import { useRouter } from "next/router";
 
 import Layout from "~/features/common/Layout";
@@ -19,15 +19,13 @@ const PrivacyExperienceDetailPage = () => {
   }
 
   const { data, isLoading } = useGetExperienceConfigByIdQuery(experienceId);
-  const { data: availableTranslations } =
+  const { data: availableTranslations, isLoading: isTranslationsLoading } =
     useGetAvailableConfigTranslationsQuery(experienceId);
 
-  if (isLoading) {
+  if (isLoading || isTranslationsLoading) {
     return (
       <Layout title="Privacy experience">
-        <Center>
-          <Spinner />
-        </Center>
+        <Spin />
       </Layout>
     );
   }

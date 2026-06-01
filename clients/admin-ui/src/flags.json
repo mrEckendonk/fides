@@ -1,39 +1,164 @@
 {
-  "privacyRequestsConfiguration": {
+  "messagingConfiguration": {
+    "label": "Messaging configuration",
     "description": "The configuration link in the Privacy Requests sidebar where a user can configure a messaging provider and storage.",
-    "development": false,
+    "development": true,
     "test": false,
     "production": false,
     "userCannotModify": true
   },
-  "datasetClassificationUpdates": {
-    "description": "Enable per-collection dataset classification instead of bulk updates.",
-    "development": true,
-    "production": false,
-    "test": false
-  },
-  "organizationManagement": {
-    "description": "Management page to configure Organization details for RoPA reporting, messaging, etc.",
+  "webMonitor": {
+    "label": "Web monitor",
+    "description": "Monitor websites for activity",
     "development": true,
     "test": true,
     "production": false
   },
-  "standaloneConnections": {
-    "description": "Allow the creation of standalone connections for testing",
+  "assetConsentStatusLabels": {
+    "label": "Asset consent status labels",
+    "description": "Consent status labels for assets discovered by the web monitor",
     "development": true,
     "test": true,
     "production": false
   },
-  "consentReporting": {
-    "description": "Page to download consent reports by date",
+  "downloadAccessRequestResults": {
+    "label": "Download access request results",
+    "description": "Download access data from completed requests",
     "development": true,
     "test": true,
     "production": false
   },
-  "dataDiscoveryAndDetection": {
-    "description": "Data discovery and detection",
+  "publisherRestrictions": {
+    "label": "Publisher restrictions",
+    "description": "TCF publisher restrictions",
     "development": true,
     "test": true,
+    "production": false
+  },
+  "alphaPrivacyNoticesSandbox": {
+    "label": "Alpha privacy notices sandbox",
+    "description": "Enable privacy notices sandbox page for testing consent v3",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaWebMonitorLlmClassification": {
+    "label": "Web monitor LLM classification",
+    "description": "Use LLM to classify website assets that cannot be identified by Compass",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "privacyAssessments": {
+    "label": "Privacy assessments",
+    "description": "Enable privacy assessments feature",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "policies": {
+    "label": "DSR Policies",
+    "description": "Privacy request policies management",
+    "development": true,
+    "test": true,
+    "production": false
+  },
+  "alphaDarkMode": {
+    "label": "Alpha light and dark theme",
+    "description": "Enable switching themes on Home page",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaDashboard": {
+    "label": "Alpha new dashboard",
+    "description": "Enable the new Ant Design-only home dashboard",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "jiraIntegration": {
+    "label": "Jira integration",
+    "description": "Enable Jira DSR integration for creating and managing Jira issues from privacy requests",
+    "development": true,
+    "test": true,
+    "production": false
+  },
+  "alphaPurposeBasedAccessControl": {
+    "label": "Alpha purpose-based access control",
+    "description": "Enable purpose-based access control feature",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "entraMonitor": {
+    "label": "Entra monitor",
+    "description": "Enable Microsoft Entra ID (Azure AD) identity provider monitoring",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "awsMonitor": {
+    "label": "AWS monitor",
+    "description": "Enable AWS monitoring",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaPrivacyDocUpload": {
+    "label": "Alpha Privacy Document Upload",
+    "description": "Enable users to use and see the UI in PBAC",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaDashboardActivityFeed": {
+    "label": "Alpha dashboard activity feed",
+    "description": "Show the activity feed card on the dashboard",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaDashboardAgentBriefing": {
+    "label": "Alpha dashboard agent briefing",
+    "description": "Show the Astralis agent summary banner on the dashboard",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaDashboardAgentBriefingActions": {
+    "label": "Alpha dashboard agent briefing actions",
+    "description": "Show action items inside the Astralis agent briefing banner",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "alphaDashboardAssessmentStatusCard": {
+    "label": "Alpha dashboard assessment status card",
+    "description": "Show the assessment status card on the dashboard",
+    "development": true,
+    "test": false,
+    "production": false
+  },
+  "dsrTraversalVisualizer": {
+    "label": "DSR traversal visualizer",
+    "description": "Preview the DSR traversal graph for a property before requests run",
+    "development": true,
+    "test": true,
+    "production": false
+  },
+  "formBuilder": {
+    "label": "Form builder",
+    "description": "Visual drag-and-drop form builder for privacy center request forms",
+    "development": true,
+    "test": true,
+    "production": false
+  },
+  "accessPackages": {
+    "label": "Access packages",
+    "description": "Data-use-organized access packages with review workflow",
+    "development": true,
+    "test": false,
     "production": false
   }
 }

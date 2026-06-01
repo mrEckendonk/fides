@@ -1,14 +1,21 @@
-import { Box, Button, Text, useToast, VStack } from "fidesui";
-import { Form, Formik } from "formik";
+import {
+  Button,
+  Flex,
+  Form,
+  Input,
+  Switch,
+  Typography,
+  useMessage,
+  useModal,
+} from "fidesui";
 import { useRouter } from "next/router";
+import { useState } from "react";
 import { useDispatch } from "react-redux";
-import * as Yup from "yup";
 
 import { useFeatures } from "~/features/common/features";
-import { CustomSwitch, CustomTextInput } from "~/features/common/form/inputs";
-import { getErrorMessage } from "~/features/common/helpers";
-import ConfirmationModal from "~/features/common/modals/ConfirmationModal";
-import { errorToastParams, successToastParams } from "~/features/common/toast";
+import { getErrorMessage, isErrorResult } from "~/features/common/helpers";
+import { InfoTooltip } from "~/features/common/InfoTooltip";
+import { DATASET_DETAIL_ROUTE } from "~/features/common/nav/routes";
 import { DEFAULT_ORGANIZATION_FIDES_KEY } from "~/features/organization";
 import { useCreateClassifyInstanceMutation } from "~/features/plus/plus.slice";
 import { Dataset, GenerateTypes, System, ValidTargets } from "~/types/api";
@@ -19,25 +26,20 @@ import {
   useGenerateDatasetMutation,
 } from "./dataset.slice";
 
+const { Text } = Typography;
+
 const isDataset = (sd: System | Dataset): sd is Dataset =>
   !("system_type" in sd);
 
-const initialValues = { url: "", classify: false, classifyConfirmed: false };
+interface FormValues {
+  url: string;
+  classify: boolean;
+}
 
-type FormValues = typeof initialValues;
+export const DatabaseConnectForm = () => {
+  const [form] = Form.useForm<FormValues>();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-const ValidationSchema = Yup.object().shape({
-  url: Yup.string().required().label("Database URL"),
-  classify: Yup.boolean(),
-  // If classify is true, then the choice must be confirmed. The URL is also tested so that we don't
-  // show the confirmation modal if the form is invalid.
-  classifyConfirmed: Yup.boolean().when(["url", "classify"], {
-    is: (url: string, classify: boolean) => url && classify,
-    then: Yup.boolean().equals([true]),
-  }),
-});
-
-const DatabaseConnectForm = () => {
   const [generateMutation, { isLoading: isGenerating }] =
     useGenerateDatasetMutation();
   const [createMutation, { isLoading: isCreating }] =
@@ -46,24 +48,15 @@ const DatabaseConnectForm = () => {
     useCreateClassifyInstanceMutation();
   const isLoading = isGenerating || isCreating || isClassifying;
 
-  const toast = useToast();
+  const message = useMessage();
   const router = useRouter();
   const features = useFeatures();
   const dispatch = useDispatch();
+  const confirmModal = useModal();
 
-  /**
-   * Trigger the generate mutation and pick out the result dataset or the error if generate failed.
-   */
   const generate = async (
-    values: FormValues
-  ): Promise<
-    | {
-        error: string;
-      }
-    | {
-        datasets: Dataset[];
-      }
-  > => {
+    values: FormValues,
+  ): Promise<{ error: string } | { datasets: Dataset[] }> => {
     const result = await generateMutation({
       organization_key: DEFAULT_ORGANIZATION_FIDES_KEY,
       generate: {
@@ -73,55 +66,30 @@ const DatabaseConnectForm = () => {
       },
     });
 
-    if ("error" in result) {
-      return {
-        error: getErrorMessage(result.error),
-      };
+    if (isErrorResult(result)) {
+      return { error: getErrorMessage(result.error) };
     }
 
     const datasets = (result.data.generate_results ?? []).filter(isDataset);
     if (!(datasets && datasets.length > 0)) {
-      return {
-        error: "Unable to generate a dataset with this connection.",
-      };
+      return { error: "Unable to generate a dataset with this connection." };
     }
 
-    return {
-      datasets,
-    };
+    return { datasets };
   };
 
-  /**
-   * Trigger the create mutation and pick out the result or error. The datasetBody is a Dateset that
-   * has not yet been persisted.
-   */
   const create = async (
-    datasetBody: Dataset
-  ): Promise<
-    | {
-        error: string;
-      }
-    | {
-        dataset: Dataset;
-      }
-  > => {
+    datasetBody: Dataset,
+  ): Promise<{ error: string } | { dataset: Dataset }> => {
     const result = await createMutation(datasetBody);
 
-    if ("error" in result) {
-      return {
-        error: getErrorMessage(result.error),
-      };
+    if (isErrorResult(result)) {
+      return { error: getErrorMessage(result.error) };
     }
 
-    return {
-      dataset: result.data,
-    };
+    return { dataset: result.data };
   };
 
-  /**
-   * Trigger the classify mutation and pick out the result or error. The Dataset should be already
-   * have been created.
-   */
   const classify = async ({
     values,
     datasets,
@@ -129,12 +97,7 @@ const DatabaseConnectForm = () => {
     values: FormValues;
     datasets: Dataset[];
   }): Promise<
-    | {
-        error: string;
-      }
-    | {
-        classifyInstances: Record<string, string>[];
-      }
+    { error: string } | { classifyInstances: Record<string, string>[] }
   > => {
     const result = await classifyMutation({
       dataset_schemas: datasets.map(({ name, fides_key }) => ({
@@ -151,128 +114,125 @@ const DatabaseConnectForm = () => {
       },
     });
 
-    if ("error" in result) {
-      return {
-        error: getErrorMessage(result.error),
-      };
+    if (isErrorResult(result)) {
+      return { error: getErrorMessage(result.error) };
     }
 
-    return {
-      classifyInstances: result.data.classify_instances,
-    };
+    return { classifyInstances: result.data.classify_instances };
   };
 
-  const handleSubmit = async (values: FormValues) => {
-    const generateResult = await generate(values);
-    if ("error" in generateResult) {
-      toast(errorToastParams(generateResult.error));
-      return;
-    }
+  const doSubmit = async (values: FormValues) => {
+    setIsSubmitting(true);
+    try {
+      const generateResult = await generate(values);
+      if ("error" in generateResult) {
+        message.error(generateResult.error);
+        return;
+      }
 
-    // Usually only one dataset needs to be created, but create them all just in case.
-    const createResults = await Promise.all(
-      generateResult.datasets.map((dataset) => create(dataset))
-    );
-    const createResult =
-      createResults.find((result) => "error" in result) ?? createResults[0];
-    if ("error" in createResult) {
-      toast(errorToastParams(createResult.error));
-      return;
-    }
-
-    // Default generate flow:
-    if (!values.classify) {
-      toast(
-        successToastParams(`Generated ${createResult.dataset.name} dataset`)
+      // Usually only one dataset needs to be created, but create them all just in case.
+      const createResults = await Promise.all(
+        generateResult.datasets.map((dataset) => create(dataset)),
       );
-      router.push(`/dataset/${createResult.dataset.fides_key}`);
-      return;
-    }
+      const createResult =
+        createResults.find((result) => "error" in result) ?? createResults[0];
+      if ("error" in createResult) {
+        message.error(createResult.error);
+        return;
+      }
 
-    // Additional steps when using classify:
-    const classifyResult = await classify({
-      values,
-      datasets: generateResult.datasets,
-    });
-    if ("error" in classifyResult) {
-      toast(errorToastParams(classifyResult.error));
-      return;
-    }
+      // Default generate flow:
+      if (!values.classify) {
+        message.success(`Generated ${createResult.dataset.name} dataset`);
+        router.push({
+          pathname: DATASET_DETAIL_ROUTE,
+          query: { datasetId: createResult.dataset.fides_key },
+        });
+        return;
+      }
 
-    toast(successToastParams(`Generate and classify are now in progress`));
-    dispatch(setActiveDatasetFidesKey(createResult.dataset.fides_key));
-    router.push(`/dataset`);
+      // Additional steps when using classify:
+      const classifyResult = await classify({
+        values,
+        datasets: generateResult.datasets,
+      });
+      if ("error" in classifyResult) {
+        message.error(classifyResult.error);
+        return;
+      }
+
+      message.success(`Generate and classify are now in progress`);
+      dispatch(setActiveDatasetFidesKey(createResult.dataset.fides_key));
+      router.push(`/dataset`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleFinish = async (values: FormValues) => {
+    if (values.classify) {
+      confirmModal.confirm({
+        title: "Generate and classify this dataset",
+        content:
+          "You have chosen to generate and classify this dataset. This process may take several minutes. In the meantime you can continue using Fides. You will receive a notification when the process is complete.",
+        centered: true,
+        icon: null,
+        onOk: () => doSubmit(values),
+      });
+    } else {
+      await doSubmit(values);
+    }
   };
 
   return (
-    <Formik
-      initialValues={{ ...initialValues, classify: features.plus }}
-      validationSchema={ValidationSchema}
-      onSubmit={handleSubmit}
-      validateOnChange={false}
-      validateOnBlur={false}
+    <Form
+      form={form}
+      layout="vertical"
+      initialValues={{ url: "", classify: features.plus }}
+      onFinish={handleFinish}
+      validateTrigger="onSubmit"
     >
-      {({
-        isSubmitting,
-        errors,
-        values,
-        submitForm,
-        resetForm,
-        setFieldValue,
-      }) => (
-        <Form>
-          <VStack spacing={8} align="left">
-            <Text size="sm" color="gray.700">
-              Connect to a database using the connection URL. You may have
-              received this URL from a colleague or your Ethyca developer
-              support engineer.
-            </Text>
-            <Box>
-              <CustomTextInput name="url" label="Database URL" />
-            </Box>
+      <Flex vertical align="flex-start" gap={32}>
+        <Text>
+          Connect to a database using the connection URL. You may have received
+          this URL from a colleague or your Ethyca developer support engineer.
+        </Text>
+        <Form.Item
+          name="url"
+          label="Database URL"
+          rules={[{ required: true, message: "Database URL is required" }]}
+          className="w-full"
+        >
+          <Input data-testid="input-url" />
+        </Form.Item>
 
-            {features.plus ? (
-              <CustomSwitch
-                name="classify"
-                label="Classify dataset"
-                tooltip="Use Fides Classify to suggest labels based on your data."
-              />
-            ) : null}
+        {features.plus ? (
+          <Form.Item
+            name="classify"
+            layout="horizontal"
+            colon={false}
+            valuePropName="checked"
+            label={
+              <Flex align="center" gap="small">
+                Classify dataset
+                <InfoTooltip label="Use Fides Classify to suggest labels based on your data." />
+              </Flex>
+            }
+          >
+            <Switch size="small" data-testid="input-classify" />
+          </Form.Item>
+        ) : null}
 
-            <Box>
-              <Button
-                size="sm"
-                colorScheme="primary"
-                type="submit"
-                isLoading={isSubmitting || isLoading}
-                isDisabled={isSubmitting || isLoading}
-                data-testid="create-dataset-btn"
-              >
-                Generate dataset
-              </Button>
-            </Box>
-          </VStack>
-          <ConfirmationModal
-            title="Generate and classify this dataset"
-            message="You have chosen to generate and classify this dataset. This process may take several minutes. In the meantime you can continue using Fides. You will receive a notification when the process is complete."
-            isOpen={errors.classifyConfirmed !== undefined}
-            onClose={() => {
-              resetForm({ values: { ...values, classifyConfirmed: false } });
-            }}
-            onConfirm={() => {
-              setFieldValue("classifyConfirmed", true);
-
-              // Formik needs a moment after setting the field before it can submit.
-              // https://github.com/jaredpalmer/formik/issues/529#issuecomment-740042815
-              setTimeout(() => {
-                submitForm();
-              }, 0);
-            }}
-          />
-        </Form>
-      )}
-    </Formik>
+        <Button
+          type="primary"
+          htmlType="submit"
+          loading={isSubmitting || isLoading}
+          disabled={isSubmitting || isLoading}
+          data-testid="create-dataset-btn"
+        >
+          Generate dataset
+        </Button>
+      </Flex>
+    </Form>
   );
 };
-
-export default DatabaseConnectForm;

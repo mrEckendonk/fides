@@ -1,6 +1,6 @@
 /**
  * FidesJS supports a variety of custom options to modify it's behavior or
- * enabled more advanced usage. For example, the `fides_locale` option can be
+ * enable more advanced usage. For example, the `fides_locale` option can be
  * provided to override the browser locale. See the properties list below for
  * the supported options and example usage for each.
  *
@@ -20,6 +20,7 @@
  * 3. Cookie Values (last priority)
  *
  * @example
+ * Configure `window.fides_overrides` before loading Fides.js tag
  * ```html
  * <head>
  *   <script>
@@ -33,12 +34,34 @@
  *   <script src="path/to/fides.js"></script>
  * </head>
  * ```
+ * Configure `window.fides_overrides` after loading Fides.js tag
+ * ```html
+ * <head>
+ *   <script src="path/to/fides.js">
+ *     // Loading Fides.js before setting window.fides_overrides requires re-initialization
+ *   </script>
+ *
+ *   <script>
+ *     function onChange(newData) {
+ *       // Update Fides options
+ *       window.fides_overrides = window.fides_overrides || {};
+ *       window.fides_overrides = {
+ *         fides_locale: newData,
+ *       };
+ *
+ *       // Reinitialize FidesJS
+ *       window.Fides.init();
+ *     };
+ *   </script>
+ * </head>
+ * ```
  */
 export interface FidesOptions {
   /**
-   * When `true`, deletes the `fides_consent` cookie when FidesJS is
+   * When `true`, deletes the `fides_consent` or `fides_consent_suffix` cookie when FidesJS is
    * initialized, to clear any previously saved consent preferences from the
-   * user's device.
+   * user's device. This option will only clear the cookie for the matching cookie name suffix or `fides_consent`
+   * if no suffix is provided.
    *
    * Defaults to `false`.
    */
@@ -64,6 +87,51 @@ export interface FidesOptions {
    * Defaults to `false`.
    */
   fides_disable_notices_served_api: boolean;
+
+  /**
+   * Provide a custom ID for the current user, to include as an `external_id`
+   * when saving their user consent preferences to the Fides API and the
+   * fides_consent cookie.
+   *
+   * This can be used to link a user's consent preferences to a saved profile on
+   * your site, such as a CRM ID, etc.
+   *
+   * Empty or whitespace-only values are treated as not set (same as omitting or
+   * undefined), consistent with {@link Fides.setIdentity}.
+   *
+   * Note that the `fides_user_device_id` is still always generated and included
+   * in the saved user consent preferences, to ensure that per-device
+   * preferences are properly stored for reporting.
+   *
+   * Defaults to `undefined`.
+   *
+   * @example
+   * Set external ID at init via overrides (e.g. known before Fides loads):
+   * ```html
+   * <head>
+   *   <script>
+   *     window.fides_overrides = { fides_external_id: "example-crm-id-123" };
+   *   </script>
+   *   <script src="path/to/fides.js"></script>
+   * </head>
+   * ```
+   *
+   * @example
+   * Set external ID after init when the user logs in (see {@link Fides.setIdentity}):
+   * ```html
+   * <body>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     // When your app resolves the logged-in user, set their ID so consent is linked
+   *     function onUserLoggedIn(userId) {
+   *       Fides.setIdentity({ external_id: userId });
+   *     }
+   *   </script>
+   * </body>
+   * ```
+   *
+   */
+  fides_external_id?: string;
 
   /**
    * When `true`, require FidesJS to "embed" it's UI into a specific `<div>` on
@@ -126,7 +194,49 @@ export interface FidesOptions {
    * Fides.fides_string}). Can be used to synchronize consent preferences for a
    * registered user from a custom backend, where the `fides_string` could be
    * provided by the server across multiple devices, etc.
-   * selecting the best translations for the FidesJS UI.
+   *
+   * The string consists of four parts separated by commas in the format:
+   * `TC_STRING,AC_STRING,GPP_STRING,NC_STRING` where:
+   *
+   * - TC_STRING: IAB TCF (Transparency & Consent Framework) string
+   * - AC_STRING: Google's Additional Consent string
+   * - GPP_STRING: IAB GPP (Global Privacy Platform) string
+   * - NC_STRING: Base64 encoded string of the user's Notice Consent preferences.
+   *
+   * @example
+   * Complete string with all parts:
+   * ```
+   * "CPzHq4APzHq4AAMABBENAUEAALAAAEOAAAAAAEAEACACAAAA,2~61.70~dv.33,DBABLA~BVAUAAAAAWA.QA,eyJkYXRhX3NhbGVzX2FuZF9zaGFyaW5nIjowLCJhbmFseXRpY3MiOjF9"
+   * ```
+   *
+   * TC and AC strings only:
+   * ```
+   * "CPzHq4APzHq4AAMABBENAUEAALAAAEOAAAAAAEAEACACAAAA,2~61.70~dv.33"
+   * ```
+   *
+   * GPP string only:
+   * ```
+   * ",,DBABLA~BVAUAAAAAWA.QA"
+   * ```
+   *
+   * Notice Consent string only:
+   * ```
+   * ",,,eyJkYXRhX3NhbGVzX2FuZF9zaGFyaW5nIjowLCJhbmFseXRpY3MiOjF9"
+   * ```
+   *
+   * To properly encode the Notice Consent string, use the
+   * `window.Fides.encodeNoticeConsentString` function (see {@link Fides.encodeNoticeConsentString}) or write your own function that
+   * looks something like:
+   * ```ts
+   * function encodeNoticeConsentString(consent: Record<string, boolean | 0 | 1>) {
+   *   return btoa(JSON.stringify(consent));
+   * }
+   * ```
+   *
+   * For debugging purposes, you can decode the Notice Consent string using the
+   * `window.Fides.decodeNoticeConsentString` function (see {@link Fides.decodeNoticeConsentString}).
+   *
+   * Note: The Notice Consent string will take precedence over [GPC](/regulations/gpc) and override any prior user consent.
    *
    * Defaults to `undefined`.
    */
@@ -143,4 +253,196 @@ export interface FidesOptions {
    * Defaults to `true`.
    */
   fides_tcf_gdpr_applies: boolean;
+
+  /**
+   * FidesJS will automatically opt in or out of all notices with this option and
+   * only show the consent modal upon user request. This is useful for any
+   * scenario where the user has previously provided consent in a different
+   * context (e.g. a native app, another website, etc.) and you want to ensure
+   * that those preferences are respected.
+   *
+   * Defaults to `undefined`.
+   */
+  fides_consent_override: "accept" | "reject";
+
+  /**
+   * Given a OneTrust → Fides notice mapping exists and the OneTrust cookie exists, Fides will "migrate" those consents to Fides privacy notices, and write to the Fides cookie.
+   *
+   * This way, Fides customers that are migrating away from OneTrust don't need to show their users new consent dialogues when switching to Fides.
+   * that those preferences are respected.
+   *
+   * Example original otFidesMapping data:
+   * {
+   *    'C0001': ['essential_cookies'],
+   *    'C0002': ['analytics_tracking'],
+   *    'C0004': ['advertising', 'targeted_ads']
+   * }
+   *
+   * To encode original data to the format expected by this field, use:
+   * encodeURIComponent(JSON.stringify(otFidesMapping))
+   *
+   * To decode this field, use:
+   * JSON.parse(decodeURIComponent(ot_fides_mapping))
+   *
+   * Field defaults to `undefined`.
+   *
+   */
+  ot_fides_mapping: string;
+
+  /**
+   * Given a Transcend → Fides notice mapping exists and the Transcend cookie exists,
+   * Fides will "migrate" those consents to Fides privacy notices, and write to the Fides cookie.
+   *
+   * This way, Fides customers that are migrating away from Transcend don't need to show
+   * their users new consent dialogues when switching to Fides.
+   *
+   * Example original transcendFidesMapping data:
+   * {
+   *    'Analytics': ['analytics_tracking'],
+   *    'SaleOfInfo': ['data_sales'],
+   *    'Advertising': ['advertising', 'targeted_ads']
+   * }
+   *
+   * To encode original data to the format expected by this field, use:
+   * encodeURIComponent(JSON.stringify(transcendFidesMapping))
+   *
+   * To decode this field, use:
+   * JSON.parse(decodeURIComponent(transcend_fides_mapping))
+   *
+   * Field defaults to `undefined`.
+   */
+  transcend_fides_mapping: string;
+
+  /**
+   * Define how non-applicable privacy notices are handled.
+   *
+   * When set to "include", consent preferences will include notices in the system that are not applicable
+   * to the current experience, and will set the notice as implicitly consented.
+   *
+   * When set to "omit" (default), non-applicable notices will be omitted.
+   *
+   * Defaults to "omit".
+   */
+  fides_consent_non_applicable_flag_mode: "omit" | "include";
+
+  /**
+   * Define the type of flag to use for consent values.
+   *
+   * When set to "boolean", consent preferences will be set as boolean values.
+   * When set to "consent_mechanism", consent preferences will be set as string values based on the
+   * consent mechanism (e.g. "opt-in", "opt-out", "non-applicable").
+   *
+   * Defaults to "boolean".
+   */
+  fides_consent_flag_type: "boolean" | "consent_mechanism";
+
+  /**
+   * A comma-separated list of notice_keys to disable their respective Toggle elements in the CMP Overlay.
+   *
+   * For example: "data_sales,data_sharing,analytics"
+   *
+   * Defaults to `undefined`.
+   */
+  fides_disabled_notices: string;
+
+  /**
+   * Apple ATTrackingManager authorization status, set by the mobile SDK before loading the
+   * embedded TCF consent experience. When `"denied"` or `"restricted"`, custom privacy notices
+   * where `att_exempt` is `false` (or unset) are automatically disabled (toggle locked to
+   * opt_out); notices with `att_exempt: true` remain interactive.
+   *
+   * Mirrors Apple's `ATTrackingManager.AuthorizationStatus` enum values:
+   * - `"not_determined"` — user has not yet been asked (default)
+   * - `"restricted"` — tracking is restricted by device policy; notices locked
+   * - `"denied"` — user explicitly denied ATT; notices locked
+   * - `"authorized"` — user granted ATT; no locking applied
+   *
+   * Only applies to the TCF embedded consent experience on iOS. Android and web contexts
+   * should not set this option (they default to `"not_determined"`, which applies no locking).
+   *
+   * Defaults to `"not_determined"`.
+   */
+  fides_att_status: "not_determined" | "restricted" | "denied" | "authorized";
+
+  /**
+   * A comma-separated list of systems whose related notice assets (e.g., cookies) should be excluded
+   * from responses. This is used to filter out assets by system name when rendering disclosures.
+   *
+   * For example: "google_analytics,facebook_ads"
+   *
+   * Defaults to `undefined`.
+   */
+  fides_disabled_systems?: string;
+
+  /**
+   * Controls when the deprecated FidesInitialized event should be dispatched.
+   *
+   * - "multiple" = fires alongside both FidesReady and FidesConsentLoaded events
+   * - "once" = fires alongside FidesReady only
+   * - "disable" = never fires
+   *
+   * Defaults to `"once"`.
+   */
+  fides_initialized_event_mode: "multiple" | "once" | "disable";
+
+  /**
+   * A URL-like route that determines which view is shown by default when the consent modal is opened.
+   * Currently only affects TCF.
+   *
+   * - "/tcf/purposes" ("purposes" tab will be shown if not set)
+   * - "/tcf/features"
+   * - "/tcf/vendors"
+   *
+   * Defaults to `undefined`.
+   */
+  fides_modal_default_view?: string;
+
+  /**
+   * Whether to show the modal immediately on page load.
+   *
+   * - "immediate" = skips banner and shows the modal immediately on page load
+   * - "default" = shows the modal when the "manage preferences" link is clicked (default behavior)
+   *
+   */
+  fides_modal_display?: "immediate" | "default";
+
+  /**
+   * Controls handling of unsupported repeated script loading scenarios. When
+   * FidesJS is loaded multiple times on the same page, this setting determines
+   * the behavior.
+   *
+   * - "enabled_acknowledge_not_supported" = allows repeated loading but acknowledges
+   *   this is not a supported configuration
+   * - "disabled" = prevents repeated script loading entirely
+   *
+   * See [Troubleshooting](/privacy-center-fidesjs/fidesjs/troubleshooting) for more information.
+   *
+   * Defaults to `"disabled"`.
+   */
+  fides_unsupported_repeated_script_loading?:
+    | "enabled_acknowledge_not_supported"
+    | "disabled";
+
+  /**
+   * Adds a suffix to the name of the cookie that Fides uses to store consent preferences.
+   *
+   * If provided, the cookie name will be `fides_consent_{suffix}`. For example, if set to
+   * `"mycompany"`, the cookie will be named `fides_consent_mycompany`. This allows multiple
+   * Fides instances on the same domain to maintain separate consent cookies.
+   *
+   * Defaults to `undefined`, which uses the standard `fides_consent` cookie name.
+   */
+  fides_cookie_suffix?: string;
+
+  /**
+   * Specifies the compression method to use for the consent cookie. When set to "gzip",
+   * compression is always applied regardless of cookie size. This can help reduce cookie
+   * size when storing consent preferences with TCF strings or many vendors.
+   *
+   * - "none" = No compression applied (default)
+   * - "gzip" = Always apply gzip compression to the cookie value
+   *
+   * Defaults to `"none"`.
+   */
+  fides_cookie_compression: "gzip" | "none";
 }

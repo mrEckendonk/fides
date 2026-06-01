@@ -13,13 +13,20 @@ export const ROLES = [
     permissions_label: "Contributor",
     roleKey: RoleRegistryEnum.CONTRIBUTOR,
     description:
-      "Contributors can create new users and have view and edit access to the whole organization apart from configuring storage and messaging",
+      "Contributors can create new users and have view and edit access to the whole organization. Contributors cannot configure storage and messaging services",
   },
   {
     label: "Viewer",
     permissions_label: "Viewer",
     roleKey: RoleRegistryEnum.VIEWER,
     description: "Viewers have view access to the Data Map and all systems",
+  },
+  {
+    label: "Data Steward",
+    permissions_label: "Data Steward",
+    roleKey: RoleRegistryEnum.DATA_STEWARD,
+    description:
+      "Data Stewards have viewer access plus the ability to manage system-integration links and view monitor steward assignments",
   },
   {
     label: "Viewer & Approver",
@@ -33,6 +40,20 @@ export const ROLES = [
     permissions_label: "Approver",
     roleKey: RoleRegistryEnum.APPROVER,
     description:
-      "Approvers can only access the Privacy Requests portal to manage requests",
+      "Approvers can only access the Privacy Requests portal to review, approve, and create new requests",
+  },
+  {
+    label: "Internal respondent",
+    permissions_label: "Internal respondent",
+    roleKey: RoleRegistryEnum.RESPONDENT,
+    description:
+      "Internal respondents have limited access and can only view and complete manual DSR tasks assigned to them",
+  },
+  {
+    label: "External respondent",
+    permissions_label: "External respondent",
+    roleKey: RoleRegistryEnum.EXTERNAL_RESPONDENT,
+    description:
+      "External respondents can only access the external task portal to complete manual DSR tasks assigned to them",
   },
 ];

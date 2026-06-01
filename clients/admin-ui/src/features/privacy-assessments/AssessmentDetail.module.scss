@@ -1,0 +1,21 @@
+.collapse {
+  --fidesui-color-border: var(--fidesui-neutral-75);
+  --fidesui-collapse-header-bg: var(--fidesui-color-bg-container) !important;
+
+  :global(.ant-collapse-item) {
+    border-left: 6px solid transparent;
+    transition: border-left-color 0.2s ease;
+  }
+
+  :global(.ant-collapse-item-active) {
+    border-left: 6px solid var(--fidesui-brand-minos);
+  }
+
+  :global(.ant-collapse-header-text) {
+    margin-left: 20px;
+  }
+
+  :global(.ant-collapse-content-box) {
+    padding-top: 0;
+  }
+}

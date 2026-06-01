@@ -1,0 +1,135 @@
+"""EventAudit model and related enums for comprehensive audit logging."""
+
+from enum import Enum as EnumType
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Column, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.declarative import declared_attr
+from sqlalchemy.orm import relationship
+
+from fides.api.db.base_class import Base
+from fides.api.db.util import EnumColumn
+
+if TYPE_CHECKING:
+    from fides.api.models.client import ClientDetail
+
+
+class EventAuditType(str, EnumType):
+    """Hierarchical event types for audit logging - variable depth as needed."""
+
+    # System
+    system_updated = "system.updated"
+
+    # System group
+    system_group_created = "system_group.created"
+    system_group_updated = "system_group.updated"
+    system_group_deleted = "system_group.deleted"
+
+    # Taxonomy
+    taxonomy_created = "taxonomy.created"
+    taxonomy_updated = "taxonomy.updated"
+    taxonomy_deleted = "taxonomy.deleted"
+    taxonomy_usage_updated = "taxonomy.usage.updated"
+    taxonomy_usage_deleted = "taxonomy.usage.deleted"
+    taxonomy_element_created = "taxonomy.element.created"
+    taxonomy_element_updated = "taxonomy.element.updated"
+    taxonomy_element_deleted = "taxonomy.element.deleted"
+
+    # Connection operations
+    connection_created = "connection.created"
+    connection_updated = "connection.updated"
+    connection_deleted = "connection.deleted"
+
+    # Connection secrets operations
+    connection_secrets_created = "connection.secrets.created"
+    connection_secrets_updated = "connection.secrets.updated"
+
+    # Dataset operations
+    dataset_created = "dataset.created"
+    dataset_updated = "dataset.updated"
+    dataset_deleted = "dataset.deleted"
+
+    # Digest
+    digest_execution_started = "digest.execution.started"
+    digest_execution_completed = "digest.execution.completed"
+    digest_execution_interrupted = "digest.execution.interrupted"
+    digest_execution_resumed = "digest.execution.resumed"
+    digest_communications_sent = "digest.communications.sent"
+    digest_checkpoint_created = "digest.checkpoint.created"
+
+    # Manual Task
+    manual_task_created = "manual_task.created"
+    manual_task_config_created = "manual_task.config.created"
+    manual_task_config_updated = "manual_task.config.updated"
+    manual_task_instance_created = "manual_task.instance.created"
+    manual_task_instance_completed = "manual_task.instance.completed"
+    manual_task_submission_created = "manual_task.submission.created"
+    manual_task_submission_updated = "manual_task.submission.updated"
+
+    # Password Reset
+    password_reset_requested = "password_reset.requested"
+    password_reset_completed = "password_reset.completed"
+    password_reset_token_expired = "password_reset.token_expired"
+
+    # Correspondence
+    correspondence_sent = "correspondence.sent"
+    correspondence_delivered = "correspondence.delivered"
+    correspondence_bounced = "correspondence.bounced"
+    correspondence_reply_received = "correspondence.reply_received"
+
+    # Privacy Assessment
+    privacy_assessment_created = "privacy_assessment.created"
+    privacy_assessment_deleted = "privacy_assessment.deleted"
+    privacy_assessment_answer_updated = "privacy_assessment.answer.updated"
+    privacy_assessment_answer_reverted = "privacy_assessment.answer.reverted"
+    privacy_assessment_re_evaluated = "privacy_assessment.re_evaluated"
+    privacy_assessment_re_evaluated_unchanged = (
+        "privacy_assessment.re_evaluated_unchanged"
+    )
+
+
+class EventAuditStatus(str, EnumType):
+    """Status enum for event audit logging."""
+
+    succeeded = "succeeded"
+    failed = "failed"
+
+
+class EventAudit(Base):
+    """Audit log for significant business events across the Fides platform."""
+
+    @declared_attr
+    def __tablename__(cls) -> str:
+        return "event_audit"
+
+    # Uses EventAuditType values but left as String to avoid future migrations
+    event_type = Column(String, index=True, nullable=False)
+    user_id = Column(String, nullable=True, index=True)
+    client_id = Column(
+        String, ForeignKey("client.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    client = relationship(
+        "ClientDetail",
+        lazy="selectin",
+        uselist=False,
+        foreign_keys=[client_id],
+        primaryjoin="EventAudit.client_id == ClientDetail.id",
+    )
+
+    # Resource information
+    resource_type = Column(String, nullable=True, index=True)
+    resource_identifier = Column(String, nullable=True, index=True)
+
+    # User-friendly description of event
+    description = Column(Text, nullable=True)
+
+    # Structured data about event
+    event_details = Column(JSONB, nullable=True)
+
+    # Status of the event
+    status = Column(
+        EnumColumn(EventAuditStatus),
+        index=True,
+        nullable=False,
+    )

@@ -1,13 +1,11 @@
 import {
-  CloseButton,
-  HStack,
-  Spinner,
-  Stack,
-  Text,
-  useDisclosure,
+  ChakraCloseButton as CloseButton,
+  ChakraHStack as HStack,
+  ChakraStack as Stack,
+  ChakraText as Text,
+  Spin,
+  useModal,
 } from "fidesui";
-
-import WarningModal from "~/features/common/modals/WarningModal";
 
 const warningModalMessage = (
   <>
@@ -29,52 +27,42 @@ interface Props {
   onClose: () => void;
 }
 const ScannerLoading = ({ title, onClose }: Props) => {
-  const {
-    isOpen: isWarningOpen,
-    onOpen: onWarningOpen,
-    onClose: onWarningClose,
-  } = useDisclosure();
+  const modal = useModal();
+
+  const openCancelWarning = () => {
+    modal.confirm({
+      title: "Cancel Scan!",
+      content: warningModalMessage,
+      okText: "Yes, Cancel",
+      cancelText: "No, Continue Scanning",
+      centered: true,
+      onOk: onClose,
+    });
+  };
 
   return (
-    <>
-      <Stack spacing={8} data-testid="scanner-loading">
-        <HStack>
-          <Text
-            alignItems="center"
-            as="b"
-            color="gray.900"
-            display="flex"
-            fontSize="xl"
-          >
-            {title}
-          </Text>
-          <CloseButton
-            data-testid="close-scan-in-progress"
-            display="inline-block"
-            onClick={onWarningOpen}
-          />
-        </HStack>
+    <Stack spacing={8} data-testid="scanner-loading">
+      <HStack>
+        <Text
+          alignItems="center"
+          as="b"
+          color="gray.900"
+          display="flex"
+          fontSize="xl"
+        >
+          {title}
+        </Text>
+        <CloseButton
+          data-testid="close-scan-in-progress"
+          display="inline-block"
+          onClick={openCancelWarning}
+        />
+      </HStack>
 
-        <Stack alignItems="center">
-          <Spinner
-            thickness="4px"
-            speed="0.65s"
-            emptyColor="gray.200"
-            color="green.300"
-            size="xl"
-          />
-        </Stack>
+      <Stack alignItems="center">
+        <Spin size="large" />
       </Stack>
-      <WarningModal
-        isOpen={isWarningOpen}
-        onClose={onWarningClose}
-        handleConfirm={onClose}
-        title="Cancel Scan!"
-        message={warningModalMessage}
-        confirmButtonText="Yes, Cancel"
-        cancelButtonText="No, Continue Scanning"
-      />
-    </>
+    </Stack>
   );
 };
 

@@ -1,4 +1,4 @@
-import { ListItem } from "fidesui";
+import { ChakraListItem as ListItem } from "fidesui";
 
 import {
   InfoHeading,
@@ -6,8 +6,9 @@ import {
   InfoUnorderedList,
 } from "~/features/common/copy/components";
 import ShowMoreContent from "~/features/common/copy/ShowMoreContent";
-import { ConnectionCategory } from "~/features/integrations/ConnectionCategory";
 import { AccessLevel, ConnectionType } from "~/types/api";
+import { ConnectionCategory } from "~/types/api/models/ConnectionCategory";
+import { IntegrationFeature } from "~/types/api/models/IntegrationFeature";
 
 export const SCYLLA_PLACEHOLDER = {
   name: "Scylla",
@@ -17,12 +18,7 @@ export const SCYLLA_PLACEHOLDER = {
   created_at: "",
 };
 
-export const SCYLLA_TAGS = [
-  "Database",
-  "Detection",
-  "Discovery",
-  "DSR automation",
-];
+export const SCYLLA_TAGS = ["DSR Automation", "Discovery", "Detection"];
 
 export const ScyllaOverview = () => (
   <>
@@ -48,7 +44,7 @@ export const ScyllaOverview = () => (
         For detection and discovery, Fides requires a user with the SELECT
         permission on all keyspaces. If you intend to automate governance for
         DSR or Consent, Fides requires the role to to be granted SELECT and
-        MODIFY on all keyspaces. The permissions allow Fides to read the scema
+        MODIFY on all keyspaces. The permissions allow Fides to read the schema
         of, and data stored in keyspaces, tables, and fields as well as write
         restricted updates based on your policy configurations to tables you
         specify as part of DSR and Consent orchestration. For a complete list of
@@ -68,6 +64,7 @@ const SCYLLA_TYPE_INFO = {
   category: ConnectionCategory.DATABASE,
   overview: <ScyllaOverview />,
   tags: SCYLLA_TAGS,
+  enabledFeatures: [IntegrationFeature.DATA_DISCOVERY],
 };
 
 export default SCYLLA_TYPE_INFO;

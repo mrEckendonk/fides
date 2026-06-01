@@ -1,9 +1,41 @@
-import { Spinner, UseDisclosureReturn } from "fidesui";
+import {
+  ChakraUseDisclosureReturn as UseDisclosureReturn,
+  Form,
+  Spin,
+  useMessage,
+} from "fidesui";
 
-import AddModal from "~/features/configure-consent/AddModal";
+import { getErrorMessage } from "~/features/common/helpers";
+import ConfirmCloseModal from "~/features/common/modals/ConfirmCloseModal";
+import {
+  useGetAvailableDatabasesByConnectionQuery,
+  usePutDiscoveryMonitorMutation,
+} from "~/features/data-discovery-and-detection/discovery-detection.slice";
 import ConfigureMonitorDatabasesForm from "~/features/integrations/configure-monitor/ConfigureMonitorDatabasesForm";
 import ConfigureMonitorForm from "~/features/integrations/configure-monitor/ConfigureMonitorForm";
-import { ConnectionSystemTypeMap, MonitorConfig } from "~/types/api";
+import ConfigureWebsiteMonitorForm from "~/features/integrations/configure-monitor/ConfigureWebsiteMonitorForm";
+import {
+  ConnectionConfigurationResponseWithSystemKey,
+  ConnectionSystemTypeMap,
+  ConnectionType,
+  EditableMonitorConfig,
+  MonitorFrequency,
+} from "~/types/api";
+import { isErrorResult, RTKResult } from "~/types/errors";
+
+const TIMEOUT_DELAY = 5000;
+const TIMEOUT_COPY =
+  "Saving this monitor is taking longer than expected. Fides will continue processing it in the background, and you can check back later to view the updates.";
+
+const WEBSITE_MONITOR_NOW_SCANNING_MESSAGE =
+  "Your monitor has been created and is now scanning your website. Once the monitor is finished scanning, results can be found in the action center.";
+
+const WEBSITE_MONITOR_NOT_SCHEDULED_MESSAGE = `Your monitor has been created with no schedule.  Select "Scan" in the table below to begin scanning your website.`;
+
+const DATASTORE_CONTENT_TAXONOMY = {
+  project: ["project", "projects"],
+  database: ["database", "databases"],
+} as const;
 
 const ConfigureMonitorModal = ({
   isOpen,
@@ -11,37 +43,151 @@ const ConfigureMonitorModal = ({
   formStep,
   onAdvance,
   monitor,
+  isEditing,
+  integration,
   integrationOption,
+  isWebsiteMonitor,
 }: Pick<UseDisclosureReturn, "isOpen" | "onClose"> & {
   formStep: number;
-  monitor?: MonitorConfig;
-  onAdvance: (m: MonitorConfig) => void;
+  monitor?: EditableMonitorConfig;
+  isEditing?: boolean;
+  onAdvance: (m: EditableMonitorConfig) => void;
+  integration: ConnectionConfigurationResponseWithSystemKey;
   integrationOption: ConnectionSystemTypeMap;
-}) => (
-  <AddModal
-    title={
-      monitor?.name
-        ? `Configure ${monitor.name}`
-        : "Configure discovery monitor"
+  isWebsiteMonitor?: boolean;
+}) => {
+  const [putMonitorMutationTrigger, { isLoading: isSubmitting }] =
+    usePutDiscoveryMonitorMutation();
+
+  // isWebsiteMonitor is stable for the lifetime of the modal, so one form
+  // instance covers both branches. Note: the dirty guard only covers step 0
+  // (ConfigureMonitorForm); step 1 (ConfigureMonitorDatabasesForm) manages
+  // its selections via useState rather than an AntD Form, so it cannot be
+  // covered by isFieldsTouched().
+  const [form] = Form.useForm();
+
+  const { data: databases } = useGetAvailableDatabasesByConnectionQuery({
+    page: 1,
+    size: 25,
+    connection_config_key: integration.key,
+  });
+
+  const databasesAvailable = !!databases && !!databases.total;
+
+  const message = useMessage();
+
+  const handleSubmit = async (values: EditableMonitorConfig) => {
+    let result: RTKResult | undefined;
+    const timeout = setTimeout(() => {
+      if (!result) {
+        message.info(TIMEOUT_COPY);
+        onClose();
+      }
+    }, TIMEOUT_DELAY);
+
+    result = await putMonitorMutationTrigger(values);
+
+    if (result) {
+      clearTimeout(timeout);
+      if (isErrorResult(result)) {
+        message.error(getErrorMessage(result.error));
+        return;
+      }
+      if (isEditing) {
+        message.success("Monitor updated successfully");
+        onClose();
+        return;
+      }
+      if (isWebsiteMonitor) {
+        message.success(
+          values.execution_frequency === MonitorFrequency.NOT_SCHEDULED
+            ? WEBSITE_MONITOR_NOT_SCHEDULED_MESSAGE
+            : WEBSITE_MONITOR_NOW_SCANNING_MESSAGE,
+        );
+        onClose();
+        return;
+      }
+      message.success("Monitor created successfully");
+      onClose();
     }
-    isOpen={isOpen}
-    onClose={onClose}
-  >
-    {formStep === 0 && (
-      <ConfigureMonitorForm
-        monitor={monitor}
+  };
+
+  if (isWebsiteMonitor) {
+    return (
+      <ConfirmCloseModal
+        title={
+          monitor?.name
+            ? `Configure ${monitor.name}`
+            : "Configure website monitor"
+        }
+        open={isOpen}
         onClose={onClose}
-        onAdvance={onAdvance}
-        integrationOption={integrationOption}
-      />
-    )}
-    {formStep === 1 &&
-      (monitor ? (
-        <ConfigureMonitorDatabasesForm monitor={monitor} onClose={onClose} />
-      ) : (
-        <Spinner />
-      ))}
-  </AddModal>
-);
+        getIsDirty={() => form.isFieldsTouched()}
+        centered
+        destroyOnHidden
+        footer={null}
+        data-testid="add-modal-content"
+      >
+        <ConfigureWebsiteMonitorForm
+          monitor={monitor}
+          url={(integration.secrets as unknown as { url: string })?.url ?? ""}
+          integrationSystem={integration?.system_key}
+          onClose={onClose}
+          onSubmit={handleSubmit}
+          form={form}
+        />
+      </ConfirmCloseModal>
+    );
+  }
+
+  return (
+    <ConfirmCloseModal
+      title={
+        monitor?.name
+          ? `Configure ${monitor.name}`
+          : "Configure discovery monitor"
+      }
+      open={isOpen}
+      onClose={onClose}
+      getIsDirty={() => form.isFieldsTouched()}
+      centered
+      destroyOnHidden
+      footer={null}
+      data-testid="add-modal-content"
+    >
+      {formStep === 0 && (
+        <ConfigureMonitorForm
+          monitor={monitor}
+          onClose={onClose}
+          onAdvance={onAdvance}
+          onSubmit={handleSubmit}
+          isSubmitting={isSubmitting}
+          databasesAvailable={databasesAvailable}
+          integrationSystem={integration?.system_key}
+          integrationOption={integrationOption}
+          form={form}
+        />
+      )}
+      {formStep === 1 &&
+        (monitor ? (
+          <ConfigureMonitorDatabasesForm
+            monitor={monitor}
+            isEditing={isEditing}
+            isSubmitting={isSubmitting}
+            onSubmit={handleSubmit}
+            onClose={onClose}
+            integrationKey={integration.key}
+            contentTaxonomy={
+              integration.connection_type === ConnectionType.BIGQUERY
+                ? DATASTORE_CONTENT_TAXONOMY.project
+                : DATASTORE_CONTENT_TAXONOMY.database
+            }
+          />
+        ) : (
+          <Spin />
+        ))}
+    </ConfirmCloseModal>
+  );
+};
 
 export default ConfigureMonitorModal;

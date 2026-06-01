@@ -1,0 +1,335 @@
+import { Dayjs } from "dayjs";
+import {
+  Button,
+  ChakraFlex as Flex,
+  Form,
+  FormInstance,
+  Radio,
+  RadioChangeEvent,
+  Select,
+} from "fidesui";
+import { useCallback, useEffect, useState } from "react";
+
+import { DatasetReferencePicker } from "~/features/common/dataset";
+import { ConditionLeaf, Operator } from "~/types/api";
+
+import { ConditionValueSelector } from "./components/ConditionValueSelector";
+import { OperatorReferenceGuide } from "./components/OperatorReferenceGuide";
+import { PrivacyRequestFieldPicker } from "./components/PrivacyRequestFieldPicker";
+import { useCustomFieldMetadata } from "./hooks/useCustomFieldMetadata";
+import { FieldSource } from "./types";
+import {
+  CUSTOM_IDENTITY_KEY_REGEX,
+  CUSTOM_IDENTITY_MANUAL_ENTRY,
+  getFieldType,
+  getInitialFieldSource,
+  getValueTooltip,
+  OPERATOR_OPTIONS,
+  parseConditionValue,
+  parseStoredValueForForm,
+  PrivacyRequestField,
+  STANDARD_IDENTITY_FIELDS,
+} from "./utils";
+
+interface FormValues {
+  fieldAddress: string;
+  operator: Operator;
+  value?: string | boolean | Dayjs | string[];
+}
+
+interface AddConditionFormProps {
+  onAdd: (condition: ConditionLeaf) => void;
+  onCancel: () => void;
+  editingCondition?: ConditionLeaf | null;
+  isSubmitting?: boolean;
+  connectionKey: string;
+  form?: FormInstance<FormValues>;
+  /**
+   * When true, hides the dataset field source option and filters privacy request
+   * fields to only those available for consent requests.
+   * This should be set when only consent manual tasks are configured.
+   */
+  isConsentOnly?: boolean;
+}
+
+const AddConditionForm = ({
+  onAdd,
+  onCancel,
+  editingCondition,
+  isSubmitting = false,
+  connectionKey,
+  form: formProp,
+  isConsentOnly = false,
+}: AddConditionFormProps) => {
+  const [internalForm] = Form.useForm();
+  const form = formProp ?? internalForm;
+  const isEditing = !!editingCondition;
+
+  const [fieldSource, setFieldSource] = useState<FieldSource>(
+    isConsentOnly
+      ? FieldSource.PRIVACY_REQUEST
+      : getInitialFieldSource(editingCondition),
+  );
+
+  // Get custom field metadata hook
+  const { getCustomFieldMetadata } = useCustomFieldMetadata();
+
+  // Watch the selected field to determine its type
+  const selectedFieldAddress = Form.useWatch("fieldAddress", form);
+  const selectedFieldType = selectedFieldAddress
+    ? getFieldType(selectedFieldAddress)
+    : "string";
+
+  // Get custom field metadata for the selected field
+  const customFieldMetadata = selectedFieldAddress
+    ? getCustomFieldMetadata(selectedFieldAddress)
+    : null;
+
+  // Check if operator should be disabled and set to LIST_CONTAINS
+  const isOperatorFixed =
+    selectedFieldType === "location_groups" ||
+    selectedFieldType === "location_regulations";
+
+  // Automatically set operator to LIST_CONTAINS for location_groups and location_regulations
+  useEffect(() => {
+    if (isOperatorFixed) {
+      form.setFieldValue("operator", Operator.LIST_CONTAINS);
+    }
+  }, [isOperatorFixed, form]);
+
+  // Reset value when user changes the field address to prevent type mismatches
+  // (e.g., switching from a string field with "test" to a date field that expects a Dayjs object)
+  // Only clear if the field has been touched to preserve initial values when editing
+  useEffect(() => {
+    if (form.isFieldTouched("fieldAddress")) {
+      form.setFieldValue("value", undefined);
+    }
+  }, [selectedFieldAddress, form]);
+
+  // Set initial values if editing
+  const initialValues = editingCondition
+    ? {
+        fieldSource: isConsentOnly
+          ? FieldSource.PRIVACY_REQUEST
+          : getInitialFieldSource(editingCondition),
+        fieldAddress: editingCondition.field_address,
+        operator: editingCondition.operator,
+        value: parseStoredValueForForm(
+          editingCondition.field_address,
+          editingCondition.value,
+        ),
+      }
+    : {
+        fieldSource: FieldSource.PRIVACY_REQUEST,
+      };
+
+  const handleSubmit = useCallback(
+    (values: FormValues) => {
+      const parsedValue = parseConditionValue(values.operator, values.value);
+      const condition: ConditionLeaf = {
+        field_address: values.fieldAddress.trim(),
+        operator: values.operator,
+        // The auto-generated ConditionLeaf type doesn't include string[] but the
+        // backend accepts arrays for list operators like LIST_CONTAINS
+        value: parsedValue as ConditionLeaf["value"],
+      };
+
+      onAdd(condition);
+      // Don't reset form here - let the modal handle it on successful save
+    },
+    [onAdd],
+  );
+
+  const handleCancel = useCallback(() => {
+    form.resetFields();
+    setFieldSource(
+      isConsentOnly ? FieldSource.PRIVACY_REQUEST : FieldSource.DATASET,
+    );
+    onCancel();
+  }, [form, onCancel, isConsentOnly]);
+
+  // Handle field source change
+  const handleFieldSourceChange = useCallback(
+    (e: RadioChangeEvent) => {
+      const newSource = e.target.value as FieldSource;
+      setFieldSource(newSource);
+      // Clear field address, operator, and value when switching sources
+      form.setFieldsValue({
+        fieldAddress: undefined,
+        operator: undefined,
+        value: "",
+      });
+    },
+    [form],
+  );
+
+  // Check if value field should be disabled
+  const selectedOperator = Form.useWatch("operator", form);
+  const isValueDisabled =
+    selectedOperator === Operator.EXISTS ||
+    selectedOperator === Operator.NOT_EXISTS;
+
+  // Clear value field when operator changes to EXISTS or NOT_EXISTS
+  useEffect(() => {
+    if (isValueDisabled) {
+      form.setFieldValue("value", "");
+    }
+  }, [isValueDisabled, form]);
+
+  // Reset value when the user manually changes the operator to prevent stale
+  // array values (e.g. from LIST_CONTAINS multiselect) being submitted with
+  // a non-list operator like EQ
+  useEffect(() => {
+    if (form.isFieldTouched("operator")) {
+      form.setFieldValue("value", undefined);
+    }
+  }, [selectedOperator, form]);
+
+  return (
+    <Form
+      form={form}
+      onFinish={handleSubmit}
+      layout="vertical"
+      initialValues={initialValues}
+    >
+      {/* Hide field source selection when consent-only, as dataset fields are not available */}
+      {!isConsentOnly && (
+        <Form.Item
+          name="fieldSource"
+          label="Field source"
+          rules={[{ required: true, message: "Field source is required" }]}
+        >
+          <Radio.Group onChange={handleFieldSourceChange}>
+            <Radio
+              value={FieldSource.PRIVACY_REQUEST}
+              data-testid="field-source-privacy-request"
+            >
+              Privacy request field
+            </Radio>
+            <Radio
+              value={FieldSource.DATASET}
+              data-testid="field-source-dataset"
+            >
+              Dataset field
+            </Radio>
+          </Radio.Group>
+        </Form.Item>
+      )}
+
+      <Form.Item
+        name="fieldAddress"
+        label="Field"
+        rules={[
+          { required: true, message: "Field is required" },
+          {
+            validator: (_, val) =>
+              val === CUSTOM_IDENTITY_MANUAL_ENTRY
+                ? Promise.reject(
+                    new Error("Please enter a custom identity key"),
+                  )
+                : Promise.resolve(),
+          },
+          {
+            validator: (_, val) => {
+              if (
+                !val ||
+                !val.startsWith(PrivacyRequestField.IDENTITY_PREFIX) ||
+                STANDARD_IDENTITY_FIELDS.has(val)
+              ) {
+                return Promise.resolve();
+              }
+              const key = val.slice(PrivacyRequestField.IDENTITY_PREFIX.length);
+              return key && CUSTOM_IDENTITY_KEY_REGEX.test(key)
+                ? Promise.resolve()
+                : Promise.reject(
+                    new Error(
+                      "Identity key may only contain letters, numbers, and underscores",
+                    ),
+                  );
+            },
+          },
+        ]}
+        tooltip={
+          fieldSource === FieldSource.DATASET
+            ? "Select a field from your datasets to use in the condition"
+            : "Select a privacy request field to use in the condition"
+        }
+        validateTrigger={["onBlur", "onSubmit"]}
+      >
+        {isConsentOnly || fieldSource === FieldSource.PRIVACY_REQUEST ? (
+          <PrivacyRequestFieldPicker
+            connectionKey={connectionKey}
+            isConsentOnly={isConsentOnly}
+          />
+        ) : (
+          <DatasetReferencePicker />
+        )}
+      </Form.Item>
+
+      <Form.Item
+        name="operator"
+        label="Operator"
+        tooltip={{
+          placement: "right",
+          title: <OperatorReferenceGuide />,
+          styles: {
+            root: {
+              maxWidth: "500px",
+            },
+          },
+        }}
+        rules={[{ required: true, message: "Operator is required" }]}
+      >
+        <Select
+          placeholder="Select operator"
+          aria-label="Select operator"
+          options={OPERATOR_OPTIONS}
+          data-testid="operator-select"
+          disabled={isOperatorFixed}
+        />
+      </Form.Item>
+
+      <Form.Item
+        name="value"
+        label="Value"
+        rules={[
+          {
+            required: !isValueDisabled,
+            message: "Value is required for this operator",
+          },
+        ]}
+        tooltip={getValueTooltip(selectedFieldType, isValueDisabled)}
+      >
+        <ConditionValueSelector
+          fieldType={selectedFieldType}
+          disabled={isValueDisabled}
+          fieldAddress={selectedFieldAddress}
+          customFieldMetadata={customFieldMetadata}
+          operator={selectedOperator}
+        />
+      </Form.Item>
+
+      <Form.Item>
+        <Flex gap={2} justify="flex-end">
+          <Button
+            onClick={handleCancel}
+            disabled={isSubmitting}
+            data-testid="cancel-btn"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={isSubmitting}
+            data-testid="save-btn"
+          >
+            {isEditing ? "Update" : "Add"}
+          </Button>
+        </Flex>
+      </Form.Item>
+    </Form>
+  );
+};
+
+export default AddConditionForm;

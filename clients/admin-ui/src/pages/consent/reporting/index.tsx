@@ -1,27 +1,163 @@
-import { Box, Heading, Text } from "fidesui";
-import React from "react";
+import dayjs, { Dayjs } from "dayjs";
+import {
+  Button,
+  DateRangePicker,
+  Dropdown,
+  Flex,
+  Icons,
+  Table,
+  useMessage,
+} from "fidesui";
+import React, { useCallback, useMemo, useState } from "react";
 
-import Layout from "~/features/common/Layout";
-import ConsentReporting from "~/features/consent-reporting/ConsentReporting";
+import FixedLayout from "~/features/common/FixedLayout";
+import { usePagination } from "~/features/common/hooks";
+import PageHeader from "~/features/common/PageHeader";
+import { InfinitePaginator } from "~/features/common/pagination/InfinitePaginator";
+import { useGetAllHistoricalPrivacyPreferencesQuery } from "~/features/consent-reporting/consent-reporting.slice";
+import ConsentLookupModal from "~/features/consent-reporting/ConsentLookupModal";
+import ConsentReportDownloadModal from "~/features/consent-reporting/ConsentReportDownloadModal";
+import ConsentTcfDetailModal from "~/features/consent-reporting/ConsentTcfDetailModal";
+import useConsentReportingColumns from "~/features/consent-reporting/hooks/useConsentReportingTableColumns";
 
-const ConsentReportingPage = () => (
-  <Layout title="Consent reporting">
-    <Box mb={4}>
-      <Heading fontSize="2xl" fontWeight="semibold" mb={2} data-testid="header">
-        Consent reporting
-      </Heading>
-    </Box>
-    <Text fontSize="sm" mb={8} width={{ base: "100%", lg: "50%" }}>
-      Download a CSV containing a report of consent preferences made by users on
-      your sites. Select a date range below and click &quot;Download
-      report&quot;. Depending on the number of records in the date range you
-      select, it may take several minutes to prepare the file after you click
-      &quot;Download report&quot;.
-    </Text>
-    <Box data-testid="consent">
-      <ConsentReporting />
-    </Box>
-  </Layout>
-);
+const ConsentReportingPage = () => {
+  const pagination = usePagination();
+  const { pageIndex, pageSize, updatePageIndex } = pagination;
+  const today = useMemo(() => dayjs(), []);
+  const [startDate, setStartDate] = useState<Dayjs | null>(null);
+  const [endDate, setEndDate] = useState<Dayjs | null>(null);
+  const [isConsentLookupModalOpen, setIsConsentLookupModalOpen] =
+    useState(false);
+  const [isDownloadReportModalOpen, setIsDownloadReportModalOpen] =
+    useState(false);
+  const [isConsentTcfDetailModalOpen, setIsConsentTcfDetailModalOpen] =
+    useState(false);
+  const [currentTcfPreferences, setCurrentTcfPreferences] = useState();
+
+  const message = useMessage();
+
+  const { data, isLoading, isFetching, refetch } =
+    useGetAllHistoricalPrivacyPreferencesQuery({
+      page: pageIndex,
+      size: pageSize,
+      startDate,
+      endDate,
+      includeTotal: false,
+    });
+
+  const { items: privacyPreferences } = useMemo(() => {
+    const results = data || { items: [], total: 0, pages: 0 };
+    return results;
+  }, [data]);
+
+  const onTcfDetailViewClick = useCallback((tcfPreferences: any) => {
+    setIsConsentTcfDetailModalOpen(true);
+    setCurrentTcfPreferences(tcfPreferences);
+  }, []);
+
+  // Ant Design table columns
+  const antColumns = useConsentReportingColumns({
+    onTcfDetailViewClick,
+  });
+
+  const handleClickRefresh = async () => {
+    updatePageIndex(1);
+    await refetch();
+    message.success("Consent report refreshed successfully.");
+  };
+
+  return (
+    <FixedLayout title="Consent report">
+      <PageHeader
+        heading="Consent report"
+        rightContent={
+          <Button
+            type="primary"
+            onClick={handleClickRefresh}
+            loading={isFetching}
+          >
+            Refresh
+          </Button>
+        }
+      />
+      <Flex vertical gap="medium">
+        <Flex justify="space-between">
+          <DateRangePicker
+            placeholder={["From", "To"]}
+            maxDate={today}
+            data-testid="input-date-range"
+            onChange={(dates: [Dayjs | null, Dayjs | null] | null) => {
+              setStartDate(dates && dates[0]);
+              setEndDate(dates && dates[1]);
+            }}
+          />
+          <Flex gap={12}>
+            <Button
+              icon={<Icons.Download />}
+              data-testid="download-btn"
+              onClick={() => setIsDownloadReportModalOpen(true)}
+              aria-label="Download Consent Report"
+            />
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: "1",
+                    label: (
+                      <span data-testid="consent-preference-lookup-btn">
+                        Consent preference lookup
+                      </span>
+                    ),
+                    onClick: () => setIsConsentLookupModalOpen(true),
+                  },
+                ],
+              }}
+              styles={{ root: { width: "220px" } }}
+              trigger={["click"]}
+            >
+              <Button
+                aria-label="Menu"
+                icon={<Icons.OverflowMenuVertical />}
+                data-testid="consent-reporting-dropdown-btn"
+              />
+            </Dropdown>
+          </Flex>
+        </Flex>
+        <Table
+          columns={antColumns}
+          dataSource={privacyPreferences}
+          rowKey="id"
+          loading={isLoading}
+          pagination={false}
+          data-testid="consent-reporting-table"
+          scroll={{ x: 1590 }}
+          tableLayout="fixed"
+        />
+        <InfinitePaginator
+          disableNext={(data?.items?.length ?? 0) < pageSize}
+          pagination={pagination}
+        />
+      </Flex>
+      <ConsentLookupModal
+        isOpen={isConsentLookupModalOpen}
+        onClose={() => setIsConsentLookupModalOpen(false)}
+      />
+      <ConsentReportDownloadModal
+        isOpen={isDownloadReportModalOpen}
+        onClose={() => setIsDownloadReportModalOpen(false)}
+        startDate={startDate}
+        endDate={endDate}
+      />
+      <ConsentTcfDetailModal
+        isOpen={isConsentTcfDetailModalOpen}
+        onClose={() => {
+          setIsConsentTcfDetailModalOpen(false);
+          setCurrentTcfPreferences(undefined);
+        }}
+        tcfPreferences={currentTcfPreferences}
+      />
+    </FixedLayout>
+  );
+};
 
 export default ConsentReportingPage;

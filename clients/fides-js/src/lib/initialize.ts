@@ -1,70 +1,58 @@
-import { ContainerNode } from "preact";
-import { v4 as uuidv4 } from "uuid";
-
+import { RenderOverlayType } from "../components/types";
+import { fetchExperience } from "../services/api";
+import { getGeolocation } from "../services/external/geolocation";
 import {
-  DEFAULT_MODAL_LINK_LABEL,
-  I18n,
-  initializeI18n,
-  localizeModalLinkText,
-  selectBestExperienceConfigTranslation,
-  selectBestNoticeTranslation,
-  setupI18n,
-} from "./i18n";
-import { getConsentContext } from "./consent-context";
+  calculateAutomatedConsent,
+  saveAutomatedPreferencesToApi,
+} from "./automated-consent";
+import { ConsentContext, getGpcContext } from "./consent-context";
 import {
-  getCookieByName,
-  getOrMakeFidesCookie,
-  isNewFidesCookie,
-  makeConsentDefaultsLegacy,
-  updateCookieFromExperience,
-  updateCookieFromNoticePreferences,
-} from "./cookie";
-import {
-  ConsentMechanism,
-  ConsentMethod,
+  ComponentType,
   FidesConfig,
   FidesCookie,
   FidesGlobal,
   FidesInitOptions,
-  FidesOptions,
   FidesOverrides,
-  NoticeConsent,
-  OverrideExperienceTranslations,
+  FidesWindowOverrides,
+  NoticeValues,
   OverrideType,
   PrivacyExperience,
-  SaveConsentPreference,
+  UserConsentPreference,
   UserGeolocation,
 } from "./consent-types";
 import {
+  applyOverridesToConsent,
   constructFidesRegionString,
-  debugLog,
+  createConsentProxy,
   experienceIsValid,
   getOverrideValidatorMapByType,
   getWindowObjFromPath,
   isPrivacyExperience,
   validateOptions,
 } from "./consent-utils";
-import { fetchExperience } from "../services/api";
-import { getGeolocation } from "../services/external/geolocation";
-import { OverlayProps } from "../components/types";
-import { updateConsentPreferences } from "./preferences";
-import { resolveConsentValue } from "./consent-value";
-import { initOverlay } from "./initOverlay";
 import {
-  noticeHasConsentInCookie,
-  transformConsentToFidesUserPreference,
-} from "./shared-consent-utils";
-
-export type UpdateExperienceFn = (args: {
-  cookie: FidesCookie;
-  experience: PrivacyExperience;
-  debug?: boolean;
-  isExperienceClientSideFetched: boolean;
-}) => Partial<PrivacyExperience>;
+  getCookieByName,
+  getOrMakeFidesCookie,
+  makeConsentDefaultsLegacy,
+  saveFidesCookie,
+  updateCookieFromExperience,
+} from "./cookie";
+import { dispatchLocaleEvent } from "./events";
+import {
+  DEFAULT_LOCALE,
+  DEFAULT_MODAL_LINK_LABEL,
+  initializeI18n,
+  localizeModalLinkText,
+  setupI18n,
+} from "./i18n";
+import { UpdateExperienceProps } from "./init-utils";
+import { InitOverlayProps } from "./initOverlay";
+import { InitializedFidesGlobal } from "./providers/fides-global-context";
+import { searchForElement } from "./ui-utils";
 
 const retrieveEffectiveRegionString = async (
   geolocation: UserGeolocation | undefined,
-  options: FidesInitOptions
+  options: FidesInitOptions,
 ) => {
   // Prefer the provided geolocation if available and valid; otherwise, fallback to automatically
   // geolocating the user by calling the geolocation API
@@ -76,113 +64,10 @@ const retrieveEffectiveRegionString = async (
       await getGeolocation(
         options.isGeolocationEnabled,
         options.geolocationApiUrl,
-        options.debug
-      )
+      ),
     );
   }
   return fidesRegionString;
-};
-
-/**
- * Opt out of notices that can be opted out of automatically.
- * This does not currently do anything with TCF.
- * Returns true if GPC has been applied
- */
-const automaticallyApplyGPCPreferences = async ({
-  savedConsent,
-  effectiveExperience,
-  cookie,
-  fidesRegionString,
-  fidesOptions,
-  i18n,
-}: {
-  savedConsent: NoticeConsent;
-  effectiveExperience: PrivacyExperience;
-  cookie: FidesCookie;
-  fidesRegionString: string | null;
-  fidesOptions: FidesInitOptions;
-  i18n: I18n;
-}): Promise<boolean> => {
-  // Early-exit if there is no experience or notices, since we've nothing to do
-  if (
-    !effectiveExperience ||
-    !effectiveExperience.experience_config ||
-    !effectiveExperience.privacy_notices ||
-    effectiveExperience.privacy_notices.length === 0
-  ) {
-    return false;
-  }
-
-  const context = getConsentContext();
-  if (!context.globalPrivacyControl) {
-    return false;
-  }
-
-  /**
-   * Select the "best" translation that should be used for these saved
-   * preferences based on the currently active locale.
-   *
-   * NOTE: This *feels* a bit weird, and would feel cleaner if this was moved
-   * into the UI components. However, we currently want to keep the GPC
-   * application isolated, so we need to duplicate some of that "best
-   * translation" logic here.
-   */
-  const bestTranslation = selectBestExperienceConfigTranslation(
-    i18n,
-    effectiveExperience.experience_config
-  );
-  const privacyExperienceConfigHistoryId =
-    bestTranslation?.privacy_experience_config_history_id;
-
-  let gpcApplied = false;
-  const consentPreferencesToSave = effectiveExperience.privacy_notices.map(
-    (notice) => {
-      const hasPriorConsent = noticeHasConsentInCookie(notice, savedConsent);
-      const bestNoticeTranslation = selectBestNoticeTranslation(i18n, notice);
-
-      // only apply GPC for notices that do not have prior consent
-      if (
-        notice.has_gpc_flag &&
-        !hasPriorConsent &&
-        notice.consent_mechanism !== ConsentMechanism.NOTICE_ONLY
-      ) {
-        gpcApplied = true;
-        return new SaveConsentPreference(
-          notice,
-          transformConsentToFidesUserPreference(
-            false,
-            notice.consent_mechanism
-          ),
-          bestNoticeTranslation?.privacy_notice_history_id
-        );
-      }
-      return new SaveConsentPreference(
-        notice,
-        transformConsentToFidesUserPreference(
-          resolveConsentValue(notice, context, savedConsent),
-          notice.consent_mechanism
-        ),
-        bestNoticeTranslation?.privacy_notice_history_id
-      );
-    }
-  );
-
-  if (gpcApplied) {
-    await updateConsentPreferences({
-      servedNoticeHistoryId: uuidv4(),
-      consentPreferencesToSave,
-      privacyExperienceConfigHistoryId,
-      experience: effectiveExperience,
-      consentMethod: ConsentMethod.GPC,
-      options: fidesOptions,
-      userLocationString: fidesRegionString || undefined,
-      cookie,
-      updateCookie: (oldCookie) =>
-        updateCookieFromNoticePreferences(oldCookie, consentPreferencesToSave),
-    });
-    return true;
-  }
-  return false;
 };
 
 /**
@@ -197,7 +82,7 @@ const automaticallyApplyGPCPreferences = async ({
  */
 export const getOverridesByType = <T>(
   type: OverrideType,
-  config: FidesConfig
+  config: FidesConfig,
 ): Partial<T> => {
   const overrides: Partial<T> = {};
   if (typeof window !== "undefined") {
@@ -207,17 +92,21 @@ export const getOverridesByType = <T>(
     const customPathArr: "" | null | string[] =
       config.options.customOptionsPath &&
       config.options.customOptionsPath.split(".");
-    const windowObj:
-      | Partial<FidesOptions & OverrideExperienceTranslations>
-      | undefined =
+    const windowObj: FidesWindowOverrides | undefined =
       customPathArr && customPathArr.length >= 0
         ? getWindowObjFromPath(customPathArr)
-        : window.fides_overrides;
+        : (window.fides_overrides as FidesWindowOverrides);
 
     // Look for each of the override options in all three locations: query params, window object, cookie
     const overrideValidatorMap = getOverrideValidatorMapByType(type);
     overrideValidatorMap?.forEach(
-      ({ overrideName, overrideType, overrideKey, validationRegex }) => {
+      ({
+        overrideName,
+        overrideType,
+        overrideKey,
+        validationRegex,
+        transform,
+      }) => {
         const queryParamOverride: string | null = queryParams.get(overrideKey);
         const windowObjOverride: string | boolean | undefined = windowObj
           ? windowObj[overrideKey]
@@ -228,10 +117,14 @@ export const getOverridesByType = <T>(
         const value = queryParamOverride || windowObjOverride || cookieOverride;
         if (value && validationRegex.test(value.toString())) {
           // coerce to expected type
-          overrides[overrideName as keyof T] =
-            overrideType === "string" ? value : JSON.parse(value.toString());
+          if (transform) {
+            overrides[overrideName as keyof T] = transform(value.toString());
+          } else {
+            overrides[overrideName as keyof T] =
+              overrideType === "string" ? value : JSON.parse(value.toString());
+          }
         }
-      }
+      },
     );
   }
   return overrides;
@@ -241,27 +134,22 @@ export const getOverridesByType = <T>(
  * Get the initial Fides cookie based on legacy consent values
  * as well as any preferences stored in existing cookies
  */
-export const getInitialCookie = ({ consent, options }: FidesConfig) => {
+export const getInitialCookie = async ({
+  consent,
+  options,
+}: FidesConfig): Promise<FidesCookie> => {
   // Configure the default legacy consent values
-  const context = getConsentContext();
-  const consentDefaults = makeConsentDefaultsLegacy(
-    consent,
-    context,
-    options.debug
-  );
+  const context = getGpcContext();
+  const consentDefaults = makeConsentDefaultsLegacy(consent, context);
 
   // Load any existing user preferences from the browser cookie
-  return getOrMakeFidesCookie(
-    consentDefaults,
-    options.debug,
-    options.fidesClearCookie
-  );
+  return getOrMakeFidesCookie(consentDefaults, options);
 };
 
 /**
  * If saved preferences are detected, immediately initialize from local cache
  */
-export const getInitialFides = ({
+export const getInitialFidesFromConsentCookie = ({
   cookie,
   savedConsent,
   experience,
@@ -270,22 +158,17 @@ export const getInitialFides = ({
   updateExperienceFromCookieConsent,
 }: {
   cookie: FidesCookie;
-  savedConsent: NoticeConsent;
+  savedConsent: NoticeValues;
 } & FidesConfig & {
     updateExperienceFromCookieConsent: (props: {
       experience: PrivacyExperience;
       cookie: FidesCookie;
       debug: boolean;
     }) => PrivacyExperience;
-  }): Partial<FidesGlobal> | null => {
-  const hasExistingCookie = !isNewFidesCookie(cookie);
-  if (!hasExistingCookie && !options.fidesString) {
-    // A TC str can be injected and take effect even if the user has no previous Fides Cookie
-    return null;
-  }
+  }): Partial<FidesGlobal> => {
   let updatedExperience = experience;
   if (isPrivacyExperience(experience)) {
-    // at this point, pre-fetched experience contains no user consent, so we populate with the Fides cookie
+    // at this point, a pre-fetched experience contains no user consent, so we populate with the Fides cookie. This method is passed in as a prop because it behaves differently for TCF than other experiences.
     updatedExperience = updateExperienceFromCookieConsent({
       experience,
       cookie,
@@ -307,34 +190,40 @@ export const getInitialFides = ({
   };
 };
 
+export interface InitializeProps {
+  fides: FidesGlobal;
+  initOverlay?: (props: InitOverlayProps) => Promise<void>;
+  renderOverlay?: RenderOverlayType;
+  updateExperience: (
+    props: UpdateExperienceProps,
+  ) => Partial<PrivacyExperience>;
+  overrides?: Partial<FidesOverrides>;
+  automatedConsentContext: ConsentContext;
+}
+
 /**
  * The bulk of the initialization logic
  * 1. Validates options
- * 2. Retrieves geolocation
- * 3. Retrieves experience
- * 4. Updates cookie
- * 5. Initialize overlay components
- * 6. Apply GPC if necessary
+ * 2. Retrieves geolocation if necessary
+ * 3. Retrieves experience if necessary
+ * 4. Updates cookie as needed from the experience
+ * 5. Initializes overlay components
+ * 6. Applies automated consent (GPC, etc.) asynchronously if necessary
  */
 export const initialize = async ({
   fides,
-  options,
-  geolocation,
+  initOverlay,
   renderOverlay,
   updateExperience,
-  overrides,
-}: {
-  fides: FidesGlobal;
-  renderOverlay: (props: OverlayProps, parent: ContainerNode) => void;
-  /**
-   * Once we for sure have a valid experience, this is another chance to update values
-   * before the overlay renders.
-   */
-  updateExperience: UpdateExperienceFn;
-  overrides?: Partial<FidesOverrides>;
-} & FidesConfig): Promise<Partial<FidesGlobal>> => {
-  let shouldInitOverlay: boolean = options.isOverlayEnabled;
-  let fidesRegionString: string | null = null;
+  automatedConsentContext,
+}: InitializeProps): Promise<Partial<FidesGlobal>> => {
+  const { config } = fides;
+  if (!config) {
+    throw new Error("Fides config should be initialized");
+  }
+  const { options, geolocation } = config;
+  let shouldContinueInitOverlay: boolean = true;
+  let fidesRegionString: string | undefined;
   let getModalLinkLabel: FidesGlobal["getModalLinkLabel"] = () =>
     DEFAULT_MODAL_LINK_LABEL;
 
@@ -342,69 +231,145 @@ export const initialize = async ({
     throw new Error("Fides cookie should be initialized");
   }
 
-  if (shouldInitOverlay) {
+  /**
+   * If a property is using legacy consent, we should not initialize any
+   * part of the overlay, not even Headless. Those properties will have
+   * `isOverlayEnabled: false` in their config. `isOverlayEnabled` should
+   * not be confused with Headless experiences, which are still considered
+   * notice-based consent experiences.
+   */
+  const isNoticeBasedConsentEnabled = options.isOverlayEnabled;
+  shouldContinueInitOverlay = isNoticeBasedConsentEnabled;
+
+  if (shouldContinueInitOverlay) {
     if (!validateOptions(options)) {
-      debugLog(
-        options.debug,
-        "Invalid overlay options. Skipping overlay initialization.",
-        options
+      fidesDebugger(
+        "Invalid config options. Skipping overlay initialization.",
+        options,
       );
-      shouldInitOverlay = false;
+      shouldContinueInitOverlay = false;
     }
 
     fidesRegionString = await retrieveEffectiveRegionString(
       geolocation,
-      options
+      options,
     );
 
     let fetchedClientSideExperience = false;
 
     if (!fidesRegionString) {
-      debugLog(
-        options.debug,
-        `User location could not be obtained. Skipping overlay initialization.`
+      fidesDebugger(
+        `User location could not be obtained. Skipping overlay initialization.`,
       );
-      shouldInitOverlay = false;
+      shouldContinueInitOverlay = false;
     } else if (!isPrivacyExperience(fides.experience)) {
       fetchedClientSideExperience = true;
       // If no effective PrivacyExperience was pre-fetched, fetch one using the current region string
       // eslint-disable-next-line no-param-reassign
-      fides.experience = await fetchExperience(
-        fidesRegionString,
-        options.fidesApiUrl,
-        options.debug,
-        options.apiOptions
-      );
+      fides.experience = await fetchExperience({
+        userLocationString: fidesRegionString,
+        fidesApiUrl: options.fidesApiUrl,
+        apiOptions: options.apiOptions,
+        requestMinimalTCF: false,
+        propertyId: fides.config?.propertyId,
+        excludeNoticeAssetsBySystems: options.fidesDisabledSystems || undefined,
+      });
     }
 
     if (
+      shouldContinueInitOverlay &&
       isPrivacyExperience(fides.experience) &&
-      experienceIsValid(fides.experience, options)
+      experienceIsValid(fides.experience)
     ) {
+      /**
+       * Calculate automated consent from GPC, migrated consent, and notice consent strings.
+       * This must happen BEFORE updating the experience or cookie to ensure automated
+       * consent is reflected in FidesInitialized event.
+       */
+      const {
+        noticeConsent: automatedNoticeConsent,
+        consentMethod: automatedMethod,
+        applied: automatedApplied,
+      } = calculateAutomatedConsent(
+        fides.experience,
+        fides.saved_consent,
+        automatedConsentContext,
+      );
+
+      /**
+      /**
+       * Apply calculated automated consent to experience defaults and save to browser cookie
+       */
+      if (automatedApplied && fides.experience.privacy_notices) {
+        // Update experience privacy_notices with calculated automated consent
+        // eslint-disable-next-line no-param-reassign
+        fides.experience.privacy_notices = fides.experience.privacy_notices.map(
+          (notice) => {
+            const automatedValue = automatedNoticeConsent[notice.notice_key];
+            let currentPreference = notice.current_preference;
+            if (automatedValue !== undefined) {
+              currentPreference = automatedValue
+                ? UserConsentPreference.OPT_IN
+                : UserConsentPreference.OPT_OUT;
+            }
+            return {
+              ...notice,
+              current_preference: currentPreference,
+            };
+          },
+        );
+        fidesDebugger("Applied automated consent to experience defaults");
+
+        // save the cookie to the browser prior to updating the experience
+        Object.assign(fides.cookie.fides_meta, {
+          consentMethod: automatedMethod,
+        });
+        // eslint-disable-next-line no-param-reassign
+        fides.cookie = {
+          ...fides.cookie,
+          consent: automatedNoticeConsent,
+        };
+        await saveFidesCookie(fides.cookie, options);
+
+        fidesDebugger(
+          "Saved automated consent to browser cookie",
+          fides.cookie,
+        );
+      }
+
       /**
        * Now that we've determined the effective PrivacyExperience, update it
        * with some additional client-side state so that it is initialized with
        * the user's current consent preferences, etc. and ready to display!
        */
-      const updatedExperience = updateExperience({
-        cookie: fides.cookie!,
-        experience: fides.experience,
-        debug: options.debug,
-        isExperienceClientSideFetched: fetchedClientSideExperience,
-      });
-      debugLog(
-        options.debug,
-        "Updated experience from saved preferences",
-        updatedExperience
-      );
-      // eslint-disable-next-line no-param-reassign
-      fides.experience = { ...fides.experience, ...updatedExperience };
+      if (fetchedClientSideExperience) {
+        // If it's not client side fetched, we don't update anything since the cookie has already
+        // been updated earlier.
+        const updatedExperience = updateExperience({
+          cookie: fides.cookie!,
+          experience: fides.experience,
+        });
+        // eslint-disable-next-line no-param-reassign
+        fides.experience = { ...fides.experience, ...updatedExperience };
+        fidesDebugger(
+          "Updated experience from saved preferences",
+          updatedExperience,
+        );
+      }
 
       /**
-       * Finally, update the "cookie" state to track the user's *current*
+       * If the config has a property_id, we add it to the experience to indicate
+       */
+      if (fides.config?.propertyId) {
+        // eslint-disable-next-line no-param-reassign
+        fides.experience.property_id = fides.config.propertyId;
+      }
+
+      /**
+       * Update the "cookie" state to track the user's *current*
        * consent preferences as determined by the updatedExperience above. This
        * "cookie" state is then published to external listeners via the
-       * Fides.consent object and Fides events like FidesInitialized below, so
+       * Fides.consent object and Fides events like FidesReady below, so
        * we rely on keeping it up to date!
        *
        * DEFER (PROD-1780): This is quite *literally* duplicate state, and means
@@ -420,71 +385,117 @@ export const initialize = async ({
         cookie: fides.cookie,
         experience: fides.experience,
       });
-      debugLog(
-        options.debug,
+      fidesDebugger(
         "Updated current cookie state from experience",
-        updatedCookie
+        updatedCookie,
       );
       // eslint-disable-next-line no-param-reassign
       fides.cookie = updatedCookie;
 
-      if (shouldInitOverlay) {
-        // Initialize the i18n singleton before we render the overlay
-        const i18n = setupI18n();
-        initializeI18n(
+      // Initialize the i18n singleton before we render the overlay
+      const i18n = setupI18n();
+      initializeI18n(i18n, window?.navigator, fides.experience, options);
+
+      // eslint-disable-next-line no-param-reassign
+      fides.locale = i18n.locale || DEFAULT_LOCALE;
+
+      // Provide the modal link label function to the client based on the current locale unless specified via props.
+      getModalLinkLabel = (props) =>
+        localizeModalLinkText(
+          !!props?.disableLocalization,
           i18n,
-          window?.navigator,
           fides.experience,
-          options,
-          overrides?.experienceTranslationOverrides
         );
 
-        // Provide the modal link label function to the client based on the current locale unless specified via props.
-        getModalLinkLabel = (props) =>
-          localizeModalLinkText(
-            !!props?.disableLocalization,
-            i18n,
-            fides.experience
-          );
+      /**
+       * Now that we have the experience, translations, and modal link label,
+       * we can render the modal link for the Headless experience.
+       * With non-headless experiences, this will be handled by the overlay itself.
+       */
+      if (
+        fides.experience.experience_config?.component === ComponentType.HEADLESS
+      ) {
+        const { modalLinkId } = options;
+        const modalLinkIsDisabled =
+          !fides.experience ||
+          !!options.fidesEmbed ||
+          options.modalLinkId === "";
+        fidesDebugger("Fides overlay is disabled for this experience.");
+        if (modalLinkIsDisabled) {
+          fidesDebugger("Modal Link is disabled for this experience.");
+        }
+        fidesDebugger(`Searching for Modal link element #${modalLinkId}...`);
+        searchForElement(modalLinkId).then((foundElement) => {
+          // The overlay normally dispatches the FidesLocaleUpdated event when the locale is first set.
+          // Since we're not rendering the overlay here, we need to dispatch the event manually once the modal link is found.
+          // If we dispatch it earlier, any listeners on the page may not be ready to receive the event yet.
+          dispatchLocaleEvent(i18n.locale);
 
-        // OK, we're (finally) ready to initialize & render the overlay!
-        await initOverlay({
+          fidesDebugger("Modal link element found, updating it to show");
+          document.body.classList.add("fides-overlay-modal-link-shown");
+          foundElement.classList.add("fides-modal-link-shown");
+        });
+        shouldContinueInitOverlay = false;
+      }
+
+      if (!!initOverlay && shouldContinueInitOverlay) {
+        const initializedFides: InitializedFidesGlobal = {
+          ...fides,
+          cookie: fides.cookie,
+          config,
           options,
           experience: fides.experience,
-          i18n,
           fidesRegionString: fidesRegionString as string,
-          cookie: fides.cookie,
-          savedConsent: fides.saved_consent,
+        };
+        // OK, we're (finally) ready to initialize & render the overlay!
+        initOverlay({
+          initializedFides,
+          i18n,
           renderOverlay,
-        }).catch(() => {});
+        }).catch((e) => {
+          fidesDebugger(e);
+        });
+      }
 
-        /**
-         * Last up: apply GPC to the current preferences automatically. This will
-         * set any applicable notices to "opt-out" unless the user has previously
-         * saved consent, etc.
-         *
-         * NOTE: We want to finish initialization immediately while GPC updates
-         * continue to run in the background. To ensure that any GPC API calls
-         * don't block the rest of the code from executing, we use setTimeout with
-         * no delay which simply moves it to the end of the JavaScript event queue.
-         */
-        setTimeout(
-          automaticallyApplyGPCPreferences.bind(null, {
-            savedConsent: fides.saved_consent,
-            effectiveExperience: fides.experience as PrivacyExperience,
-            cookie: fides.cookie,
-            fidesRegionString,
-            fidesOptions: options,
-            i18n,
-          })
+      /**
+       * Save automated preferences to API asynchronously without blocking initialization.
+       * The consent has already been calculated and applied to the cookie/experience above,
+       * so this is only persisting to the backend. We don't await it so that FidesInitialized
+       * fires immediately with the correct consent values.
+       */
+      if (automatedApplied && automatedMethod) {
+        saveAutomatedPreferencesToApi(
+          fides,
+          automatedNoticeConsent,
+          automatedMethod,
+        ).catch((e) =>
+          fidesDebugger("Error saving automated preferences to API:", e),
         );
       }
+    } else {
+      fidesDebugger("Skipping overlay initialization.", fides.experience);
     }
   }
 
   // eslint-disable-next-line @typescript-eslint/naming-convention
-  const { consent, fides_meta, identity, fides_string, tcf_consent } =
-    fides.cookie;
+  const { fides_meta, identity, fides_string, tcf_consent } = fides.cookie;
+
+  // used to set Fides.consent
+  const consentObject = applyOverridesToConsent(
+    fides.cookie.consent,
+    fides.experience?.non_applicable_privacy_notices,
+    fides.experience?.privacy_notices,
+    options.fidesConsentFlagType ?? undefined,
+    options.fidesConsentNonApplicableFlagMode ?? undefined,
+    fides.cookie.non_applicable_notice_keys,
+  );
+
+  const hasPrivacyNotices =
+    !!fides.experience?.non_applicable_privacy_notices ||
+    !!fides.experience?.privacy_notices;
+
+  // Any unknown consent values should return falsy values automatically
+  const consent = createConsentProxy(consentObject, options, hasPrivacyNotices);
 
   // return an object with the updated Fides values
   return {

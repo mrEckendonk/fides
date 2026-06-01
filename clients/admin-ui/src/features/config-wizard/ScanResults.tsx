@@ -1,38 +1,31 @@
 import {
-  Box,
   Button,
-  Heading,
-  HStack,
-  Stack,
-  Text,
-  useDisclosure,
+  ChakraBox as Box,
+  ChakraHStack as HStack,
+  ChakraStack as Stack,
+  ChakraText as Text,
+  useModal,
 } from "fidesui";
 import { useRouter } from "next/router";
 import { useState } from "react";
 
 import { useAppDispatch, useAppSelector } from "~/app/hooks";
-import {
-  ColumnDropdown,
+import ColumnDropdown, {
   ColumnMetadata,
 } from "~/features/common/ColumnDropdown";
 import { isErrorResult } from "~/features/common/helpers";
 import { useAPIHelper } from "~/features/common/hooks";
 import { useSystemOrDatamapRoute } from "~/features/common/hooks/useSystemOrDatamapRoute";
-import WarningModal from "~/features/common/modals/WarningModal";
 import { SystemsCheckboxTable } from "~/features/common/SystemsCheckboxTable";
-import {
-  setSystemsToClassify,
-  useUpsertSystemsMutation,
-} from "~/features/system";
+import { useUpsertSystemsMutation } from "~/features/system";
 import { System } from "~/types/api";
 
+import { NextBreadcrumb } from "../common/nav/NextBreadcrumb";
 import {
   changeStep,
   reset,
-  selectAddSystemsMethod,
   selectSystemsForReview,
 } from "./config-wizard.slice";
-import { SystemMethods } from "./types";
 
 const ALL_COLUMNS: ColumnMetadata[] = [
   { name: "Name", attribute: "name" },
@@ -46,16 +39,11 @@ const ScanResults = () => {
   const router = useRouter();
   const { systemOrDatamapRoute } = useSystemOrDatamapRoute();
 
-  const {
-    isOpen: isWarningOpen,
-    onOpen: onWarningOpen,
-    onClose: onWarningClose,
-  } = useDisclosure();
+  const modal = useModal();
   const [upsertSystems] = useUpsertSystemsMutation();
   const [selectedSystems, setSelectedSystems] = useState<System[]>(systems);
   const [selectedColumns, setSelectedColumns] =
     useState<ColumnMetadata[]>(ALL_COLUMNS);
-  const method = useAppSelector(selectAddSystemsMethod);
   const { handleError } = useAPIHelper();
 
   /**
@@ -77,21 +65,25 @@ const ScanResults = () => {
       return handleError(response.error);
     }
 
-    /*
-     * Eventually, all scanners will go through some sort of classify flow.
-     * But for now, only the data flow scanner does
-     */
-    if (method === SystemMethods.DATA_FLOW) {
-      dispatch(setSystemsToClassify(selectedSystems));
-      return navigateAndReset("/classify-systems");
-    }
-
     return navigateAndReset(systemOrDatamapRoute);
   };
 
   const handleSubmit = () => {
     if (systems.length > selectedSystems.length) {
-      onWarningOpen();
+      modal.confirm({
+        title: "Warning",
+        content: (
+          <Text color="gray.500" mb={3}>
+            You&apos;re registering {selectedSystems.length} of {systems.length}{" "}
+            systems available. Do you want to continue with registration or
+            cancel and register all systems now?
+          </Text>
+        ),
+        okText: "Continue",
+        cancelText: "Cancel",
+        centered: true,
+        onOk: confirmRegisterSelectedSystems,
+      });
     } else {
       confirmRegisterSelectedSystems();
     }
@@ -101,20 +93,24 @@ const ScanResults = () => {
     dispatch(changeStep(2));
   };
 
-  const warningMessage = (
-    <Text color="gray.500" mb={3}>
-      You’re registering {selectedSystems.length} of {systems.length} systems
-      available. Do you want to continue with registration or cancel and
-      register all systems now?
-    </Text>
-  );
-
   return (
     <Box maxW="full">
-      <Stack spacing={10}>
-        <Heading as="h3" size="lg" data-testid="scan-results">
-          Scan results
-        </Heading>
+      <Stack spacing={10} data-testid="scan-results">
+        <NextBreadcrumb
+          className="mb-4"
+          items={[
+            {
+              title: "Add systems",
+              href: "",
+              onClick: (e) => {
+                e.preventDefault();
+                handleCancel();
+              },
+            },
+            { title: "Authenticate" },
+            { title: "Scan results" },
+          ]}
+        />
 
         {systems.length === 0 ? (
           <>
@@ -122,11 +118,7 @@ const ScanResults = () => {
               No results were found for your infrastructure scan.
             </Text>
             <HStack>
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                data-testid="back-btn"
-              >
+              <Button onClick={handleCancel} data-testid="back-btn">
                 Back
               </Button>
             </HStack>
@@ -155,14 +147,12 @@ const ScanResults = () => {
             />
 
             <HStack>
-              <Button variant="outline" onClick={handleCancel}>
-                Back
-              </Button>
+              <Button onClick={handleCancel}>Back</Button>
               <Button
-                variant="primary"
-                isDisabled={selectedSystems.length === 0}
-                data-testid="register-btn"
                 onClick={handleSubmit}
+                type="primary"
+                disabled={selectedSystems.length === 0}
+                data-testid="register-btn"
               >
                 Register selected systems
               </Button>
@@ -170,14 +160,6 @@ const ScanResults = () => {
           </>
         )}
       </Stack>
-
-      <WarningModal
-        title="Warning"
-        message={warningMessage}
-        handleConfirm={confirmRegisterSelectedSystems}
-        isOpen={isWarningOpen}
-        onClose={onWarningClose}
-      />
     </Box>
   );
 };

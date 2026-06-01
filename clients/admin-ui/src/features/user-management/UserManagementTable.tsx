@@ -1,53 +1,19 @@
-import { Button, Flex, Table, Tbody, Text, Th, Thead, Tr } from "fidesui";
+import { Button, Flex, Table } from "fidesui";
 import React, { useEffect } from "react";
-import { useDispatch, useSelector } from "react-redux";
 
 import { useAppDispatch } from "~/app/hooks";
+import { DebouncedSearchInput } from "~/features/common/DebouncedSearchInput";
+import { RouterLink } from "~/features/common/nav/RouterLink";
+import { USER_MANAGEMENT_ROUTE } from "~/features/common/nav/routes";
+import Restrict from "~/features/common/Restrict";
+import { ScopeRegistryEnum } from "~/types/api";
 
-import { User } from "./types";
-import {
-  selectUserFilters,
-  setActiveUserId,
-  setPage,
-  useGetAllUsersQuery,
-} from "./user-management.slice";
-import UserManagementRow from "./UserManagementRow";
+import { setActiveUserId } from "./user-management.slice";
+import useUserManagementTable from "./useUserManagementTable";
 
-interface UsersTableProps {
-  users?: User[];
-}
-
-const useUsersTable = () => {
-  const dispatch = useDispatch();
-  const filters = useSelector(selectUserFilters);
-
-  const handlePreviousPage = () => {
-    dispatch(setPage(filters.page - 1));
-  };
-
-  const handleNextPage = () => {
-    dispatch(setPage(filters.page + 1));
-  };
-
-  const { data, isLoading } = useGetAllUsersQuery(filters);
-  const { items: users, total } = data || { users: [], total: 0 };
-
-  return {
-    ...filters,
-    isLoading,
-    users,
-    total,
-    handleNextPage,
-    handlePreviousPage,
-  };
-};
-
-const UserManagementTable: React.FC<UsersTableProps> = () => {
-  const { users, total, page, size, handleNextPage, handlePreviousPage } =
-    useUsersTable();
-  const startingItem = (page - 1) * size + 1;
-  const endingItem = Math.min(total, page * size);
-
+const UserManagementTable = () => {
+  const { tableProps, columns, searchQuery, updateSearch } =
+    useUserManagementTable();
   const dispatch = useAppDispatch();
 
   useEffect(() => {
@@ -56,59 +22,33 @@ const UserManagementTable: React.FC<UsersTableProps> = () => {
 
   return (
     <>
-      <Table size="sm" data-testid="user-management-table">
-        <Thead>
-          <Tr>
-            <Th pl={0}>Username</Th>
-            <Th pl={0}>First Name</Th>
-            <Th pl={0}>Last Name</Th>
-            <Th pl={0}>Permissions</Th>
-            <Th pl={0}>Assigned Systems</Th>
-            <Th pl={0}>Created At</Th>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {users?.map((user: any) => (
-            <UserManagementRow user={user} key={user.id} />
-          ))}
-        </Tbody>
-      </Table>
-      <Flex justifyContent="space-between" mt={6}>
-        <Text fontSize="xs" color="gray.600">
-          {total > 0 ? (
-            <>
-              Showing {Number.isNaN(startingItem) ? 0 : startingItem} to{" "}
-              {Number.isNaN(endingItem) ? 0 : endingItem} of{" "}
-              {Number.isNaN(total) ? 0 : total} results
-            </>
-          ) : (
-            "0 results"
-          )}
-        </Text>
-        <div>
-          <Button
-            disabled={page <= 1}
-            onClick={handlePreviousPage}
-            mr={2}
-            size="sm"
-          >
-            Previous
-          </Button>
-          <Button
-            disabled={page * size >= total}
-            onClick={handleNextPage}
-            size="sm"
-          >
-            Next
-          </Button>
-        </div>
+      <Flex justify="space-between" className="mb-4">
+        <DebouncedSearchInput
+          value={searchQuery}
+          onChange={updateSearch}
+          placeholder="Search by username"
+          data-testid="user-search"
+        />
+        <Restrict scopes={[ScopeRegistryEnum.USER_CREATE]}>
+          <RouterLink href={`${USER_MANAGEMENT_ROUTE}/new`}>
+            <Button type="primary" data-testid="add-new-user-btn">
+              Add new user
+            </Button>
+          </RouterLink>
+        </Restrict>
       </Flex>
+      <Table
+        {...tableProps}
+        columns={columns}
+        data-testid="user-management-table"
+        onRow={(user) =>
+          ({
+            "data-testid": `row-${user.id}`,
+          }) as React.HTMLAttributes<HTMLTableRowElement>
+        }
+      />
     </>
   );
-};
-
-UserManagementTable.defaultProps = {
-  users: [],
 };
 
 export default UserManagementTable;

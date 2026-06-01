@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Dict, List, Optional
 
-from fides.common.api.scope_registry import (
+from fides.common.scope_registry import (
     CLI_OBJECTS_READ,
     CLIENT_READ,
     CONNECTION_READ,
@@ -16,6 +16,7 @@ from fides.common.api.scope_registry import (
     DATA_USE_READ,
     DATASET_READ,
     EVALUATION_READ,
+    HEAP_DUMP_EXEC,
     MASKING_EXEC,
     MASKING_READ,
     MESSAGING_CREATE_OR_UPDATE,
@@ -26,6 +27,12 @@ from fides.common.api.scope_registry import (
     PRIVACY_EXPERIENCE_READ,
     PRIVACY_NOTICE_READ,
     PRIVACY_REQUEST_CALLBACK_RESUME,
+    PRIVACY_REQUEST_CREATE,
+    PRIVACY_REQUEST_DELETE,
+    PRIVACY_REQUEST_EMAIL_INTEGRATIONS_SEND,
+    PRIVACY_REQUEST_IMPORT,
+    PRIVACY_REQUEST_MANUAL_STEPS_RESPOND,
+    PRIVACY_REQUEST_MANUAL_STEPS_REVIEW,
     PRIVACY_REQUEST_NOTIFICATIONS_CREATE_OR_UPDATE,
     PRIVACY_REQUEST_NOTIFICATIONS_READ,
     PRIVACY_REQUEST_READ,
@@ -39,18 +46,25 @@ from fides.common.api.scope_registry import (
     STORAGE_CREATE_OR_UPDATE,
     STORAGE_DELETE,
     STORAGE_READ,
+    SYSTEM_INTEGRATION_LINK_CREATE_OR_UPDATE,
+    SYSTEM_INTEGRATION_LINK_DELETE,
+    SYSTEM_INTEGRATION_LINK_READ,
     SYSTEM_MANAGER_READ,
     SYSTEM_READ,
     USER_PERMISSION_ASSIGN_OWNERS,
     USER_READ,
+    USER_READ_OWN,
     WEBHOOK_READ,
 )
 
 APPROVER = "approver"
 CONTRIBUTOR = "contributor"
+DATA_STEWARD = "data_steward"
 OWNER = "owner"
 VIEWER = "viewer"
 VIEWER_AND_APPROVER = "viewer_and_approver"
+RESPONDENT = "respondent"
+EXTERNAL_RESPONDENT = "external_respondent"
 
 
 class RoleRegistryEnum(Enum):
@@ -61,6 +75,9 @@ class RoleRegistryEnum(Enum):
     Approver - Limited viewer but can approve Privacy Requests
     Viewer + Approver = Full View and can approve Privacy Requests
     Contributor - Can't configure storage and messaging
+    Data Steward - Viewer + can manage system-integration links
+    Respondent - Internal user who can respond to manual steps
+    External Respondent - External user who can only respond to assigned manual steps
     """
 
     owner = OWNER
@@ -68,6 +85,9 @@ class RoleRegistryEnum(Enum):
     viewer = VIEWER
     approver = APPROVER
     contributor = CONTRIBUTOR
+    data_steward = DATA_STEWARD
+    respondent = RESPONDENT
+    external_respondent = EXTERNAL_RESPONDENT
 
 
 approver_scopes = [
@@ -76,10 +96,14 @@ approver_scopes = [
     PRIVACY_REQUEST_CALLBACK_RESUME,
     PRIVACY_REQUEST_UPLOAD_DATA,
     PRIVACY_REQUEST_VIEW_DATA,
+    PRIVACY_REQUEST_DELETE,
+    PRIVACY_REQUEST_CREATE,  # allows approvers to create new privacy requests
+    USER_READ,  # allows approver to view user management table and update their own password
+    PRIVACY_REQUEST_MANUAL_STEPS_REVIEW,  # allows approvers to see all manual steps
 ]
 
 
-viewer_scopes = [  # Intentionally omitted USER_PERMISSION_READ
+viewer_scopes = [  # Intentionally omitted USER_PERMISSION_READ and PRIVACY_REQUEST_READ
     CLI_OBJECTS_READ,
     CLIENT_READ,
     CONNECTION_READ,
@@ -99,17 +123,31 @@ viewer_scopes = [  # Intentionally omitted USER_PERMISSION_READ
     POLICY_READ,
     PRIVACY_EXPERIENCE_READ,
     PRIVACY_NOTICE_READ,
-    PRIVACY_REQUEST_READ,
     PRIVACY_REQUEST_NOTIFICATIONS_READ,
     RULE_READ,
     SCOPE_READ,
     STORAGE_READ,
+    SYSTEM_INTEGRATION_LINK_READ,
     SYSTEM_READ,
     MESSAGING_READ,
     WEBHOOK_READ,
     SYSTEM_MANAGER_READ,
     SAAS_CONFIG_READ,
     USER_READ,
+]
+
+respondent_scopes = [
+    PRIVACY_REQUEST_MANUAL_STEPS_RESPOND,  # allows respondents to respond to assigned manual steps
+    USER_READ_OWN,
+]
+
+external_respondent_scopes = [
+    PRIVACY_REQUEST_MANUAL_STEPS_RESPOND,  # allows external respondents to respond to assigned manual steps
+]
+
+data_steward_scopes = viewer_scopes + [
+    SYSTEM_INTEGRATION_LINK_CREATE_OR_UPDATE,
+    SYSTEM_INTEGRATION_LINK_DELETE,
 ]
 
 not_contributor_scopes = [
@@ -119,7 +157,10 @@ not_contributor_scopes = [
     MESSAGING_CREATE_OR_UPDATE,
     MESSAGING_DELETE,
     PRIVACY_REQUEST_NOTIFICATIONS_CREATE_OR_UPDATE,
+    PRIVACY_REQUEST_EMAIL_INTEGRATIONS_SEND,
+    PRIVACY_REQUEST_IMPORT,
     USER_PERMISSION_ASSIGN_OWNERS,
+    HEAP_DUMP_EXEC,
 ]
 
 ROLES_TO_SCOPES_MAPPING: Dict[str, List] = {
@@ -128,6 +169,9 @@ ROLES_TO_SCOPES_MAPPING: Dict[str, List] = {
     VIEWER: sorted(viewer_scopes),
     APPROVER: sorted(approver_scopes),
     CONTRIBUTOR: sorted(list(set(SCOPE_REGISTRY) - set(not_contributor_scopes))),
+    DATA_STEWARD: sorted(list(set(data_steward_scopes))),
+    RESPONDENT: sorted(respondent_scopes),
+    EXTERNAL_RESPONDENT: sorted(external_respondent_scopes),
 }
 
 

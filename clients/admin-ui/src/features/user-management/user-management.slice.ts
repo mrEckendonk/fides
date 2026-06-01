@@ -4,7 +4,10 @@ import { utf8ToB64 } from "common/utils";
 import type { RootState } from "~/app/store";
 import { selectUser } from "~/features/auth";
 import { baseApi } from "~/features/common/api.slice";
+import { selectRbacEnabled } from "~/features/plus/plus.slice";
+import { rbacApi } from "~/features/rbac/rbac.slice";
 import {
+  EditableMonitorConfig,
   RoleRegistryEnum,
   ScopeRegistryEnum,
   System,
@@ -13,7 +16,7 @@ import {
 
 import {
   User,
-  UserCreate,
+  UserCreateExtended,
   UserCreateResponse,
   UserPasswordResetParams,
   UserPermissions,
@@ -61,7 +64,7 @@ export const userManagementSlice = createSlice({
     }),
     setActiveUserId: (
       state,
-      action: PayloadAction<User["id"] | undefined>
+      action: PayloadAction<User["id"] | undefined>,
     ) => ({
       ...state,
       activeUserId: action.payload,
@@ -74,23 +77,15 @@ export const { setPage, setUsernameSearch, setActiveUserId } =
 
 export const { reducer } = userManagementSlice;
 
-// Helpers
-export const mapFiltersToSearchParams = ({
-  page,
-  size,
-  username,
-}: Partial<UsersListParams>) => ({
-  ...(page ? { page: `${page}` } : {}),
-  ...(typeof size !== "undefined" ? { size: `${size}` } : {}),
-  ...(username ? { username } : {}),
-});
-
 const userApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
     getAllUsers: build.query<UsersResponse, UsersListParams>({
-      query: (filters) => ({
+      query: (params) => ({
         url: `user`,
-        params: mapFiltersToSearchParams(filters),
+        params: {
+          ...params,
+          username: params.username ?? undefined,
+        },
       }),
       providesTags: () => ["User"],
     }),
@@ -102,7 +97,7 @@ const userApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `user/${id}/permission` }),
       providesTags: ["User"],
     }),
-    createUser: build.mutation<UserCreateResponse, UserCreate>({
+    createUser: build.mutation<UserCreateResponse, UserCreateExtended>({
       query: (user) => ({
         url: "user",
         method: "POST",
@@ -171,12 +166,25 @@ const userApi = baseApi.injectEndpoints({
       // Invalidates all queries that subscribe to this User `id` only
       invalidatesTags: ["User"],
     }),
+    reinviteUser: build.mutation<void, string>({
+      query: (id) => ({
+        url: `user/${id}/reinvite`,
+        method: "POST",
+      }),
+      invalidatesTags: ["User"],
+    }),
 
     // Data steward endpoints
     getUserManagedSystems: build.query<System[], string>({
       query: (id) => ({ url: `user/${id}/system-manager` }),
-      providesTags: (result, error, arg) => [
+      providesTags: (_result, _error, arg) => [
         { type: "Managed Systems" as const, id: arg },
+      ],
+    }),
+    getUserMonitors: build.query<EditableMonitorConfig[], { id: string }>({
+      query: ({ id }) => ({ url: `user/${id}/monitor` }),
+      providesTags: (_result, _error, { id }) => [
+        { type: "User Monitors" as const, id },
       ],
     }),
     updateUserManagedSystems: build.mutation<
@@ -202,6 +210,7 @@ const userApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: (result, error, arg) => [
         { type: "Managed Systems" as const, id: arg.userId },
+        "System", // Invalidate system cache to refresh data stewards
       ],
     }),
   }),
@@ -217,7 +226,7 @@ const selectUserManagement = (state: RootState) => state.userManagement;
 
 export const selectActiveUserId = createSelector(
   selectUserManagement,
-  (state) => state.activeUserId
+  (state) => state.activeUserId,
 );
 
 export const selectActiveUser = createSelector(
@@ -227,21 +236,55 @@ export const selectActiveUser = createSelector(
       return undefined;
     }
     return userApi.endpoints.getUserById.select(userId)(RootState).data;
-  }
+  },
 );
 
 const emptyScopes: ScopeRegistryEnum[] = [];
-export const selectThisUsersScopes: (state: RootState) => ScopeRegistryEnum[] =
-  createSelector([(RootState) => RootState, selectUser], (RootState, user) => {
-    if (!user) {
-      return emptyScopes;
-    }
-    const permissions = userApi.endpoints.getUserPermissions.select(user.id)(
-      RootState
-    ).data;
 
-    return permissions ? permissions.total_scopes : emptyScopes;
-  });
+/**
+ * Selects the current user's scopes/permissions.
+ *
+ * When RBAC management is enabled, this selector prefers permissions from the
+ * RBAC system (via /rbac/me/permissions endpoint). This ensures users get the
+ * correct permissions based on their RBAC role assignments.
+ *
+ * Falls back to legacy permissions (from /user/{id}/permission endpoint) when:
+ * - RBAC is disabled
+ * - RBAC permissions haven't loaded yet
+ */
+export const selectThisUsersScopes: (state: RootState) => ScopeRegistryEnum[] =
+  createSelector(
+    [(RootState) => RootState, selectUser, selectRbacEnabled],
+    (RootState, user, rbacEnabled) => {
+      // When RBAC is enabled, prefer RBAC-derived permissions
+      if (rbacEnabled) {
+        const rbacPermissions =
+          rbacApi.endpoints.getMyRBACPermissions.select(undefined)(
+            RootState,
+          )?.data;
+
+        if (rbacPermissions && rbacPermissions.length > 0) {
+          return rbacPermissions as ScopeRegistryEnum[];
+        }
+        // NOTE: We intentionally fall back to legacy permissions when rbacPermissions
+        // is empty ([]). This handles the root OAuth client (fidesadmin) which is not
+        // a FidesUser and has no RBAC role assignments. The backend enforces root client
+        // access via special case handling in the permission checker, and the frontend
+        // uses legacy permissions to determine UI visibility. This fallback is also
+        // needed during gradual RBAC rollout for users without RBAC roles assigned yet.
+      }
+
+      // Fall back to legacy permissions
+      if (!user) {
+        return emptyScopes;
+      }
+      const permissions = userApi.endpoints.getUserPermissions.select(user.id)(
+        RootState,
+      ).data;
+
+      return permissions ? permissions.total_scopes : emptyScopes;
+    },
+  );
 
 const emptyRoles: RoleRegistryEnum[] = [];
 /**
@@ -257,11 +300,11 @@ export const selectThisUsersRoles = createSelector(
       return emptyRoles;
     }
     const permissions = userApi.endpoints.getUserPermissions.select(user.id)(
-      RootState
+      RootState,
     ).data;
 
     return permissions?.roles ?? emptyRoles;
-  }
+  },
 );
 
 const emptyManagedSystems: System[] = [];
@@ -273,10 +316,10 @@ export const selectActiveUsersManagedSystems = createSelector(
     }
     const systems =
       userApi.endpoints.getUserManagedSystems.select(activeUserId)(
-        RootState
+        RootState,
       ).data;
     return systems ?? emptyManagedSystems;
-  }
+  },
 );
 
 export const {
@@ -285,12 +328,14 @@ export const {
   useCreateUserMutation,
   useEditUserMutation,
   useDeleteUserMutation,
+  useReinviteUserMutation,
   useUpdateUserPasswordMutation,
   useUpdateUserPermissionsMutation,
   useGetUserPermissionsQuery,
   useForceResetUserPasswordMutation,
 
   useGetUserManagedSystemsQuery,
+  useGetUserMonitorsQuery,
   useUpdateUserManagedSystemsMutation,
   useRemoveUserManagedSystemMutation,
 } = userApi;

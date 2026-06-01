@@ -1,0 +1,35 @@
+.cardWrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  :global(.ant-card-body) {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+}
+
+.cardComplete {
+  border-left: 4px solid var(--fidesui-color-success);
+}
+
+.completeContainer {
+  border-radius: var(--fidesui-border-radius-lg);
+  padding: var(--fidesui-padding-sm);
+  background-color: color-mix(
+    in srgb,
+    var(--fidesui-color-success) 10%,
+    transparent
+  );
+}
+
+.titleLink {
+  --fidesui-color-link: var(--fidesui-color-text);
+  --fidesui-color-link-hover: var(--fidesui-color-text-secondary);
+  --fidesui-color-link-active: var(--fidesui-color-text);
+}
+
+.textWithTags {
+  line-height: 2em;
+}

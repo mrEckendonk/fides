@@ -1,0 +1,51 @@
+[database]
+server="fides-db"
+user="postgres"
+password="fides"
+port="5432"
+db="fides"
+test_db="fides_test"
+
+[api]
+database_user = "postgres_deprecated"
+database_password = "fidesctl_deprecated"
+database_host = "localhost_deprecated"
+database_port = "5432_deprecated"
+database_name = "fidesctl_deprecated"
+test_database_name = "fidesctl_test_deprecated"
+
+[logging]
+level = "INFO"
+
+[cli]
+server_host = "fides"
+server_port = 8080
+
+[user]
+analytics_opt_out = true
+encryption_key = "test_encryption_key"
+
+
+[credentials]
+postgres_1 = {connection_string="postgresql+psycopg2://postgres:fides@fides-db:5432/fides_test"}
+okta_1 = {orgUrl="https://dev-78908748.okta.com", clientId="redacted_override_in_tests", privateKey='{"kty":"RSA","d":"redacted","n":"redacted","e":"AQAB"}'}
+aws_1 = {aws_access_key_id="redacted_id_override_in_tests", aws_secret_access_key="redacted_override_in_tests", region_name="us-east-1"}
+[credentials.bigquery_1]
+type = "service_account"
+project_id = "redacted_id_override_in_tests"
+private_key_id = "redacted_id_override_in_tests"
+private_key = "redacted_id_override_in_tests"
+client_email = "redacted_id_override_in_tests"
+client_id = "redacted_id_override_in_tests"
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "redacted_url_override_in_tests"
+
+[security]
+app_encryption_key = "OLMkv91j8DHiDAULnK5Lxx3kSCov30b3"
+root_username = "root_user"
+root_password = "Testpassword1!"
+oauth_root_client_id = "fidesadmin"
+oauth_root_client_secret = "fidesadminsecret"
+drp_jwt_secret = "secret"

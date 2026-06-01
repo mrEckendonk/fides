@@ -1,41 +1,52 @@
-import { h } from "preact";
-
-import { GpcStatus } from "../../lib/consent-types";
-import { DEFAULT_LOCALE, getCurrentLocale, I18n } from "../../lib/i18n";
-
-import Divider from "../Divider";
-
-import { GpcBadge } from "../GpcBadge";
+import { Cookies, GpcStatus } from "../../lib/consent-types";
+import { FidesEventDetailsPreference } from "../../lib/events";
+import { DEFAULT_LOCALE, getCurrentLocale } from "../../lib/i18n";
+import { useI18n } from "../../lib/i18n/i18n-context";
 import DataUseToggle from "../DataUseToggle";
+import Divider from "../Divider";
+import { GpcBadge } from "../GpcBadge";
 
 export interface NoticeToggleProps {
   noticeKey: string;
-  title?: string;
+  title: string;
   description?: string;
   checked: boolean;
-  disabled: boolean;
+  disabled?: boolean;
   gpcStatus: GpcStatus;
+  cookies?: Cookies[];
 }
 
 export const NoticeToggles = ({
   noticeToggles,
-  i18n,
   enabledNoticeKeys,
   onChange,
+  renderDescription,
 }: {
   noticeToggles: NoticeToggleProps[];
-  i18n: I18n;
   enabledNoticeKeys: Array<string>;
-  onChange: (keys: Array<string>) => void;
+  onChange: (
+    keys: Array<string>,
+    preferenceDetails: FidesEventDetailsPreference,
+  ) => void;
+  renderDescription?: (props: NoticeToggleProps) => preact.ComponentChildren;
 }) => {
+  const { i18n } = useI18n();
   const handleToggle = (noticeKey: string) => {
+    const preferenceDetails: FidesEventDetailsPreference = {
+      key: noticeKey,
+      type: "notice",
+    };
+
     // Add the notice to list of enabled notices
     if (enabledNoticeKeys.indexOf(noticeKey) === -1) {
-      onChange([...enabledNoticeKeys, noticeKey]);
+      onChange([...enabledNoticeKeys, noticeKey], preferenceDetails);
     }
     // Remove the notice from the list of enabled notices
     else {
-      onChange(enabledNoticeKeys.filter((n) => n !== noticeKey));
+      onChange(
+        enabledNoticeKeys.filter((n) => n !== noticeKey),
+        preferenceDetails,
+      );
     }
   };
 
@@ -54,18 +65,20 @@ export const NoticeToggles = ({
           props;
         const isLast = idx === noticeToggles.length - 1;
         return (
-          <div>
+          <div key={noticeKey}>
             <DataUseToggle
               noticeKey={noticeKey}
               title={title}
               checked={checked}
               onToggle={handleToggle}
-              gpcBadge={<GpcBadge i18n={i18n} status={gpcStatus} />}
+              gpcBadge={
+                <GpcBadge status={gpcStatus} data-testid={`gpc-${noticeKey}`} />
+              }
               disabled={disabled}
               onLabel={toggleOnLabel}
               offLabel={toggleOffLabel}
             >
-              {description}
+              {renderDescription ? renderDescription(props) : description}
             </DataUseToggle>
             {!isLast ? <Divider /> : null}
           </div>

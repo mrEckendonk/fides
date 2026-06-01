@@ -1,54 +1,81 @@
-import { Badge } from "fidesui";
-import { ComponentProps } from "react";
+import { CUSTOM_TAG_COLOR, Tag, TagProps } from "fidesui";
 
 import { PrivacyRequestStatus } from "~/types/api";
 
-export const statusPropMap: {
-  [key in PrivacyRequestStatus]: ComponentProps<typeof Badge>;
-} = {
+export const statusPropMap: Record<
+  PrivacyRequestStatus,
+  Omit<TagProps, "color"> & {
+    color: CUSTOM_TAG_COLOR;
+    label?: string;
+  }
+> = {
   approved: {
-    bg: "yellow.500",
+    color: CUSTOM_TAG_COLOR.SUCCESS,
     label: "Approved",
   },
   complete: {
-    bg: "green.500",
+    color: CUSTOM_TAG_COLOR.SUCCESS,
     label: "Completed",
   },
   awaiting_email_send: {
-    bg: "gray.400",
+    color: CUSTOM_TAG_COLOR.MARBLE,
     label: "Awaiting Email Send",
   },
   denied: {
-    bg: "red.500",
+    color: CUSTOM_TAG_COLOR.WARNING,
     label: "Denied",
   },
   canceled: {
-    bg: "red.600",
+    color: CUSTOM_TAG_COLOR.MARBLE,
     label: "Canceled",
   },
   error: {
-    bg: "red.800",
+    color: CUSTOM_TAG_COLOR.ERROR,
     label: "Error",
   },
   in_processing: {
-    bg: "orange.500",
+    color: CUSTOM_TAG_COLOR.CAUTION,
     label: "In Progress",
   },
   paused: {
-    bg: "gray.400",
+    color: CUSTOM_TAG_COLOR.MARBLE,
     label: "Paused",
   },
   pending: {
-    bg: "blue.400",
+    color: CUSTOM_TAG_COLOR.INFO,
     label: "New",
   },
   identity_unverified: {
-    bg: "red.400",
+    color: CUSTOM_TAG_COLOR.MARBLE,
     label: "Unverified",
   },
   requires_input: {
-    bg: "yellow.400",
+    color: CUSTOM_TAG_COLOR.MINOS,
     label: "Requires Input",
+  },
+  requires_manual_finalization: {
+    color: CUSTOM_TAG_COLOR.MINOS,
+    label: "Requires Finalization",
+  },
+  duplicate: {
+    color: CUSTOM_TAG_COLOR.DEFAULT,
+    label: "Duplicate",
+  },
+  awaiting_pre_approval: {
+    color: CUSTOM_TAG_COLOR.CAUTION,
+    label: "Awaiting External Review",
+  },
+  pending_external: {
+    color: CUSTOM_TAG_COLOR.MARBLE,
+    label: "Pending External",
+  },
+  pre_approval_not_eligible: {
+    color: CUSTOM_TAG_COLOR.WARNING,
+    label: "Manual Review Required",
+  },
+  awaiting_access_review: {
+    color: CUSTOM_TAG_COLOR.CAUTION,
+    label: "Awaiting Access Review",
   },
 };
 
@@ -56,18 +83,14 @@ interface RequestBadgeProps {
   status: keyof typeof statusPropMap;
 }
 
-const RequestStatusBadge: React.FC<RequestBadgeProps> = ({ status }) => (
-  <Badge
-    color="white"
-    bg={statusPropMap[status].bg}
-    width="100%"
-    minWidth="120px"
-    lineHeight="18px"
-    textAlign="center"
+const RequestStatusBadge = ({ status }: RequestBadgeProps) => (
+  <Tag
+    color={statusPropMap[status].color}
+    className="justify-center"
     data-testid="request-status-badge"
   >
     {statusPropMap[status].label}
-  </Badge>
+  </Tag>
 );
 
 export default RequestStatusBadge;

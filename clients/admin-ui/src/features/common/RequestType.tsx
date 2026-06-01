@@ -1,4 +1,4 @@
-import { Box, Tag } from "fidesui";
+import { Typography } from "fidesui";
 import { Rule } from "privacy-requests/types";
 import React from "react";
 
@@ -18,26 +18,16 @@ export const getActionTypes = (rules: Rule[]): ActionType[] =>
     new Set(
       rules
         .filter((d) => Object.values(ActionType).includes(d.action_type))
-        .map((d) => d.action_type)
-    )
+        .map((d) => d.action_type),
+    ),
   );
 
 const RequestType = ({ rules }: RequestTypeProps) => {
-  const tags = getActionTypes(rules)
+  const actionTypeLabels = getActionTypes(rules)
     .map((action) => capitalize(action))
-    .map((action_type) => (
-      <Tag
-        key={action_type}
-        color="white"
-        bg="primary.400"
-        fontWeight="medium"
-        fontSize="sm"
-      >
-        {action_type}
-      </Tag>
-    ));
+    .map((action_type) => action_type);
 
-  return <Box>{tags}</Box>;
+  return <Typography.Text>{actionTypeLabels.join(" - ")}</Typography.Text>;
 };
 
 export default RequestType;

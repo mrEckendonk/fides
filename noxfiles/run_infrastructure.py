@@ -3,7 +3,7 @@ This file invokes a command used to setup infrastructure for use in testing Fide
 and related workflows.
 """
 
-# pylint: disable=inconsistent-return-statements
+# ruff: noqa: RET503
 import argparse
 import subprocess
 import sys
@@ -26,6 +26,8 @@ EXTERNAL_DATASTORE_CONFIG = {
         "SNOWFLAKE_TEST_ACCOUNT_IDENTIFIER",
         "SNOWFLAKE_TEST_USER_LOGIN_NAME",
         "SNOWFLAKE_TEST_PASSWORD",
+        "SNOWFLAKE_TEST_PRIVATE_KEY",
+        "SNOWFLAKE_TEST_PRIVATE_KEY_PASSPHRASE",
         "SNOWFLAKE_TEST_WAREHOUSE_NAME",
         "SNOWFLAKE_TEST_DATABASE_NAME",
         "SNOWFLAKE_TEST_SCHEMA_NAME",
@@ -50,10 +52,40 @@ EXTERNAL_DATASTORE_CONFIG = {
         "GOOGLE_CLOUD_SQL_MYSQL_DATABASE_NAME",
         "GOOGLE_CLOUD_SQL_MYSQL_KEYFILE_CREDS",
     ],
+    "google_cloud_sql_postgres": [
+        "GOOGLE_CLOUD_SQL_POSTGRES_DB_IAM_USER",
+        "GOOGLE_CLOUD_SQL_POSTGRES_INSTANCE_CONNECTION_NAME",
+        "GOOGLE_CLOUD_SQL_POSTGRES_DATABASE_NAME",
+        "GOOGLE_CLOUD_SQL_POSTGRES_DATABASE_SCHEMA_NAME",
+        "GOOGLE_CLOUD_SQL_POSTGRES_KEYFILE_CREDS",
+    ],
+    "rds_mysql": [
+        "RDS_MYSQL_AWS_ACCESS_KEY_ID",
+        "RDS_MYSQL_AWS_SECRET_ACCESS_KEY",
+        "RDS_MYSQL_DB_USERNAME",
+        "RDS_MYSQL_DB_INSTANCE",
+        "RDS_MYSQL_DB_NAME",
+        "RDS_MYSQL_REGION",
+    ],
+    "rds_postgres": [
+        "RDS_POSTGRES_AWS_ACCESS_KEY_ID",
+        "RDS_POSTGRES_AWS_SECRET_ACCESS_KEY",
+        "RDS_POSTGRES_DB_USERNAME",
+        "RDS_POSTGRES_REGION",
+    ],
+    "okta": [
+        "OKTA_ORG_URL",
+        "OKTA_CLIENT_ID",
+        "OKTA_PRIVATE_KEY",
+    ],
 }
 EXTERNAL_DATASTORES = list(EXTERNAL_DATASTORE_CONFIG.keys())
 ALL_DATASTORES = DOCKERFILE_DATASTORES + EXTERNAL_DATASTORES
-OPS_TEST_DIR = "tests/ops/"
+OPS_TEST_DIR = "tests/fides/ops/"
+OPS_API_TEST_DIRS = [
+    f"{OPS_TEST_DIR}api/",
+]
+API_TEST_DIR = "tests/fides/api/"
 
 
 def run_infrastructure(
@@ -66,6 +98,7 @@ def run_infrastructure(
     run_create_test_data: bool = False,  # Should we run the create_test_data command?
     analytics_opt_out: bool = False,  # Should we opt out of analytics?
     remote_debug: bool = False,  # Should remote debugging be enabled?
+    split_args: str = "",  # pytest-split args for CI sharding
 ) -> None:
     """
     - Create a Docker Compose file path for all datastores specified in `datastores`.
@@ -110,7 +143,7 @@ def run_infrastructure(
         return _open_shell(path, COMPOSE_SERVICE_NAME)
 
     if run_application:
-        return _run_application(path)
+        return _run_application(path, COMPOSE_SERVICE_NAME)
 
     if run_quickstart:
         return _run_quickstart(path, COMPOSE_SERVICE_NAME)
@@ -122,6 +155,7 @@ def run_infrastructure(
             docker_compose_path=path,
             pytest_path=pytest_path,
             analytics_opt_out=analytics_opt_out,
+            split_args=split_args,
         )
 
     if run_create_test_data:
@@ -209,18 +243,31 @@ def _open_shell(
     service_name: str,
 ) -> None:
     """
-    Opens a bash shell on the container at `service_name`
+    Opens a bash shell on the container at `service_name` with venv activated.
+
+    Runs uv sync first to ensure dependencies are up-to-date.
     """
-    _run_cmd_or_err(f'echo "Opening bash shell on {service_name}"')
-    _run_cmd_or_err(f"docker compose {path} run {service_name} /bin/bash")
+    _run_cmd_or_err(f'echo "Running uv sync on {service_name}"')
+    _run_cmd_or_err(f"docker compose {path} exec {service_name} uv sync || true")
+
+    _run_cmd_or_err(f'echo "Opening bash shell on {service_name} with venv activated"')
+
+    # Try to open shell with venv activated using source and exec to avoid nested shells
+    # Try multiple venv paths in order of preference
+    activate_cmd = (
+        f"docker compose {path} exec {service_name} bash -c 'source /opt/fides/bin/activate && exec bash' || "
+        f"docker compose {path} exec {service_name} bash -c 'source /fides/.venv/bin/activate && exec bash' || "
+        f"docker compose {path} run {service_name} /bin/bash"
+    )
+    _run_cmd_or_err(activate_cmd)
 
 
-def _run_application(docker_compose_path: str) -> None:
+def _run_application(docker_compose_path: str, service_name: str) -> None:
     """
     Runs the application at `docker_compose_path` without detaching it from the shell
     """
     _run_cmd_or_err('echo "Running application"')
-    _run_cmd_or_err(f"docker compose {docker_compose_path} up")
+    _run_cmd_or_err(f"docker compose {docker_compose_path} up {service_name}")
 
 
 def _run_tests(
@@ -228,6 +275,7 @@ def _run_tests(
     docker_compose_path: str,
     pytest_path: str = "",
     analytics_opt_out: bool = False,
+    split_args: str = "",
 ) -> None:
     """
     Runs unit tests against the specified datastores
@@ -266,7 +314,7 @@ def _run_tests(
     )
     coverage_arg = "--cov-report=xml"
     _run_cmd_or_err(
-        f"docker compose {docker_compose_path} run {environment_variables} {COMPOSE_SERVICE_NAME} pytest {coverage_arg} {pytest_path}"
+        f"docker compose {docker_compose_path} run {environment_variables} {COMPOSE_SERVICE_NAME} uv run --python /opt/fides/bin/python pytest {coverage_arg} {split_args} {pytest_path}"
     )
 
     # Now tear down the infrastructure

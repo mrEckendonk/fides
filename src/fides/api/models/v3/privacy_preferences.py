@@ -1,0 +1,123 @@
+"""SQLAlchemy model for the v3 privacy_preferences table."""
+
+from sqlalchemy import (  # type: ignore[attr-defined]
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Identity,
+    Text,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.declarative import declared_attr
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
+
+from fides.api.cryptography.cryptographic_util import hash_value_with_salt
+from fides.api.cryptography.identity_salt import get_identity_salt
+from fides.api.db.base_class import Base
+from fides.api.db.util import optionally_encrypted_type
+from fides.api.schemas.redis_cache import MultiValue
+from fides.config import CONFIG
+
+
+class PrivacyPreferences(Base):
+    """
+    Model for the v3 privacy_preferences table.
+    This is used for the v3 privacy preferences API.
+
+    This table stores privacy preference records with a partitioning scheme
+    based on the is_latest flag, splitting records into current and historic partitions.
+    """
+
+    @declared_attr
+    def __tablename__(self) -> str:
+        return "privacy_preferences"
+
+    # Partition-level indexes (not declarable on the parent table):
+    #
+    #   UNIQUE INDEX idx_privacy_preferences_current_unique_identity
+    #   ON privacy_preferences_current ((search_data->'identity'))
+    #
+    # Enforces at most one is_latest=true row per identity at the DB level.
+    # Lives on the _current partition only — the _historic partition allows
+    # multiple rows per identity. See migration a4b7c8d9e0f1.
+    #
+    #   INDEX idx_privacy_preferences_current_created_at_id
+    #   ON privacy_preferences_current (created_at, id)
+    #
+    #   INDEX idx_privacy_preferences_historic_created_at_id
+    #   ON privacy_preferences_historic (created_at, id)
+    #
+    # Composite indexes supporting cursor-based pagination with
+    # ORDER BY created_at, id and created_at range filters. Declared per
+    # partition because CREATE INDEX CONCURRENTLY is not supported on
+    # partitioned parent tables; the query planner uses Merge Append
+    # across the per-partition indexes. See migration c5d6e7f8a9b0.
+
+    # Override the default id column from Base (which is a String UUID)
+    # with a BigInteger identity column for this table
+    id = Column(
+        BigInteger,  # type: ignore[arg-type]
+        Identity(start=1, increment=1, always=True),
+        primary_key=True,
+    )
+
+    # Searchable/queryable data stored as JSONB
+    search_data = Column(JSONB, nullable=True)
+
+    # Full record data stored as encrypted text (contains PII) if encryption is enabled,
+    # stored in plaintext otherwise. Default is to encrypt.
+    record_data = Column(
+        optionally_encrypted_type(
+            encryption_enabled=CONFIG.consent.consent_v3_encryption_enabled,
+            type_in=Text(),
+        ),
+        nullable=True,
+    )
+
+    is_encrypted = Column(
+        Boolean,
+        nullable=False,
+        default=lambda: CONFIG.consent.consent_v3_encryption_enabled,
+        index=True,
+    )
+
+    # Partition key - determines if record goes to _current or _historic partition
+    is_latest = Column(
+        Boolean, nullable=False, server_default=text("false"), primary_key=True
+    )
+
+    # Override base class timestamp columns:
+    # - created_at: indexed for query performance (base class doesn't index it)
+    # - updated_at: nullable with no server_default (unlike base class which defaults
+    #   to now()). New records start with updated_at=NULL; it is only set when a
+    #   record is later modified (this only happens when is_latest is flipped
+    #   from True to False).
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+        index=True,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        onupdate=func.now(),
+    )
+
+    @classmethod
+    def hash_value(
+        cls,
+        value: MultiValue,
+        encoding: str = "UTF-8",
+    ) -> str:
+        """Utility function to hash the value with a generated salt"""
+        salt = get_identity_salt()
+        value_str = str(value)
+        hashed_value = hash_value_with_salt(
+            value_str.encode(encoding),
+            salt.encode(encoding),
+        )
+        return hashed_value

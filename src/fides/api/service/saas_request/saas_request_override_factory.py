@@ -1,6 +1,6 @@
 from enum import Enum
 from inspect import Signature, signature
-from typing import Callable, Dict, List, Union
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 
 from loguru import logger
 
@@ -8,7 +8,15 @@ from fides.api.common_exceptions import (
     InvalidSaaSRequestOverrideException,
     NoSuchSaaSRequestOverrideException,
 )
+from fides.api.schemas.consentable_item import ConsentableItem, ConsentWebhookResult
+from fides.api.schemas.saas.shared_schemas import (
+    ConsentPropagationStatus,
+    PollingStatusResult,
+)
 from fides.api.util.collection_util import Row
+
+if TYPE_CHECKING:
+    from fides.api.schemas.saas.async_polling_configuration import PollingResult
 
 
 # at some point this should likely be formalized more centrally...
@@ -24,6 +32,30 @@ class SaaSRequestType(Enum):
     DELETE = "delete"
     OPT_IN = "opt_in"
     OPT_OUT = "opt_out"
+    GET_CONSENTABLE_ITEMS = "get_consentable_items"
+    UPDATE_CONSENT = "update_consent"
+    PROCESS_CONSENT_WEBHOOK = "process_consent_webhook"
+    REFRESH_CONSENT_WEBHOOK_TOKEN = "refresh_consent_webhook_token"
+
+    # Async polling request types
+    POLLING_STATUS = "polling_status"
+    POLLING_RESULT = "polling_result"
+
+
+RequestOverrideFunction = Callable[
+    ...,
+    Union[
+        ConsentWebhookResult,
+        List[ConsentableItem],
+        List[Row],
+        ConsentPropagationStatus,
+        int,
+        bool,  # For polling status overrides (legacy)
+        PollingStatusResult,  # For polling status overrides (new)
+        "PollingResult",  # For polling result overrides - string literal to avoid circular import
+        None,
+    ],
+]
 
 
 class SaaSRequestOverrideFactory:
@@ -32,9 +64,7 @@ class SaaSRequestOverrideFactory:
     user-defined functions that act as overrides to SaaS request execution
     """
 
-    registry: Dict[
-        SaaSRequestType, Dict[str, Callable[..., Union[List[Row], int, bool, None]]]
-    ] = {}
+    registry: Dict[SaaSRequestType, Dict[str, RequestOverrideFunction]] = {}
     valid_overrides: Dict[SaaSRequestType, str] = {}
 
     # initialize each request type's inner dicts with an empty dict
@@ -43,9 +73,11 @@ class SaaSRequestOverrideFactory:
         valid_overrides[request_type] = ""
 
     @classmethod
-    def register(cls, name: str, request_types: List[SaaSRequestType]) -> Callable[
-        [Callable[..., Union[List[Row], int, bool, None]]],
-        Callable[..., Union[List[Row], int, bool, None]],
+    def register(
+        cls, name: str, request_types: List[SaaSRequestType]
+    ) -> Callable[
+        [RequestOverrideFunction],
+        RequestOverrideFunction,
     ]:
         """
         Decorator to register the custom-implemented SaaS request override
@@ -60,8 +92,8 @@ class SaaSRequestOverrideFactory:
             )
 
         def wrapper(
-            override_function: Callable[..., Union[List[Row], int, bool, None]],
-        ) -> Callable[..., Union[List[Row], int, bool, None]]:
+            override_function: RequestOverrideFunction,
+        ) -> RequestOverrideFunction:
             for request_type in request_types:
                 logger.debug(
                     "Registering new SaaS request override function '{}' under name '{}' for SaaSRequestType {}",
@@ -83,6 +115,18 @@ class SaaSRequestOverrideFactory:
                     validate_update_override_function(override_function)
                 elif request_type in (SaaSRequestType.OPT_IN, SaaSRequestType.OPT_OUT):
                     validate_consent_override_function(override_function)
+                elif request_type == SaaSRequestType.GET_CONSENTABLE_ITEMS:
+                    validate_get_consentable_item_function(override_function)
+                elif request_type == SaaSRequestType.UPDATE_CONSENT:
+                    validate_update_consent_function(override_function)
+                elif request_type == SaaSRequestType.PROCESS_CONSENT_WEBHOOK:
+                    validate_process_consent_webhook_function(override_function)
+                elif request_type == SaaSRequestType.REFRESH_CONSENT_WEBHOOK_TOKEN:
+                    validate_refresh_consent_webhook_token_function(override_function)
+                elif request_type == SaaSRequestType.POLLING_STATUS:
+                    validate_polling_status_override_function(override_function)
+                elif request_type == SaaSRequestType.POLLING_RESULT:
+                    validate_polling_result_override_function(override_function)
                 else:
                     raise ValueError(
                         f"Invalid SaaSRequestType '{request_type}' provided for SaaS request override function"
@@ -109,16 +153,16 @@ class SaaSRequestOverrideFactory:
     @classmethod
     def get_override(
         cls, override_function_name: str, request_type: SaaSRequestType
-    ) -> Callable[..., Union[List[Row], int, bool, None]]:
+    ) -> RequestOverrideFunction:
         """
         Returns the request override function given the name.
         Raises NoSuchSaaSRequestOverrideException if the named override
         does not exist.
         """
         try:
-            override_function: Callable[..., Union[List[Row], int, bool, None]] = (
-                cls.registry[request_type][override_function_name]
-            )
+            override_function: RequestOverrideFunction = cls.registry[request_type][
+                override_function_name
+            ]
         except KeyError:
             raise NoSuchSaaSRequestOverrideException(
                 f"Custom SaaS override '{override_function_name}' does not exist. Valid custom SaaS override classes for SaaSRequestType {request_type} are [{cls.valid_overrides[request_type]}]"
@@ -199,17 +243,129 @@ def validate_consent_override_function(f: Callable) -> None:
     the functions that are used for overrides, but we check to ensure that
     the function meets the framework's basic expectations.
 
-    Specifically, the validation checks that function's return type is `bool`
+    Specifically, the validation checks that function's return type is `ConsentPropagationStatus`
     and that it declares at least 4 parameters.
     """
     sig: Signature = signature(f)
-    if sig.return_annotation is not bool:
+    if sig.return_annotation is not ConsentPropagationStatus:
         raise InvalidSaaSRequestOverrideException(
-            "Provided SaaS request override function must return a bool"
+            "Provided SaaS request override function must return a ConsentPropagationStatus"
         )
     if len(sig.parameters) < 4:
         raise InvalidSaaSRequestOverrideException(
             "Provided SaaS request override function must declare at least 4 parameters"
+        )
+
+
+def validate_get_consentable_item_function(f: Callable) -> None:
+    pass
+
+
+def validate_update_consent_function(f: Callable) -> None:
+    """Used for notice-based SaaS consent flow"""
+    sig: Signature = signature(f)
+    if sig.return_annotation is not ConsentPropagationStatus:
+        raise InvalidSaaSRequestOverrideException(
+            "Provided SaaS update consent function must return a ConsentPropagationStatus"
+        )
+    if len(sig.parameters) < 5:
+        raise InvalidSaaSRequestOverrideException(
+            "Provided SaaS update consent function must declare at least 5 parameters"
+        )
+
+
+def validate_process_consent_webhook_function(f: Callable) -> None:
+    sig: Signature = signature(f)
+    if sig.return_annotation is not ConsentWebhookResult:
+        raise InvalidSaaSRequestOverrideException(
+            "Provided SaaS process consent webhook function must return a ConsentWebhookResult"
+        )
+    if len(sig.parameters) < 4:
+        raise InvalidSaaSRequestOverrideException(
+            "Provided SaaS process consent webhook function must declare at least 4 parameters"
+        )
+
+
+def validate_refresh_consent_webhook_token_function(f: Callable) -> None:
+    """
+    Validate the override function for refreshing consent webhook tokens.
+
+    The function must return a bool and declare at least 3 parameters:
+    (client, secrets, new_token).
+    """
+    sig: Signature = signature(f)
+    if sig.return_annotation is not bool:
+        raise InvalidSaaSRequestOverrideException(
+            "Provided refresh consent webhook token function must return a bool"
+        )
+    if len(sig.parameters) < 3:
+        raise InvalidSaaSRequestOverrideException(
+            "Provided refresh consent webhook token function must declare at least 3 parameters"
+        )
+
+
+def validate_polling_status_override_function(f: Callable) -> None:
+    """
+    Perform some basic checks on the user-provided SaaS request override function
+    that will be used for polling status checks.
+
+    The validation is not overly strict to allow for some flexibility in
+    the functions that are used for overrides, but we check to ensure that
+    the function meets the framework's basic expectations.
+
+    Specifically, the validation checks that function's return type is `bool`
+    or `PollingStatusResult` and that it declares at least 4 parameters.
+    """
+    sig: Signature = signature(f)
+
+    # Check return type - accept both legacy bool and new PollingStatusResult
+    return_annotation = sig.return_annotation
+    if return_annotation not in (
+        bool,
+        PollingStatusResult,
+        "PollingStatusResult",
+    ):
+        raise InvalidSaaSRequestOverrideException(
+            "Polling status override function must return bool or PollingStatusResult"
+        )
+
+    if len(sig.parameters) < 4:
+        raise InvalidSaaSRequestOverrideException(
+            "Polling status override function must declare at least 4 parameters"
+        )
+
+
+def validate_polling_result_override_function(f: Callable) -> None:
+    """
+    Perform some basic checks on the user-provided SaaS request override function
+    that will be used for polling result retrieval.
+
+    The validation is not overly strict to allow for some flexibility in
+    the functions that are used for overrides, but we check to ensure that
+    the function meets the framework's basic expectations.
+
+    Specifically, the validation checks that function's return type is `PollingResult`
+    and that it declares at least 4 parameters.
+    """
+    sig: Signature = signature(f)
+
+    # Import PollingResult here to avoid circular imports at module level
+    from fides.api.schemas.saas.async_polling_configuration import PollingResult
+
+    # Check return type annotation - handle both direct class and string literals
+    return_annotation = sig.return_annotation
+    if return_annotation not in (
+        PollingResult,
+        "PollingResult",
+        Optional[PollingResult],
+        "Optional[PollingResult]",
+    ):
+        raise InvalidSaaSRequestOverrideException(
+            "Polling result override function must return a PollingResult"
+        )
+    if len(sig.parameters) < 4:
+        raise InvalidSaaSRequestOverrideException(
+            "Polling result override function must declare at least 4 parameters"
         )
 
 

@@ -1,28 +1,25 @@
 import React from "react";
+
 import Card from "./Card";
 
 type PrivacyCardProps = {
   title: string;
-  policyKey: string;
   iconPath: string;
   description: string;
-  onOpen: (policyKey: string) => void;
+  onClick: () => void;
 };
 
-const PrivacyCard: React.FC<PrivacyCardProps> = ({
+const PrivacyCard = ({
   title,
-  policyKey,
   iconPath,
   description,
-  onOpen,
-}) => (
+  onClick,
+}: PrivacyCardProps) => (
   <Card
     title={title}
     iconPath={iconPath}
     description={description}
-    onClick={() => {
-      onOpen(policyKey);
-    }}
+    onClick={onClick}
   />
 );
 

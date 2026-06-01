@@ -1,33 +1,40 @@
-import { Box, Heading, Text } from "fidesui";
+import Restrict from "common/Restrict";
+import { ChakraBox as Box, ChakraText as Text } from "fidesui";
 import type { NextPage } from "next";
 
+import { useFeatures } from "~/features/common/features";
 import Layout from "~/features/common/Layout";
+import PageHeader from "~/features/common/PageHeader";
+import OpenIDAuthenticationSection from "~/features/openid-authentication/SSOProvidersSection";
 import {
   DEFAULT_ORGANIZATION_FIDES_KEY,
   useGetOrganizationByFidesKeyQuery,
 } from "~/features/organization";
 import { OrganizationForm } from "~/features/organization/OrganizationForm";
+import { ScopeRegistryEnum } from "~/types/api";
 
 const OrganizationPage: NextPage = () => {
-  const { data: organization } = useGetOrganizationByFidesKeyQuery(
-    DEFAULT_ORGANIZATION_FIDES_KEY
+  const { data: organization, isLoading } = useGetOrganizationByFidesKeyQuery(
+    DEFAULT_ORGANIZATION_FIDES_KEY,
   );
+  const { plus: hasPlus } = useFeatures();
 
   return (
     <Layout title="Organization">
       <Box data-testid="organization-management">
-        <Heading marginBottom={4} fontSize="2xl">
-          Organization Management
-        </Heading>
+        <PageHeader heading="Organization management" />
         <Box maxWidth="600px">
-          <Text marginBottom={10} fontSize="sm">
+          <Text pb={6} fontSize="sm">
             Please use this section to manage your organization&lsquo;s details,
             including key information that will be recorded in the RoPA (Record
             of Processing Activities).
           </Text>
-          <Box background="gray.50" padding={2}>
-            <OrganizationForm organization={organization} />
-          </Box>
+          <OrganizationForm organization={organization} isLoading={isLoading} />
+          {hasPlus && (
+            <Restrict scopes={[ScopeRegistryEnum.OPENID_PROVIDER_CREATE]}>
+              <OpenIDAuthenticationSection />
+            </Restrict>
+          )}
         </Box>
       </Box>
     </Layout>

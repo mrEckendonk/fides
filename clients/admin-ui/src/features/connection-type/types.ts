@@ -1,5 +1,3 @@
-import { AddConnectionStep } from "datastore-connections/add-connection/types";
-
 import {
   ConnectionConfigurationResponse,
   ConnectionSystemTypeMap,
@@ -9,6 +7,8 @@ import {
 export type ConnectionTypeParams = {
   search: string;
   system_type?: SystemType;
+  page?: number;
+  size?: number;
 };
 
 export type ConnectionTypeSecretSchemaProperty = {
@@ -21,6 +21,9 @@ export type ConnectionTypeSecretSchemaProperty = {
   }[];
   items?: { $ref: string };
   sensitive?: boolean;
+  multiselect?: boolean;
+  multiline?: boolean;
+  options?: string[];
 };
 
 export type ConnectionTypeSecretSchemaResponse = {
@@ -31,6 +34,11 @@ export type ConnectionTypeSecretSchemaResponse = {
   title: string;
   type: string;
   definitions: {
+    [key: string]: {
+      enum?: string[];
+      title: string;
+      type: string;
+    };
     ExtendedIdentityTypes: ConnectionTypeSecretSchemaResponse;
     AdvancedSettingsWithExtendedIdentityTypes: ConnectionTypeSecretSchemaResponse;
   };
@@ -40,5 +48,4 @@ export type ConnectionTypeState = ConnectionTypeParams & {
   connection?: ConnectionConfigurationResponse;
   connectionOption?: ConnectionSystemTypeMap;
   connectionOptions: ConnectionSystemTypeMap[];
-  step: AddConnectionStep;
 };

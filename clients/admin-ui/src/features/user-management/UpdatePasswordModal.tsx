@@ -1,43 +1,25 @@
-import {
-  Button,
-  FormControl,
-  Input,
-  Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  Stack,
-  useDisclosure,
-  useToast,
-} from "fidesui";
+import { Button, Flex, Input, Modal, useMessage } from "fidesui";
+import { useRouter } from "next/router";
 import React, { useState } from "react";
+import { useDispatch } from "react-redux";
 
-import { successToastParams } from "../common/toast";
+import { clearAuthAndLogout } from "./logout-helpers";
 import { useUpdateUserPasswordMutation } from "./user-management.slice";
 
 const useUpdatePasswordModal = (id: string) => {
-  const modal = useDisclosure();
-  const toast = useToast();
+  const [isOpen, setIsOpen] = useState(false);
+  const message = useMessage();
   const [oldPasswordValue, setOldPasswordValue] = useState("");
   const [newPasswordValue, setNewPasswordValue] = useState("");
   const [changePassword, { isLoading }] = useUpdateUserPasswordMutation();
+  const router = useRouter();
+  const dispatch = useDispatch();
 
   const changePasswordValidation = !!(
     id &&
     newPasswordValue &&
     oldPasswordValue
   );
-
-  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.name === "oldPassword") {
-      setOldPasswordValue(event.target.value);
-    } else {
-      setNewPasswordValue(event.target.value);
-    }
-  };
 
   const handleChangePassword = async () => {
     if (changePasswordValidation) {
@@ -48,20 +30,25 @@ const useUpdatePasswordModal = (id: string) => {
       })
         .unwrap()
         .then(() => {
-          toast(successToastParams("Password updated"));
-          modal.onClose();
+          message.success("Password updated");
+          clearAuthAndLogout(dispatch as any, router, {
+            onClose: () => setIsOpen(false),
+          });
         });
     }
   };
 
   return {
-    ...modal,
+    isOpen,
+    onOpen: () => setIsOpen(true),
+    onClose: () => setIsOpen(false),
     changePasswordValidation,
-    handleChange,
+    oldPasswordValue,
+    setOldPasswordValue,
+    newPasswordValue,
+    setNewPasswordValue,
     handleChangePassword,
     isLoading,
-    newPasswordValue,
-    oldPasswordValue,
   };
 };
 
@@ -69,89 +56,66 @@ interface UpdatePasswordModalProps {
   id: string;
 }
 
-const UpdatePasswordModal: React.FC<UpdatePasswordModalProps> = ({ id }) => {
+const UpdatePasswordModal = ({ id }: UpdatePasswordModalProps) => {
   const {
     changePasswordValidation,
-    handleChange,
+    oldPasswordValue,
+    setOldPasswordValue,
+    newPasswordValue,
+    setNewPasswordValue,
     handleChangePassword,
     isLoading,
     isOpen,
-    newPasswordValue,
-    oldPasswordValue,
     onClose,
     onOpen,
   } = useUpdatePasswordModal(id);
 
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onOpen}
-        data-testid="update-password-btn"
-      >
+      <Button onClick={onOpen} data-testid="update-password-btn">
         Update password
       </Button>
-      <Modal isCentered isOpen={isOpen} onClose={onClose}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Update Password</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
-            <Stack direction="column" spacing="15px">
-              <FormControl>
-                <Input
-                  isRequired
-                  name="oldPassword"
-                  onChange={handleChange}
-                  placeholder="Old Password"
-                  type="password"
-                  value={oldPasswordValue}
-                  data-testid="input-oldPassword"
-                />
-              </FormControl>
-              <FormControl>
-                <Input
-                  isRequired
-                  name="newPassword"
-                  onChange={handleChange}
-                  placeholder="New Password"
-                  type="password"
-                  value={newPasswordValue}
-                  data-testid="input-newPassword"
-                />
-              </FormControl>
-            </Stack>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button
-              bg="white"
-              marginRight="10px"
-              onClick={onClose}
-              size="sm"
-              variant="solid"
-              width="50%"
-            >
+      <Modal
+        open={isOpen}
+        onCancel={onClose}
+        title="Update Password"
+        centered
+        destroyOnHidden
+        footer={
+          <>
+            <Button onClick={onClose} className="mr-2 w-1/2">
               Cancel
             </Button>
             <Button
-              bg="primary.800"
-              color="white"
+              type="primary"
               disabled={!changePasswordValidation}
-              isLoading={isLoading}
-              mr={3}
+              loading={isLoading}
               onClick={handleChangePassword}
-              size="sm"
-              type="submit"
-              variant="solid"
-              width="50%"
+              htmlType="submit"
+              className="mr-3 w-1/2"
               data-testid="submit-btn"
             >
               Change Password
             </Button>
-          </ModalFooter>
-        </ModalContent>
+          </>
+        }
+      >
+        <Flex vertical gap={15}>
+          <Input.Password
+            name="oldPassword"
+            onChange={(e) => setOldPasswordValue(e.target.value)}
+            placeholder="Old Password"
+            value={oldPasswordValue}
+            data-testid="input-oldPassword"
+          />
+          <Input.Password
+            name="newPassword"
+            onChange={(e) => setNewPasswordValue(e.target.value)}
+            placeholder="New Password"
+            value={newPasswordValue}
+            data-testid="input-newPassword"
+          />
+        </Flex>
       </Modal>
     </>
   );

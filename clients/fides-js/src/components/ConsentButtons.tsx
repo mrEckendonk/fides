@@ -1,40 +1,68 @@
-import { h, Fragment, VNode } from "preact";
-import Button from "./Button";
+import { Fragment, VNode } from "preact";
+
 import {
   ButtonType,
-  ConsentMechanism,
   ConsentMethod,
   FidesInitOptions,
   PrivacyExperience,
   PrivacyNotice,
 } from "../lib/consent-types";
+import { FidesEventTargetType } from "../lib/events";
+import { useAutoResetFlag } from "../lib/hooks";
+import { useMediaQuery } from "../lib/hooks/useMediaQuery";
+import { DEFAULT_LOCALE, Locale, messageExists } from "../lib/i18n";
+import { useI18n } from "../lib/i18n/i18n-context";
+import { useEvent } from "../lib/providers/event-context";
+import { AttributionLink } from "./AttributionLink";
+import { BrandLink } from "./BrandLink";
+import Button from "./Button";
+import LanguageSelector from "./LanguageSelector";
 import PrivacyPolicyLink from "./PrivacyPolicyLink";
-import type { I18n } from "../lib/i18n";
-import LanguageSelector from "../components/LanguageSelector";
 
-export const ConsentButtons = ({
-  i18n,
-  onManagePreferencesClick,
-  firstButton,
-  onAcceptAll,
-  onRejectAll,
-  isMobile,
-  saveOnly = false,
-  options,
-  isInModal,
-}: {
-  i18n: I18n;
+interface ConsentButtonsProps {
+  availableLocales?: Locale[];
   onManagePreferencesClick?: () => void;
-  firstButton?: VNode;
+  renderFirstButton?: () => VNode | null | false;
   onAcceptAll: () => void;
   onRejectAll: () => void;
-  isMobile: boolean;
   options: FidesInitOptions;
-  saveOnly?: boolean;
+  hideOptInOut?: boolean;
+  hideRejectAll?: boolean;
   isInModal?: boolean;
-}) => {
+  isTCF?: boolean;
+  isGVLLoading?: boolean;
+}
+export const ConsentButtons = ({
+  availableLocales = [DEFAULT_LOCALE],
+  onManagePreferencesClick,
+  renderFirstButton,
+  onAcceptAll,
+  onRejectAll,
+  hideOptInOut,
+  hideRejectAll,
+  options,
+  isInModal,
+  isTCF,
+  isGVLLoading,
+}: ConsentButtonsProps) => {
+  const { i18n } = useI18n();
+  const { setTrigger } = useEvent();
+  const isMobile = useMediaQuery("(max-width: 768px)");
+  const { isActive: acceptComplete, activate: markAcceptComplete } =
+    useAutoResetFlag(false);
+  const { isActive: rejectComplete, activate: markRejectComplete } =
+    useAutoResetFlag(false);
   const includeLanguageSelector = i18n.availableLanguages?.length > 1;
+  const includePrivacyPolicyLink =
+    messageExists(i18n, "exp.privacy_policy_link_label") &&
+    messageExists(i18n, "exp.privacy_policy_url");
+  const includeAttributionLink = !!options.attribution;
+  const includeBrandLink =
+    !includeAttributionLink && isInModal && options.showFidesBrandLink;
+
   return (
+    // The id="fides-button-group" is used by mobile SDKs (FidesPlus JanusSDK Android)
+    // Please DO NOT change this ID without coordinating a change in fidesplus
     <div id="fides-button-group">
       <div
         className={
@@ -43,20 +71,57 @@ export const ConsentButtons = ({
             : "fides-banner-button-group fides-banner-primary-actions"
         }
       >
-        {firstButton}
-        {!saveOnly && (
+        {!!renderFirstButton && renderFirstButton()}
+        {!hideOptInOut && (
           <Fragment>
-            <Button
-              buttonType={ButtonType.PRIMARY}
-              label={i18n.t("exp.reject_button_label")}
-              onClick={onRejectAll}
-              className="fides-reject-all-button"
-            />
+            {isTCF && !!onManagePreferencesClick && (
+              <Button
+                buttonType={ButtonType.SECONDARY}
+                label={i18n.t("exp.privacy_preferences_link_label")}
+                onClick={() => {
+                  setTrigger({
+                    type: FidesEventTargetType.BUTTON,
+                    label: i18n.t("exp.privacy_preferences_link_label"),
+                  });
+                  onManagePreferencesClick();
+                }}
+                className="fides-manage-preferences-button"
+                id="fides-manage-preferences-button"
+              />
+            )}
+            {!hideRejectAll && (
+              <Button
+                buttonType={ButtonType.PRIMARY}
+                label={i18n.t("exp.reject_button_label")}
+                onClick={() => {
+                  setTrigger({
+                    type: FidesEventTargetType.BUTTON,
+                    label: i18n.t("exp.reject_button_label"),
+                  });
+                  onRejectAll();
+                  markRejectComplete();
+                }}
+                className="fides-reject-all-button"
+                id="fides-reject-all-button"
+                loading={isGVLLoading}
+                complete={rejectComplete}
+              />
+            )}
             <Button
               buttonType={ButtonType.PRIMARY}
               label={i18n.t("exp.accept_button_label")}
-              onClick={onAcceptAll}
+              onClick={() => {
+                setTrigger({
+                  type: FidesEventTargetType.BUTTON,
+                  label: i18n.t("exp.accept_button_label"),
+                });
+                onAcceptAll();
+                markAcceptComplete();
+              }}
               className="fides-accept-all-button"
+              id="fides-accept-all-button"
+              loading={isGVLLoading}
+              complete={acceptComplete}
             />
           </Fragment>
         )}
@@ -66,21 +131,45 @@ export const ConsentButtons = ({
           isInModal
             ? "fides-modal-button-group fides-modal-secondary-actions"
             : "fides-banner-button-group fides-banner-secondary-actions"
-        } ${includeLanguageSelector ? "fides-button-group-i18n" : ""}`}
+        }${includeLanguageSelector ? " fides-button-group-i18n" : ""}${
+          includePrivacyPolicyLink ? " fides-button-group-privacy-policy" : ""
+        }${includeBrandLink ? " fides-button-group-brand" : ""}${
+          includeAttributionLink ? " fides-button-group-attribution" : ""
+        }`}
       >
         {includeLanguageSelector && (
-          <LanguageSelector i18n={i18n} options={options} />
+          <LanguageSelector
+            availableLocales={availableLocales}
+            options={options}
+            isTCF={!!isTCF}
+          />
         )}
-        {!!onManagePreferencesClick && (
+        {!isTCF && !!onManagePreferencesClick && (
           <Button
             buttonType={isMobile ? ButtonType.SECONDARY : ButtonType.TERTIARY}
             label={i18n.t("exp.privacy_preferences_link_label")}
-            onClick={onManagePreferencesClick}
+            onClick={() => {
+              setTrigger({
+                type: FidesEventTargetType.BUTTON,
+                label: i18n.t("exp.privacy_preferences_link_label"),
+              });
+              onManagePreferencesClick();
+            }}
             className="fides-manage-preferences-button"
+            id="fides-manage-preferences-button"
           />
         )}
-        <PrivacyPolicyLink i18n={i18n} />
+        {includePrivacyPolicyLink && <PrivacyPolicyLink />}
+        {includeBrandLink && <BrandLink />}
+        {!isMobile && isInModal && includeAttributionLink && (
+          <AttributionLink attribution={options.attribution!} />
+        )}
       </div>
+      {(!isInModal || isMobile) && includeAttributionLink && (
+        <div className="fides-attribution-row">
+          <AttributionLink attribution={options.attribution!} />
+        </div>
+      )}
     </div>
   );
 };
@@ -89,90 +178,97 @@ type NoticeKeys = Array<PrivacyNotice["notice_key"]>;
 
 interface NoticeConsentButtonProps {
   experience: PrivacyExperience;
-  i18n: I18n;
+  onAcceptAll: () => void;
+  onRejectAll: () => void;
   onSave: (consentMethod: ConsentMethod, noticeKeys: NoticeKeys) => void;
   onManagePreferencesClick?: () => void;
   enabledKeys: NoticeKeys;
   isAcknowledge: boolean;
   options: FidesInitOptions;
   isInModal?: boolean;
-  isMobile: boolean;
-  saveOnly?: boolean;
+  hideOptInOut?: boolean;
 }
 
 export const NoticeConsentButtons = ({
   experience,
-  i18n,
+  onAcceptAll,
+  onRejectAll,
   onSave,
   onManagePreferencesClick,
   enabledKeys,
   isInModal,
   isAcknowledge,
-  isMobile,
-  saveOnly = false,
+  hideOptInOut = false,
   options,
 }: NoticeConsentButtonProps) => {
+  const { isActive: acknowledgeComplete, activate: markAcknowledgeComplete } =
+    useAutoResetFlag(false);
+  const { isActive: saveComplete, activate: markSaveComplete } =
+    useAutoResetFlag(false);
+  const { i18n } = useI18n();
+  const { setTrigger } = useEvent();
   if (!experience.experience_config || !experience.privacy_notices) {
     return null;
   }
-  const { privacy_notices: notices } = experience;
 
-  const handleAcceptAll = () => {
-    onSave(
-      ConsentMethod.ACCEPT,
-      notices.map((n) => n.notice_key)
-    );
+  // NOTE: acknowledge and save should behave the same, other than the consent method
+  const handleAcknowledgeNotices = () => {
+    onSave(ConsentMethod.ACKNOWLEDGE, enabledKeys);
   };
-
-  const handleRejectAll = () => {
-    onSave(
-      ConsentMethod.REJECT,
-      notices
-        .filter((n) => n.consent_mechanism === ConsentMechanism.NOTICE_ONLY)
-        .map((n) => n.notice_key)
-    );
-  };
-
   const handleSave = () => {
     onSave(ConsentMethod.SAVE, enabledKeys);
   };
 
-  if (isAcknowledge) {
-    return (
-      <div
-        className={`fides-acknowledge-button-container ${
-          isInModal ? "" : "fides-banner-acknowledge"
-        }`}
-      >
+  const renderFirstButton = () => {
+    if (isAcknowledge) {
+      return (
         <Button
           buttonType={ButtonType.PRIMARY}
           label={i18n.t("exp.acknowledge_button_label")}
-          onClick={handleAcceptAll}
+          onClick={() => {
+            setTrigger({
+              type: FidesEventTargetType.BUTTON,
+              label: i18n.t("exp.acknowledge_button_label"),
+            });
+            handleAcknowledgeNotices();
+            markAcknowledgeComplete();
+          }}
           className="fides-acknowledge-button"
+          complete={acknowledgeComplete}
         />
-      </div>
-    );
-  }
+      );
+    }
+    if (isInModal) {
+      return (
+        <Button
+          buttonType={hideOptInOut ? ButtonType.PRIMARY : ButtonType.SECONDARY}
+          label={i18n.t("exp.save_button_label")}
+          onClick={() => {
+            setTrigger({
+              type: FidesEventTargetType.BUTTON,
+              label: i18n.t("exp.save_button_label"),
+            });
+            handleSave();
+            markSaveComplete();
+          }}
+          className="fides-save-button"
+          id="fides-save-button"
+          complete={saveComplete}
+        />
+      );
+    }
+    return null;
+  };
 
   return (
     <ConsentButtons
-      i18n={i18n}
+      availableLocales={experience.available_locales}
       onManagePreferencesClick={onManagePreferencesClick}
-      onAcceptAll={handleAcceptAll}
-      onRejectAll={handleRejectAll}
+      onAcceptAll={onAcceptAll}
+      onRejectAll={onRejectAll}
       isInModal={isInModal}
-      firstButton={
-        isInModal ? (
-          <Button
-            buttonType={saveOnly ? ButtonType.PRIMARY : ButtonType.SECONDARY}
-            label={i18n.t("exp.save_button_label")}
-            onClick={handleSave}
-            className="fides-save-button"
-          />
-        ) : undefined
-      }
-      isMobile={isMobile}
-      saveOnly={saveOnly}
+      renderFirstButton={renderFirstButton}
+      hideOptInOut={hideOptInOut}
       options={options}
     />
   );

@@ -1,232 +1,145 @@
-/* eslint-disable react/no-unstable-nested-components */
-
 import {
-  ColumnDef,
-  createColumnHelper,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getGroupedRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
-import { Button, Spacer, Text, useDisclosure, VStack } from "fidesui";
-import { useEffect, useMemo, useState } from "react";
+  Button,
+  Flex,
+  MonitorIcon,
+  Table,
+  Tooltip,
+  Typography,
+  useChakraDisclosure as useDisclosure,
+} from "fidesui";
+import { useState } from "react";
 
-import FidesSpinner from "~/features/common/FidesSpinner";
-import { MonitorIcon } from "~/features/common/Icon/MonitorIcon";
-import {
-  DefaultCell,
-  DefaultHeaderCell,
-  FidesTableV2,
-  GroupCountBadgeCell,
-  PaginationBar,
-  TableActionBar,
-  useServerSidePagination,
-} from "~/features/common/table/v2";
-import { useGetMonitorsByIntegrationQuery } from "~/features/data-discovery-and-detection/discovery-detection.slice";
 import ConfigureMonitorModal from "~/features/integrations/configure-monitor/ConfigureMonitorModal";
-import MonitorConfigActionsCell from "~/features/integrations/configure-monitor/MonitorConfigActionsCell";
+import { useMonitorConfigTable } from "~/features/integrations/hooks/useMonitorConfigTable";
 import {
-  ConnectionConfigurationResponse,
+  ConnectionConfigurationResponseWithSystemKey,
   ConnectionSystemTypeMap,
-  MonitorConfig,
+  ConnectionType,
+  EditableMonitorConfig,
+  SystemType,
 } from "~/types/api";
 
-const EMPTY_RESPONSE = {
-  items: [] as MonitorConfig[],
-  total: 0,
-  page: 1,
-  size: 50,
-  pages: 0,
-};
+import SharedConfigModal from "../SharedConfigModal";
 
-const columnHelper = createColumnHelper<MonitorConfig>();
+const DATA_DISCOVERY_MONITOR_COPY = `A data discovery monitor observes configured systems for data model changes to proactively discover and classify data risks. Monitors can observe part or all of a project, dataset, table, or API for changes and each can be assigned to a different data steward.`;
 
-const EmptyTableNotice = ({ onAddClick }: { onAddClick: () => void }) => (
-  <VStack
-    mt={6}
-    p={10}
-    spacing={4}
-    borderRadius="base"
-    maxW="70%"
-    data-testid="no-results-notice"
-    alignSelf="center"
-    margin="auto"
-  >
-    <VStack>
-      <Text fontSize="md" fontWeight="600">
-        No monitors
-      </Text>
-      <Text fontSize="sm">
-        You have not configured any data discovery monitors. Click &quot;Add
-        monitor&quot; to configure data discovery now.
-      </Text>
-      <Button onClick={onAddClick} colorScheme="primary">
-        Add monitor
-      </Button>
-    </VStack>
-  </VStack>
-);
+const WEBSITE_MONITOR_COPY = `Configure your website monitor to identify active ad tech vendors and tracking technologies across your site. This monitor will analyze selected pages for vendor activity, compliance with privacy requirements, and data collection practices. Set your preferences below to customize the monitor frequency and scan locations.`;
+
+const OKTA_MONITOR_COPY = `Configure your identity provider monitor to detect and map systems within your infrastructure. This monitor will analyze connected systems to identify their activity and ensure accurate representation in your data map. Set your preferences below to customize the monitor's scan frequency and scope. To learn more about monitors, view our docs here.`;
+
+const MONITOR_COPIES: Partial<Record<ConnectionType, string>> = {
+  [ConnectionType.WEBSITE]: WEBSITE_MONITOR_COPY,
+  [ConnectionType.OKTA]: OKTA_MONITOR_COPY,
+  [ConnectionType.ENTRA]: OKTA_MONITOR_COPY,
+} as const;
 
 const MonitorConfigTab = ({
   integration,
   integrationOption,
 }: {
-  integration: ConnectionConfigurationResponse;
+  integration: ConnectionConfigurationResponseWithSystemKey;
   integrationOption?: ConnectionSystemTypeMap;
 }) => {
-  const {
-    PAGE_SIZES,
-    pageSize,
-    setPageSize,
-    onPreviousPageClick,
-    isPreviousPageDisabled,
-    onNextPageClick,
-    isNextPageDisabled,
-    startRange,
-    endRange,
-    pageIndex,
-    setTotalPages,
-  } = useServerSidePagination();
+  const isWebsiteMonitor =
+    integrationOption?.identifier === ConnectionType.WEBSITE;
 
-  const {
-    isLoading,
-    isFetching,
-    data: monitorResult,
-  } = useGetMonitorsByIntegrationQuery({
-    page: pageIndex,
-    size: pageSize,
-    connection_config_key: integration.key,
-  });
+  // Check if this is a SaaS type integration
+  const isSaasIntegration = integrationOption?.type === SystemType.SAAS;
 
   const modal = useDisclosure();
-  const [monitorToEdit, setMonitorToEdit] = useState<MonitorConfig | undefined>(
-    undefined
-  );
+  const [workingMonitor, setWorkingMonitor] = useState<
+    EditableMonitorConfig | undefined
+  >(undefined);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
   const [formStep, setFormStep] = useState(0);
 
-  const handleEditMonitor = (monitor: MonitorConfig) => {
-    setMonitorToEdit(monitor);
+  const handleEditMonitor = (monitor: EditableMonitorConfig) => {
+    setWorkingMonitor(monitor);
+    setIsEditing(true);
     modal.onOpen();
   };
 
   const handleCloseModal = () => {
-    setMonitorToEdit(undefined);
+    setWorkingMonitor(undefined);
+    setIsEditing(false);
     setFormStep(0);
     modal.onClose();
   };
 
-  const handleAdvanceForm = (monitor: MonitorConfig) => {
-    setMonitorToEdit(monitor);
+  const handleAdvanceForm = (monitor: EditableMonitorConfig) => {
+    setWorkingMonitor(monitor);
     setFormStep(1);
   };
 
-  const response = monitorResult ?? EMPTY_RESPONSE;
-
-  const {
-    items: monitors,
-    total: totalRows,
-    pages: totalPages,
-  } = useMemo(() => response, [response]);
-
-  useEffect(() => {
-    setTotalPages(totalPages);
-  }, [totalPages, setTotalPages]);
-
-  const columns: ColumnDef<MonitorConfig, any>[] = useMemo(
-    () => [
-      columnHelper.accessor((row) => row.name, {
-        id: "name",
-        cell: (props) => <DefaultCell value={props.getValue()} />,
-        header: (props) => <DefaultHeaderCell value="Name" {...props} />,
-      }),
-      columnHelper.accessor((row) => row.databases, {
-        id: "projects",
-        cell: (props) =>
-          props.getValue().length === 0 ? (
-            <DefaultCell value="All projects" />
-          ) : (
-            <GroupCountBadgeCell
-              suffix="Projects"
-              value={props.getValue()}
-              {...props}
-              isDisplayAll
-            />
-          ),
-        header: (props) => <DefaultHeaderCell value="Location" {...props} />,
-      }),
-      columnHelper.display({
-        id: "action",
-        cell: (props) => (
-          <MonitorConfigActionsCell
-            onEditClick={() => handleEditMonitor(props.row.original)}
-          />
-        ),
-        header: "Actions",
-        meta: { disableRowClick: true },
-        maxSize: 50,
-      }),
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
-
-  const tableInstance = useReactTable<MonitorConfig>({
-    getCoreRowModel: getCoreRowModel(),
-    getGroupedRowModel: getGroupedRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getRowId: (row) => row.name,
-    manualPagination: true,
-    data: monitors,
-    columns,
+  // Use the new Ant Design table hook
+  const { columns, tableProps, monitors, isLoading } = useMonitorConfigTable({
+    integration,
+    isWebsiteMonitor,
+    onEditMonitor: handleEditMonitor,
   });
 
-  if (isLoading) {
-    return <FidesSpinner />;
-  }
+  const monitorCopy =
+    MONITOR_COPIES[integrationOption?.identifier as ConnectionType] ??
+    DATA_DISCOVERY_MONITOR_COPY;
+
+  const getMonitorButtonState = () => {
+    if (isSaasIntegration && monitors.length > 0) {
+      return {
+        isDisabled: true,
+        tooltip: "API integrations only use a single monitor",
+      };
+    }
+    const isLegacyConnection =
+      !integration.name && integration.saas_config?.type === "salesforce";
+    if (isLegacyConnection) {
+      return {
+        isDisabled: true,
+        tooltip:
+          "This is a legacy connection and cannot be used to create a monitor. Create a new Salesforce integration to use this feature.",
+      };
+    }
+
+    return { isDisabled: false, tooltip: null };
+  };
+
+  const {
+    isDisabled: isAddMonitorButtonDisabled,
+    tooltip: addMonitorButtonTooltip,
+  } = getMonitorButtonState();
 
   return (
     <>
-      <Text maxW="720px" mb={6} fontSize="sm">
-        A data discovery monitor observes configured systems for data model
-        changes to proactively discover and classify data risks. Monitors can
-        observe part or all of a project, dataset, table, or API for changes and
-        each can be assigned to a different data steward.
-      </Text>
-      <TableActionBar>
-        <Spacer />
-        <Button
-          onClick={modal.onOpen}
-          size="xs"
-          variant="outline"
-          rightIcon={<MonitorIcon />}
-          data-testid="add-monitor-btn"
-        >
-          Add monitor
-        </Button>
-        <ConfigureMonitorModal
-          isOpen={modal.isOpen}
-          onClose={handleCloseModal}
-          formStep={formStep}
-          onAdvance={handleAdvanceForm}
-          monitor={monitorToEdit}
-          integrationOption={integrationOption!}
-        />
-      </TableActionBar>
-      <FidesTableV2
-        tableInstance={tableInstance}
-        onRowClick={handleEditMonitor}
-        emptyTableNotice={<EmptyTableNotice onAddClick={modal.onOpen} />}
-      />
-      <PaginationBar
-        totalRows={totalRows}
-        pageSizes={PAGE_SIZES}
-        setPageSize={setPageSize}
-        onPreviousPageClick={onPreviousPageClick}
-        isPreviousPageDisabled={isPreviousPageDisabled || isFetching}
-        onNextPageClick={onNextPageClick}
-        isNextPageDisabled={isNextPageDisabled || isFetching}
-        startRange={startRange}
-        endRange={endRange}
+      <Typography.Paragraph
+        className="mb-6 max-w-3xl"
+        data-testid="monitor-description"
+      >
+        {monitorCopy}
+      </Typography.Paragraph>
+      <Flex justify="space-between" className="py-3">
+        <SharedConfigModal />
+        <Tooltip title={addMonitorButtonTooltip}>
+          <Button
+            onClick={modal.onOpen}
+            icon={<MonitorIcon />}
+            iconPlacement="end"
+            data-testid="add-monitor-btn"
+            disabled={isAddMonitorButtonDisabled}
+          >
+            Add monitor
+          </Button>
+        </Tooltip>
+      </Flex>
+      <Table {...tableProps} loading={isLoading} columns={columns} />
+      <ConfigureMonitorModal
+        isOpen={modal.isOpen}
+        onClose={handleCloseModal}
+        formStep={formStep}
+        onAdvance={handleAdvanceForm}
+        monitor={workingMonitor}
+        isEditing={isEditing}
+        integration={integration}
+        integrationOption={integrationOption!}
+        isWebsiteMonitor={isWebsiteMonitor}
       />
     </>
   );

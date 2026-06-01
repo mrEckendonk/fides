@@ -1,4 +1,10 @@
+import json
+import os
+from json import JSONDecodeError
+from typing import Any, Dict, Optional
+
 from pydantic import Field
+from pydantic_settings import SettingsConfigDict
 
 from .fides_settings import FidesSettings
 
@@ -21,6 +27,77 @@ class CelerySettings(FidesSettings):
         description="If true, tasks are executed locally instead of being sent to the queue.  "
         "If False, tasks are sent to the queue.",
     )
+    healthcheck_port: int = Field(
+        default=9000, description="The port to use for the health check endpoint"
+    )
+    healthcheck_ping_timeout: float = Field(
+        default=2.0, description="The timeout in seconds for the health check ping"
+    )
+    worker_disable_heartbeat: bool = Field(
+        default=False,
+        description="If true, starts the worker with --without-heartbeat. "
+        "Use this as a workaround for Celery BRPOP connection drop issues (celery/celery#7276).",
+    )
+    worker_disable_gossip: bool = Field(
+        default=False,
+        description="If true, starts the worker with --without-gossip. "
+        "Use this as a workaround for Celery BRPOP connection drop issues (celery/celery#7276).",
+    )
+    worker_disable_mingle: bool = Field(
+        default=False,
+        description="If true, starts the worker with --without-mingle. "
+        "Use this as a workaround for Celery BRPOP connection drop issues (celery/celery#7276).",
+    )
+    worker_concurrency: int = Field(
+        default=2,
+        ge=1,
+        description="Number of worker processes/threads passed to `celery worker --concurrency`.",
+    )
+    broker_url: Optional[str] = Field(
+        default=None,
+        description="Celery broker URL. When set, overrides the default. With redis.cluster_enabled, "
+        "the default is redis+cluster:// (celery-redis-cluster). Set to a standalone redis:// URL to use a separate broker.",
+    )
+    result_backend: Optional[str] = Field(
+        default=None,
+        description="Celery result backend URL. When set, overrides the default. With redis.cluster_enabled, "
+        "the default is redis+cluster:// (celery-redis-cluster). Set to a standalone redis:// URL to override.",
+    )
+    model_config = SettingsConfigDict(env_prefix=ENV_PREFIX)
 
-    class Config:
-        env_prefix = ENV_PREFIX
+
+def merge_celery_environment(celery_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Given a dict of config settings, merges configs which are found
+    in environment variables. Environment variable configs are treated
+    as overrides. Environment variables must use the prefix FIDES__CELERY__.
+
+    Example:
+        FIDES__CELERY__WORKER_PREFETCH_MULTIPLIER=4
+
+    Merges to:
+        {"worker_prefetch_multiplier": 4}
+
+    This allows arbitrary Celery configuration to be set via environment variables,
+    not just the explicitly defined fields in CelerySettings.
+    """
+    for key, value in os.environ.items():
+        if key.startswith(ENV_PREFIX):
+            # Strip the prefix and convert to lowercase
+            stripped_key = key[len(ENV_PREFIX) :].lower()
+            if stripped_key:
+                # Normalize boolean strings only to preserve case-sensitive values
+                # like URLs (e.g., Redis://myhost) or passwords
+                normalized_value = value
+                if value.lower() in ("true", "false"):
+                    normalized_value = value.lower()
+
+                # Use JSON parsing to handle type conversion properly
+                # This handles booleans (true/false), integers, floats, etc.
+                try:
+                    celery_dict[stripped_key] = json.loads(normalized_value)
+                except (JSONDecodeError, ValueError):
+                    # If JSON parsing fails, keep it as a string
+                    celery_dict[stripped_key] = value
+
+    return celery_dict

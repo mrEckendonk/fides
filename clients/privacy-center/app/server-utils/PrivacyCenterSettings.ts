@@ -1,3 +1,26 @@
+import type { ConsentMethod } from "~/types/api";
+import type {
+  ConsentFlagType,
+  ConsentNonApplicableFlagMode,
+} from "~/types/config";
+
+export const MISSING_EXPERIENCE_BEHAVIORS = [
+  "throw",
+  "empty_experience",
+] as const;
+export type MissingExperienceBehaviors =
+  (typeof MISSING_EXPERIENCE_BEHAVIORS)[number];
+
+export const LOG_LEVEL_LABELS = [
+  "fatal",
+  "error",
+  "warn",
+  "info",
+  "debug",
+  "trace",
+] as const;
+export type LogLevels = (typeof LOG_LEVEL_LABELS)[number];
+
 /**
  * Settings that can be controlled using ENV vars on the server.
  *
@@ -11,7 +34,15 @@ export interface PrivacyCenterSettings {
   SERVER_SIDE_FIDES_API_URL: string | null; // e.g. http://fides:8080/api/v1
   CONFIG_CSS_URL: string; // e.g. file:///app/config/config.css
   CONFIG_JSON_URL: string; // e.g. file:///app/config/config.json
-  CUSTOM_PROPERTIES: boolean; // (optional) (default: true) enables the use of a single privacy center instance to serve different properties on different paths with custom configs
+  ROOT_PROPERTY_PATH: string | null; // (optional) force a property path to be fetched from the API. If "/foo" is set, it will attempt to return the property with "/foo" path.
+  USE_API_CONFIG: boolean; // (optional) (default: false) when set to true, the privacy center will attempt to fetch a property from the API before falling back to the static config.
+  FIDES_JS_MAX_AGE_SECONDS: number; // (optional) how long to cache the /fides.js bundle for, in seconds. Defaults to 1 hour (DEFAULT_FIDES_JS_MAX_AGE_SECONDS)
+  FIDES_JS_SERVE_STALE_SECONDS: number; // (optional) how long stale content can be served (for stale-while-revalidate and stale-if-error), in seconds. Defaults to 24 hours (DEFAULT_FIDES_JS_SERVE_STALE_SECONDS)
+  MISSING_EXPERIENCE_BEHAVIOR: MissingExperienceBehaviors; // (optional) controls what Privacy Center does when the api call to fetch an experience fails
+  LOG_LEVEL: LogLevels; // (optional) controls the log level of the Privacy Center. Defaults to info.
+  ENABLE_EXTERNAL_TASK_PORTAL: boolean; // whether the external task portal is enabled
+  PRIVACY_REQUEST_DISCLOSURE_ENABLED: boolean; // whether to show the privacy request disclosure metrics page and footer link
+  SECURITY_HEADERS_MODE: "none" | "recommended"; // (optional) controls what security headers are included in Privacy Center responses.
 
   // Fides.js options
   DEBUG: boolean; // whether console logs are enabled for consent components
@@ -20,9 +51,9 @@ export interface PrivacyCenterSettings {
   IS_OVERLAY_ENABLED: boolean; // whether we should render privacy-experience-driven components
   IS_PREFETCH_ENABLED: boolean | false; // (optional) whether we should pre-fetch geolocation and experience server-side
   OVERLAY_PARENT_ID: string | null; // (optional) ID of the parent DOM element where the overlay should be inserted
-  MODAL_LINK_ID: string | null; // (optional) ID of the DOM element that should trigger the consent modal
+  MODAL_LINK_ID: string; // (optional) ID of the DOM element that should trigger the consent modal
   PRIVACY_CENTER_URL: string; // e.g. http://localhost:3001
-  FIDES_EMBED: boolean | false; // (optional) Whether we should "embed" the fides.js overlay UI (ie. “Layer 2”) into a web page
+  FIDES_EMBED: boolean | false; // (optional) Whether we should "embed" the fides.js overlay UI (ie. "Layer 2") into a web page
   FIDES_DISABLE_SAVE_API: boolean | false; // (optional) Whether we should disable saving consent preferences to the Fides API
   FIDES_DISABLE_NOTICES_SERVED_API: boolean | false; // (optional) Whether we should only disable saving notices served to the Fides API
   FIDES_DISABLE_BANNER: boolean | false; // (optional) Whether we should disable showing the banner
@@ -36,4 +67,20 @@ export interface PrivacyCenterSettings {
   BASE_64_COOKIE: boolean; // whether or not to encode cookie as base64 on top of the default JSON string
   FIDES_PRIMARY_COLOR: string | null; // (optional) sets fides primary color
   FIDES_CLEAR_COOKIE: boolean; // (optional) deletes fides_consent cookie on reload
+  SHOW_BRAND_LINK: boolean; // whether to render the Ethyca brand link; defaults to true
+  FIDES_CONSENT_OVERRIDE: ConsentMethod.ACCEPT | ConsentMethod.REJECT | null; // (optional) sets a previously learned consent preference for the user
+  FIDES_DISABLED_NOTICES: string | null; // (optional) comma-separated list of notice_keys to disable in the CMP Overlay
+  FIDES_DISABLED_SYSTEMS: string | null; // (optional) comma-separated list of systems to exclude notice assets by
+  FIDES_CONSENT_NON_APPLICABLE_FLAG_MODE: ConsentNonApplicableFlagMode | null; // (optional) determines how non-applicable privacy notices are handled (omit|include)
+  FIDES_CONSENT_FLAG_TYPE: ConsentFlagType | null; // (optional) determines the type of value to use for consent (boolean|consent_mechanism)
+  FIDES_INITIALIZED_EVENT_MODE: "multiple" | "once" | "disable"; // (optional) controls when the deprecated FidesInitialized event should be dispatched (defaults to "once")
+  FIDES_UNSUPPORTED_REPEATED_SCRIPT_LOADING:
+    | "enabled_acknowledge_not_supported"
+    | "disabled"; // (optional) controls handling of unsupported repeated script loading (defaults to "disabled")
+  FIDES_COOKIE_SUFFIX: string | null; // (optional) attaches as suffix to the cookie fides.js uses to store consent preferences in the format `fides_consent_{FIDES_COOKIE_SUFFIX}`
+  FIDES_COOKIE_COMPRESSION: "gzip" | "none"; // (optional) compression method to use for the consent cookie (defaults to "none")
+  ATTRIBUTION_ENABLED: boolean; // (optional) whether attribution link is enabled (defaults to true)
+  ATTRIBUTION_ANCHOR_TEXT: string; // (optional) anchor text for attribution link (defaults to "Consent powered by Ethyca")
+  ATTRIBUTION_DESTINATION_URL: string; // (optional) destination URL for attribution link. Must begin with "http://" or "https://". (defaults to "https://ethyca.com/consent")
+  ATTRIBUTION_NOFOLLOW: boolean; // (optional) whether attribution link should have rel="nofollow" (defaults to false)
 }

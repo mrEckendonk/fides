@@ -3,7 +3,6 @@
 import rich_click as click
 from toml import dumps
 
-from fides.cli.utils import with_analytics
 from fides.common.utils import echo_red, print_divider
 from fides.core.utils import get_credentials_path, read_credentials_file
 
@@ -24,7 +23,6 @@ def view(ctx: click.Context) -> None:
     is_flag=True,
     help="Only print configuration values explicitly set by the user.",
 )
-@with_analytics
 def view_config(
     ctx: click.Context, section: str = "", exclude_unset: bool = False
 ) -> None:
@@ -34,7 +32,7 @@ def view_config(
     _Note: To see the configuration values being used by the webserver, `GET` the `/api/v1/config` endpoint._
     """
     config = ctx.obj["CONFIG"]
-    config_dict = config.dict(exclude_unset=exclude_unset)
+    config_dict = config.model_dump(exclude_unset=exclude_unset)
     if section:
         config_dict = config_dict[section]
 
@@ -44,7 +42,6 @@ def view_config(
 
 @view.command(name="credentials")
 @click.pass_context
-@with_analytics
 def view_credentials(ctx: click.Context) -> None:
     """
     Prints the credentials file.
@@ -57,4 +54,4 @@ def view_credentials(ctx: click.Context) -> None:
         raise SystemExit(1)
 
     print_divider()
-    print(dumps(credentials.dict()))
+    print(dumps(credentials.model_dump(mode="json")))

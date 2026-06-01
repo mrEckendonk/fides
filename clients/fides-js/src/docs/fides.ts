@@ -10,7 +10,7 @@
  *
  * NOTE: FidesJS will need to be downloaded, executed, and initialized before
  * the `Fides` object is available. Therefore, your code should check for the
- * existence of Fides *or* subscribe to the global `FidesInitialized` event (see
+ * existence of Fides *or* subscribe to the global `FidesReady` event (see
  * {@link FidesEvent}) for details) before using the `Fides` object in your own code.
  *
  * @example
@@ -34,8 +34,13 @@ export interface Fides {
   /**
    * User's current consent preferences, formatted as a key/value object with:
    * - key: the applicable Fides `notice_key` (e.g. `data_sales_and_sharing`, `analytics`)
-   * - value: `true` or `false`, depending on whether or not the current user
-   * has consented to the notice
+   * - value:
+   *   - `true` or `false` boolean values (where true means opt-in/consent granted, false means opt-out/consent declined)
+   *   - or one of these string values:
+   *     - `"opt_in"` - user has explicitly opted in to this notice
+   *     - `"opt_out"` - user has explicitly opted out of this notice
+   *     - `"acknowledge"` - user has acknowledged this notice (for notice-only consent mechanisms)
+   *     - `"not_applicable"` - notice is not applicable to the user's region/context
    *
    * Note that FidesJS will automatically set default consent preferences based
    * on the type of notice - so, for example a typical "opt-in" analytics notice
@@ -62,22 +67,44 @@ export interface Fides {
    *   "marketing": false
    * }
    * ```
-   */
-  consent: Record<string, boolean>;
-
-  /**
-   * User's current consent string(s) combined into a single value. Currently,
-   * this is used by FidesJS to store IAB consent strings from various
-   * frameworks such as TCF, GPP, and Google's "Additional Consent" string.
    *
    * @example
-   * Example `fides_string` showing a combination of:
-   * - IAB TC string: `CPzHq4APzHq4AAMABBENAUEAALAAAEOAAAAAAEAEACACAAAA`
-   * - Google AC string: `1~61.70`
+   * A `Fides.consent` value showing the user has opted-in to analytics, but not marketing using consent mechanism strings:
    * ```ts
-   * console.log(Fides.fides_string); // CPzHq4APzHq4AAMABBENAUEAALAAAEOAAAAAAEAEACACAAAA,1~61.70
+   * {
+   *   "analytics": "opt_in",
+   *   "marketing": "opt_out"
+   * }
    * ```
    *
+   * @example
+   * A `Fides.consent` value showing a notice-only consent mechanism with acknowledgment:
+   * ```ts
+   * {
+   *   "terms_of_service": "acknowledge"
+   * }
+   * ```
+   */
+  consent: Record<string, boolean | string>;
+
+  /**
+   * User's current consent string(s) combined into a single value. This is used by
+   * FidesJS to store IAB consent strings from various frameworks such as TCF, GPP,
+   * and Google's "Additional Consent" string. Additionally, we support passing a
+   * Notice Consent string, which is a base64 encoded string of the user's Notice
+   * Consent preferences. See {@link FidesOptions.fides_string} for more details.
+   *
+   * The string consists of four parts separated by commas in the format:
+   * `TC_STRING,AC_STRING,GPP_STRING,NC_STRING` where:
+   *
+   * - TC_STRING: IAB TCF (Transparency & Consent Framework) string
+   * - AC_STRING: Google's Additional Consent string
+   * - GPP_STRING: IAB GPP (Global Privacy Platform) string
+   * - NC_STRING: Base64 encoded string of the user's Notice Consent preferences.
+   *
+   * @example
+   * console.log(Fides.fides_string);
+   * // "CPzHq4APzHq4AAMABBENAUEAALAAAEOAAAAAAEAEACACAAAA,2~61.70~dv.33,DBABLA~BVAUAAAAAWA.QA,eyJkYXRhX3NhbGVzX2FuZF9zaGFyaW5nIjowLCJhbmFseXRpY3MiOjF9"
    */
   fides_string?: string;
 
@@ -86,7 +113,7 @@ export interface Fides {
    * current user's experience, consent preferences, etc.
    *
    * NOTE: To be notified when initialization has completed, you can subscribe
-   * to the `FidesInitialized` event. See {@link FidesEvent} for details.
+   * to the `FidesReady` event. See {@link FidesEvent} for details.
    */
   initialized: boolean;
 
@@ -97,26 +124,63 @@ export interface Fides {
    * To always return in the default language only, pass the `disableLocalization` option as `true`.
    *
    * @example
-   * Getting the link text in the user's current locale (eg. Spanish):
+   * Get the link text in the user's current locale (eg. Spanish):
    * ```ts
    * console.log(Fides.getModalLinkLabel()); // "Tus preferencias de privacidad"
    * ```
    *
-   * Getting the link text in the default locale to match other links on the page:
+   * Get the link text in the default locale to match other links on the page:
    * ```ts
    * console.log(Fides.getModalLinkLabel({ disableLocalization: true })); // "Your Privacy Choices"
    * ```
    *
    * @example
-   * Applying the link text to a custom modal link element:
+   * Apply the link text to a custom element using the `FidesLocaleUpdated` event (also see {@link FidesLocaleEvent} and {@link Fides.showModal}):
    * ```html
-   * <button class="my-custom-show-modal" id="fides-modal-link-label" onclick="Fides.showModal()" />
+   * <button id="fides-modal-link" class="footer__link"></button>
    * <script>
-   *  document.getElementById('fides-modal-link-label').innerText = Fides.getModalLinkLabel();
+   *   window.addEventListener("FidesLocaleUpdated", () => {
+   *     document.getElementById("fides-modal-link").textContent =
+   *       Fides.getModalLinkLabel();
+   *   });
    * </script>
    * ```
    */
   getModalLinkLabel: (options?: { disableLocalization: boolean }) => string;
+
+  /**
+   * Set identity fields on the Fides consent cookie (e.g. a custom user ID).
+   * Call after {@link Fides.init}; the values are persisted in the cookie and
+   * included in subsequent save/API requests (e.g. in `browser_identity.external_id`).
+   * Only `external_id` is supported today. Reserved keys (e.g. `fides_user_device_id`)
+   * and verified keys (e.g. `email`, `phone_number`) cannot be set and will throw; support for
+   * custom and verified identity keys is planned on the roadmap.
+   * Empty or whitespace-only `external_id` throws; omit the key to leave identity unchanged.
+   *
+   * @param identity - Object with optional `external_id` string (trimmed before use; empty/whitespace-only throws)
+   * @returns Promise that resolves when the cookie has been updated
+   * @throws If Fides is not initialized, if external_id is empty or whitespace-only, or if an unsupported/reserved/verified key is provided
+   *
+   * @example
+   * Set a custom external ID after the user logs in:
+   * ```ts
+   * await Fides.setIdentity({ external_id: "user-123" });
+   * ```
+   *
+   * @example
+   * In HTML, call setIdentity when your app knows the user (e.g. after login):
+   * ```html
+   * <body>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     function onUserLoggedIn(userId) {
+   *       Fides.setIdentity({ external_id: userId });
+   *     }
+   *   </script>
+   * </body>
+   * ```
+   */
+  setIdentity: (identity: { external_id?: string }) => Promise<void>;
 
   /**
    * Display the FidesJS modal component on the page, if the current user's
@@ -140,6 +204,8 @@ export interface Fides {
    * the `modalLinkId` global setting on the Fides Privacy Center to prevent the
    * automated searching for, and binding the click event to, the modal link. If using
    * Fides Cloud, contact Ethyca Support for details on adjusting global settings.
+   *
+   * This function is not available for Headless experiences.
    *
    *
    * @example
@@ -189,19 +255,268 @@ export interface Fides {
    * they occur, which can then be used to trigger/block tags in GTM based on
    * `Fides.consent` preferences or other business logic.
    *
-   * See the Google Tag Manager tutorial for more: {@link
-   * https://fid.es/configuring-gtm-consent}
+   * See the [Google Tag Manager tutorial](/consent/guides/google-tag-manager-consent-mode) for more.
+   *
+   * @param options - Optional configuration for the GTM integration
+   * @param options.non_applicable_flag_mode - Controls how non-applicable privacy notices are handled in the data layer. Can be "omit" (default) to exclude non-applicable notices, or "include" to include them with a default value.
+   * @param options.flag_type - Controls how consent values are represented in the data layer. Can be "boolean" (default) for true/false values, or "consent_mechanism" for string values like "opt_in", "opt_out", "acknowledge", "not_applicable".
    *
    * @example
-   * Enabling the GTM integration in your site's `<head>`:
+   * Basic usage in your site's `<head>`:
    * ```html
    * <head>
    *   <script src="path/to/fides.js"></script>
    *   <script>Fides.gtm()</script>
    * </head>
    * ```
+   *
+   * @example
+   * With options to include non-applicable notices and use consent mechanism strings:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     Fides.gtm({
+   *       non_applicable_flag_mode: "include",
+   *       flag_type: "consent_mechanism"
+   *     });
+   *   </script>
+   * </head>
+   * ```
    */
-  gtm: () => void;
+  gtm: (options?: {
+    non_applicable_flag_mode?: "omit" | "include";
+    flag_type?: "boolean" | "consent_mechanism";
+  }) => void;
+
+  /**
+   * Enable the Adobe Experience Platform (AEP) integration. This should be called
+   * immediately after FidesJS is included. Once enabled, FidesJS will automatically
+   * sync consent to both Adobe Web SDK (Alloy) and Adobe ECID Opt-In Service (AppMeasurement)
+   * based on the user's consent preferences.
+   *
+   * The integration supports custom mappings for both Adobe Web SDK purposes and
+   * legacy ECID Opt-In categories. If no custom mappings are provided, default
+   * mappings are used that work for common use cases.
+   *
+   * @param options - Optional configuration for the Adobe Experience Platform integration
+   * @param options.purposeMapping - Maps Fides consent keys to Adobe Web SDK purposes. Default mapping includes: analytics → ['collect', 'measure'], functional → ['personalize'], advertising → ['share', 'personalize']
+   * @param options.ecidMapping - Maps Fides consent keys to Adobe ECID Opt-In categories. Default mapping includes: analytics → ['aa'], functional → ['target'], advertising → ['aam']
+   *
+   * @example
+   * Basic usage with default mappings:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>Fides.aep()</script>
+   * </head>
+   * ```
+   *
+   * @example
+   * With custom Adobe Web SDK purpose mappings:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     Fides.aep({
+   *       purposeMapping: {
+   *         analytics: ['collect', 'measure'],
+   *         marketing: ['personalize', 'share']
+   *       }
+   *     });
+   *   </script>
+   * </head>
+   * ```
+   *
+   * @example
+   * With custom ECID Opt-In category mappings:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     Fides.aep({
+   *       ecidMapping: {
+   *         analytics: ['aa', 'mediaaa'],
+   *         functional: ['target'],
+   *         advertising: ['aam', 'adcloud']
+   *       }
+   *     });
+   *   </script>
+   * </head>
+   * ```
+   *
+   * @example
+   * With both custom mappings:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     const aep = Fides.aep({
+   *       purposeMapping: {
+   *         analytics: ['collect', 'measure'],
+   *         marketing: ['personalize', 'share']
+   *       },
+   *       ecidMapping: {
+   *         analytics: ['aa'],
+   *         marketing: ['target', 'aam']
+   *       }
+   *     });
+   *
+   *     // Check current Adobe consent state
+   *     console.log(aep.consent());
+   *   </script>
+   * </head>
+   * ```
+   */
+  aep: (options?: {
+    purposeMapping?: Record<string, string[]>;
+    ecidMapping?: Record<string, string[]>;
+  }) => { consent: () => object };
+
+  /**
+   * Enable Google Consent Mode v2 integration. This integration automatically
+   * syncs Fides consent with Google's Consent Mode v2 API via gtag(), enabling
+   * proper consent management for Google Analytics, Google Ads, and other
+   * Google services that respect Consent Mode.
+   *
+   * This integration uses the gtag() API to update consent for Google's standard
+   * consent types: ad_storage, ad_personalization, ad_user_data, analytics_storage,
+   * and optional types like functionality_storage and personalization_storage.
+   *
+   * The integration gracefully handles cases where not all mapped consent keys
+   * are configured in Fides - it will only process consent for keys that exist
+   * in both the purposeMapping and the Fides consent object.
+   *
+   * @param options - Configuration for the Google Consent Mode integration
+   * @param options.purposeMapping - Maps Fides consent keys to Google consent types. Default mapping includes: analytics → analytics_storage, advertising → [ad_storage, ad_personalization, ad_user_data], functional → [functionality_storage, personalization_storage], data_sales_and_sharing → [ad_storage, ad_personalization, ad_user_data], marketing → [ad_storage, ad_personalization, ad_user_data]
+   *
+   * @example
+   * Basic usage with default mapping:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>Fides.gcm()</script>
+   * </head>
+   * ```
+   *
+   * @example
+   * With custom consent mapping:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     Fides.gcm({
+   *       purposeMapping: {
+   *         analytics: ['analytics_storage'],
+   *         advertising: ['ad_storage', 'ad_personalization', 'ad_user_data'],
+   *         functional: ['functionality_storage', 'personalization_storage']
+   *       }
+   *     });
+   *   </script>
+   * </head>
+   * ```
+   */
+  gcm: (options?: {
+    purposeMapping?: Record<string, ("ad_storage" | "ad_personalization" | "ad_user_data" | "analytics_storage" | "functionality_storage" | "personalization_storage" | "security_storage")[]>;
+  }) => { consent: () => Record<string, "granted" | "denied"> | null };
+
+  /**
+   * Enable the Matomo integration. FidesJS will automatically sync consent
+   * with Matomo's tracking and/or cookie consent APIs via `_paq.push()`.
+   *
+   * The integration looks for `analytics` or `performance` keys in the Fides
+   * consent object. When neither key is present (e.g. a non-consent
+   * jurisdiction), consent is granted to Matomo so tracking proceeds
+   * normally.
+   *
+   * ### Call before your Matomo tracker snippet
+   *
+   * `Fides.matomo()` synchronously pushes `requireConsent` into `_paq` so
+   * Matomo enters consent-required mode before the first `trackPageView`.
+   * For this to work, **`Fides.matomo()` must run before the standard Matomo
+   * tracker snippet on the page**. If the order is reversed, `trackPageView`
+   * is queued ahead of `requireConsent` and the first page view fires
+   * without consent.
+   *
+   * @param options - Optional configuration for the Matomo integration
+   * @param options.consentMode - Which Matomo consent mechanism to manage: `"tracking"` (default), `"cookie"`, or `"both"`
+   * @param options.rememberConsent - Persist consent via Matomo's `mtm_consent` cookie. Default `true`. Set `false` for session-only consent.
+   *
+   * @example
+   * Recommended page setup. `Fides.matomo()` runs before the Matomo tracker
+   * snippet so `requireConsent` is queued ahead of `trackPageView`:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>Fides.matomo();</script>
+   *
+   *   <!-- Your standard Matomo tracker snippet goes here, unchanged -->
+   *   <script>
+   *     var _paq = window._paq = window._paq || [];
+   *     // ... _paq.push(['trackPageView']), setTrackerUrl, setSiteId, etc.
+   *   </script>
+   * </head>
+   * ```
+   *
+   * @example
+   * Manage both tracking and cookie consent:
+   * ```html
+   * <script>Fides.matomo({ consentMode: "both" });</script>
+   * ```
+   *
+   * @example
+   * Session-only consent (no `mtm_consent` cookie written by Matomo):
+   * ```html
+   * <script>Fides.matomo({ rememberConsent: false });</script>
+   * ```
+   */
+  matomo: (options?: {
+    consentMode?: "tracking" | "cookie" | "both";
+    rememberConsent?: boolean;
+  }) => void;
+
+  /**
+   * Enable the Shopify integration. This should be called immediately after
+   * FidesJS is included. Once enabled, FidesJS will automatically push all
+   * consent updates to Shopify's Customer Privacy API, which can then be used
+   * to ensure consent is enforced on Shopify-managed apps & pixels.
+   *
+   * See the [Shopify installation tutorial](/consent/guides/install-fides-shopify) for more.
+   *
+   * @param options - Optional configuration for the Shopify integration
+   * @param options.sale_of_data_default - Controls the default value for Shopify's "sale of data" consent. If `true`, the user will be opted-in by default. If `false` or omitted, the user will be opted-out by default.
+   *
+   * @example
+   * Basic usage in your site's `<head>`:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     if (typeof Fides !== 'undefined' && typeof Fides.shopify === 'function') {
+   *       Fides.shopify();
+   *     }
+   *   </script>
+   * </head>
+   * ```
+   *
+   * @example
+   * With options to default "sale of data" to opt-in:
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js"></script>
+   *   <script>
+   *     if (typeof Fides !== 'undefined' && typeof Fides.shopify === 'function') {
+   *       Fides.shopify({
+   *          sale_of_data_default: true
+   *       });
+   *     }
+   *   </script>
+   * </head>
+   * ```
+   */
+  shopify: (options?: {
+    sale_of_data_default?: boolean;
+  }) => void;
 
   /**
    * Initializes FidesJS with an initial configuration object.
@@ -215,7 +530,7 @@ export interface Fides {
    * initialization until after your own custom JavaScript has run to set up some
    * config options. In this case, you can disable the automatic initialization
    * by including the query param `initialize=false` in the Fides script URL
-   * (see {@link /docs/dev-docs/js/privacy-center-fidesjs-hosting} for details).
+   * (see [Privacy Center FidesJS Hosting](/privacy-center-fidesjs/fidesjs/privacy-center-fidesjs-hosting) for details).
    * You will then need to call `Fides.init()` manually at the appropriate time.
    *
    * This function can also be used to reinitialize FidesJS. This is useful when
@@ -225,15 +540,69 @@ export interface Fides {
    * `fides_locale`, etc. Doing so without passing a config will reinitialize
    * FidesJS with the initial configuration, but taking into account any new overrides
    * such as the `fides_overrides` global or the query params.
+   *
+   * @example
+   * Disable FidesJS initialization and trigger manually instead:
+   * ```html
+   * <head>
+   *   <script src="https://privacy.example.com/fides.js?initialize=false"></script>
+   * </head>
+   * <body>
+   *   <!--- Later, in your own application code... -->
+   *   <script>Fides.init()</script>
+   * </body>
+   * ```
+   * Configure overrides after loading Fides.js tag.
+   * ```html
+   * <head>
+   *   <script src="path/to/fides.js">
+   *     // Loading Fides.js before setting window.fides_overrides requires re-initialization
+   *   </script>
+   *
+   *   <script>
+   *     function onChange(newData) {
+   *       // Update Fides options
+   *       window.fides_overrides = window.fides_overrides || {};
+   *       window.fides_overrides = {
+   *         fides_locale: newData,
+   *       };
+   *
+   *       // Reinitialize FidesJS
+   *       window.Fides.init();
+   *     };
+   *   </script>
+   * </head>
+   * ```
+   *
    */
   init: (config?: any) => Promise<void>;
+
+  /**
+   * An alternative way to subscribe to Fides events. The same events are supported, except the callback
+   * receives the event details directly. This is useful in restricted environments where you can't
+   * directly access `window.addEventListener`.
+   *
+   * Returns an unsubscribe function that can be called to remove the event listener.
+   *
+   * @example
+   * ```ts
+   * const unsubscribe = Fides.onFidesEvent("FidesUpdated", (detail) => {
+   *   console.log(detail.consent);
+   *   unsubscribe();
+   * });
+   * ```
+   *
+   * @param type The type of event to listen for, such as `FidesReady`, `FidesUpdated`, etc.
+   * @param callback The callback function to call when the event is triggered
+   */
+  onFidesEvent: (type: any, callback: (detail: any) => void) => () => void;
 
   /**
    * @deprecated
    * `Fides.init()` can now be used directly instead of `Fides.reinitialize()`.
    */
   reinitialize: () => Promise<void>;
-  
+
   /**
    * Check if the FidesJS experience should be shown to the user. This function
    * will return `true` if the user's session (location, property ID, etc.)
@@ -242,6 +611,147 @@ export interface Fides {
    * preferences) or in the case when the previous consent is no longer valid.
    */
   shouldShowExperience: () => boolean;
+
+  /**
+   * Encode the user's consent preferences into a Notice Consent string. See {@link FidesOptions.fides_string} for more details.
+   *
+   * @example
+   * ```ts
+   * const encoded = Fides.encodeNoticeConsentString({data_sales_and_sharing:0,analytics:1});
+   * console.log(encoded); // "eyJkYXRhX3NhbGVzX2FuZF9zaGFyaW5nIjowLCJhbmFseXRpY3MiOjF9"
+   * ```
+   *
+   * @param consent The user's consent preferences to encode. (Numeric values are supported for smaller string results and will be decoded to boolean values)
+   */
+  encodeNoticeConsentString: (
+    consent: Record<string, boolean | 0 | 1>,
+  ) => string;
+
+  /**
+   * Decode a Notice Consent string into a user's consent preferences. See {@link FidesOptions.fides_string} for more details.
+   *
+   * @example
+   * ```ts
+   * const decoded = Fides.decodeNoticeConsentString("eyJkYXRhX3NhbGVzX2FuZF9zaGFyaW5nIjowLCJhbmFseXRpY3MiOjF9");
+   * console.log(decoded); // {data_sales_and_sharing: false, analytics: true}
+   * ```
+   *
+   * @param base64String The Notice Consent string to decode.
+   */
+  decodeNoticeConsentString: (base64String: string) => {
+    [noticeKey: string]: boolean;
+  };
+
+  /**
+   * The detected geolocation that Fides uses to determine the user's experience.
+   * This field is read-only.
+   *
+   * @example
+   * ```ts
+   * {
+   *   "country": "ca",
+   *   "location": "ca-on",
+   *   "region": "on"
+   * }
+   * ```
+   */
+  geolocation?: any;
+
+  /**
+   * The detected i18n locale that Fides uses to determine the language shown to the user.
+   *
+   * @example
+   * ```ts
+   * "en"
+   * ```
+   *
+   * This field is read-only.
+   */
+  locale: string;
+
+  /**
+   * The user's identity values, which only include a copy of the fides user device id that we store in the fides_consent cookie e.g.
+   *
+   * @example
+   * ```ts
+   * {
+   *   "fides_user_device_id": "1234-"
+   * }
+   * ```
+   *
+   * This field is read-only.
+   */
+  identity: Record<string, string>;
+
+  /**
+   * Updates user consent preferences with either a `consent` object or `fidesString`.
+   * If both are provided, `fidesString` takes priority.
+   *
+   * @example
+   * Update consent using notice keys and boolean values:
+   * ```ts
+   * Fides.updateConsent({
+   *   consent: {
+   *     data_sales_and_sharing: false,
+   *     analytics: true
+   *   }
+   * });
+   * ```
+   *
+   * @example
+   * Update consent using string values instead of booleans:
+   * ```ts
+   * Fides.updateConsent({
+   *   consent: {
+   *     data_sales_and_sharing: "opt_out",
+   *     analytics: "opt_in",
+   *     terms_of_service: "acknowledge"
+   *   }
+   * });
+   * ```
+   *
+   * @example
+   * Update consent using a fidesString:
+   * ```ts
+   * Fides.updateConsent({
+   *   fidesString: ",,,eyJkYXRhX3NhbGVzX2FuZF9zaGFyaW5nIjowLCJhbmFseXRpY3MiOjF9"
+   * });
+   * ```
+   *
+   * @example
+   * Control validation behavior:
+   * ```ts
+   * // With validation="warn" - logs warnings but doesn't throw errors
+   * Fides.updateConsent({
+   *   consent: { notice_key: invalidValue },
+   *   validation: "warn"
+   * });
+   *
+   * // With validation="ignore" - silently accepts invalid values
+   * Fides.updateConsent({
+   *   consent: { notice_key: invalidValue },
+   *   validation: "ignore"
+   * });
+   * ```
+   *
+   * @param options - Options for updating consent
+   * @param options.consent - Object mapping notice keys to consent values:
+   *   - Boolean values: `true` (opt-in/consent granted) or `false` (opt-out/consent declined)
+   *   - String values:
+   *     - `"opt_in"` - user has explicitly opted in to this notice
+   *     - `"opt_out"` - user has explicitly opted out of this notice
+   *     - `"acknowledge"` - ONLY valid for notices with "notice_only" consent mechanism
+   * @param options.fidesString - A Fides string containing encoded consent preferences
+   * @param options.validation - Controls validation behavior: "throw" (default), "warn", or "ignore"
+   *   - "throw": Throws an error if any consent value is invalid (default)
+   *   - "warn": Logs a warning if any consent value is invalid, but continues processing
+   *   - "ignore": Silently accepts invalid values without validation
+   */
+  updateConsent: (options: {
+    consent?: Record<string, boolean | string>;
+    fidesString?: string;
+    validation?: "throw" | "warn" | "ignore";
+  }) => Promise<void>;
 
   /**
    * NOTE: The properties below are all marked @internal, despite being exported
@@ -256,8 +766,10 @@ export interface Fides {
   config?: any;
 
   /**
+   * Helps keep track of the real time values to be saved to the cookie. Gets updated during initialization, when the user toggles consent preferences, etc. and ultimately is used to update the browser cookie, the Fides.consent object, and the Fides.saved_consent object which represent more persistent values.
+   *
    * @internal
-   */ 
+   */
   cookie?: any;
 
   /**
@@ -275,26 +787,17 @@ export interface Fides {
   /**
    * @internal
    */
-  geolocation?: any;
-
-  /**
-   * DEFER (PROD-1815): This probably *should* be part of the documented SDK.
-   *
-   * @internal
-   */
-  identity: Record<string, string>;
-
-  /**
-   * @internal
-   */
   options: any;
 
   /**
+   * Represents the initial cookie consent values whether default or saved in the browser cookie. Compare to cookie.consent which represents the unsaved consent values we're going to end up saving to the browser cookie. In some cases we need to access the initial values saved in the cookie, rather than the current unsaved values.
+   *
    * @internal
    */
   saved_consent: Record<string, boolean>;
 
   /**
+   * @deprecated
    * @internal
    */
   tcf_consent: any;
@@ -307,5 +810,5 @@ export interface Fides {
   /**
    * @internal
    */
-  shopify: (options: any) => void;
+  blueconic: (options?: { approach: "onetrust" }) => void;
 }

@@ -4,6 +4,7 @@ import {
   ConsentValue,
   NoticeConsent,
   PrivacyNoticeWithPreference,
+  UserConsentPreference,
 } from "./consent-types";
 import {
   noticeHasConsentInCookie,
@@ -12,7 +13,7 @@ import {
 
 export const resolveLegacyConsentValue = (
   value: ConsentValue | undefined,
-  context: ConsentContext
+  context: ConsentContext,
 ): boolean => {
   if (value === undefined) {
     return false;
@@ -31,16 +32,18 @@ export const resolveLegacyConsentValue = (
 
 export const resolveConsentValue = (
   notice: PrivacyNoticeWithPreference,
-  context: ConsentContext,
-  consent: NoticeConsent | undefined
+  consent: NoticeConsent | undefined,
 ): boolean => {
   if (notice.consent_mechanism === ConsentMechanism.NOTICE_ONLY) {
     return true;
   }
-  // Note about GPC - consent has already applied to the cookie at this point, so we can trust preference there
-  // DEFER (PROD-1780): delete context arg for safety
   if (consent && noticeHasConsentInCookie(notice, consent)) {
-    return !!consent[notice.notice_key];
+    if (typeof consent[notice.notice_key] === "string") {
+      return transformUserPreferenceToBoolean(
+        consent[notice.notice_key] as UserConsentPreference,
+      );
+    }
+    return consent[notice.notice_key] as boolean;
   }
 
   return transformUserPreferenceToBoolean(notice.default_preference);

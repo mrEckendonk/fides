@@ -1,0 +1,127 @@
+import { SerializedError } from "@reduxjs/toolkit";
+import { FetchBaseQueryError } from "@reduxjs/toolkit/query";
+import {
+  ConfirmationModal,
+  Space,
+  Switch,
+  SwitchProps,
+  useMessage,
+} from "fidesui";
+import { useState } from "react";
+
+import { getErrorMessage } from "~/features/common/helpers";
+import { isErrorResult } from "~/types/errors";
+
+import { InfoTooltip } from "../../common/InfoTooltip";
+import { usePatchConfigurationSettingsMutation } from "../../config-settings/config-settings.slice";
+import {
+  useGetHealthQuery,
+  useGetTcfPurposeOverridesQuery,
+  usePatchTcfPurposeOverridesMutation,
+} from "../../plus/plus.slice";
+
+export const TCFOverrideToggle = ({
+  defaultChecked,
+  onChange,
+  ...props
+}: Omit<SwitchProps, "onChange" | "checked"> & {
+  onChange?: (checked: boolean) => void;
+}) => {
+  const message = useMessage();
+
+  const [isChecked, setIsChecked] = useState(defaultChecked);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const { isLoading: isHealthCheckLoading } = useGetHealthQuery();
+  const [
+    patchConfigSettingsTrigger,
+    { isLoading: isPatchConfigSettingsLoading },
+  ] = usePatchConfigurationSettingsMutation();
+  const [patchTcfPurposeOverridesTrigger] =
+    usePatchTcfPurposeOverridesMutation();
+  const { data: tcfPurposeOverrides } = useGetTcfPurposeOverridesQuery(
+    undefined,
+    {
+      skip: isHealthCheckLoading,
+    },
+  );
+
+  const handleOverrideOnChange = async (checked: boolean) => {
+    const handleResult = (
+      result:
+        | { data: object }
+        | { error: FetchBaseQueryError | SerializedError },
+    ) => {
+      onChange?.(checked);
+      if (isErrorResult(result)) {
+        const errorMsg = getErrorMessage(
+          result.error,
+          `An unexpected error occurred while saving vendor override settings. Please try again.`,
+        );
+        onChange?.(false);
+        message.error(errorMsg);
+      }
+    };
+
+    const result = await patchConfigSettingsTrigger({
+      consent: {
+        override_vendor_purposes: checked,
+      },
+    });
+
+    if (checked && tcfPurposeOverrides) {
+      await patchTcfPurposeOverridesTrigger(
+        tcfPurposeOverrides.map((po) => ({
+          ...po,
+          is_included: true,
+          required_legal_basis: undefined,
+        })),
+      );
+    }
+
+    handleResult(result);
+  };
+
+  const handleBeforeChange = (checked: boolean) => {
+    if (checked) {
+      setIsChecked(checked);
+      handleOverrideOnChange(checked);
+    } else {
+      setIsModalOpen(true);
+    }
+  };
+
+  const handleConfirmDisable = () => {
+    setIsChecked(false);
+    handleOverrideOnChange(false);
+    setIsModalOpen(false);
+  };
+
+  return (
+    <>
+      <Space orientation="vertical" size="small">
+        <span>Configure overrides for TCF related purposes.</span>
+        <Space size="small">
+          <Switch
+            size="small"
+            disabled={isPatchConfigSettingsLoading}
+            loading={isPatchConfigSettingsLoading}
+            {...props}
+            checked={isChecked}
+            defaultChecked={defaultChecked}
+            onClick={handleBeforeChange}
+            data-testid="tcf-override-toggle"
+          />
+          <span>Override vendor purposes</span>
+          <InfoTooltip label="Toggle on if you want to globally change any flexible legal bases or remove TCF purposes from your CMP" />
+        </Space>
+      </Space>
+      <ConfirmationModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConfirm={handleConfirmDisable}
+        title="Disable Vendor Overrides"
+        message="Are you sure you want to disable vendor overrides? Clicking 'Continue' will immediately remove any custom configurations you have set for TCF purposes for all experiences."
+      />
+    </>
+  );
+};

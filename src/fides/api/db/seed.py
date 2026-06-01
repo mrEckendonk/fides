@@ -2,6 +2,7 @@
 Provides functions that seed the application with data.
 """
 
+import os
 from typing import Dict, List, Optional
 
 from fideslang.default_taxonomy import DEFAULT_TAXONOMY
@@ -9,22 +10,21 @@ from loguru import logger as log
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from fides.api.api.v1.endpoints.dataset_endpoints import patch_dataset_configs
-from fides.api.api.v1.endpoints.saas_config_endpoints import (
-    instantiate_connection_from_template,
-)
 from fides.api.common_exceptions import KeyOrNameAlreadyExists
 from fides.api.db.base_class import FidesBase
 from fides.api.db.ctl_session import sync_session
 from fides.api.db.system import upsert_system
+from fides.api.models.application_config import ApplicationConfig
 from fides.api.models.client import ClientDetail
 from fides.api.models.connectionconfig import ConnectionConfig
 from fides.api.models.datasetconfig import DatasetConfig
 from fides.api.models.fides_user import FidesUser
 from fides.api.models.fides_user_permissions import FidesUserPermissions
 from fides.api.models.policy import Policy, Rule, RuleTarget
+from fides.api.models.saas_config_version import SaaSConfigVersion
 from fides.api.models.sql_models import (  # type: ignore[attr-defined]
     Dataset,
+    Organization,
     System,
     sql_model_map,
 )
@@ -36,13 +36,36 @@ from fides.api.schemas.connection_configuration.saas_config_template_values impo
     SaasConnectionTemplateValues,
 )
 from fides.api.schemas.dataset import DatasetConfigCtlDataset
+from fides.api.schemas.messaging.messaging import (
+    MessagingConfigRequest,
+    MessagingServiceDetailsMailgun,
+    MessagingServiceType,
+)
 from fides.api.schemas.policy import ActionType, DrpAction
+from fides.api.schemas.saas.saas_config import SaaSConfig
+from fides.api.service.connectors.saas.connector_registry_service import (
+    FileConnectorTemplateLoader,
+)
+from fides.api.service.messaging.messaging_crud_service import (
+    create_or_update_messaging_config,
+)
 from fides.api.util.connection_util import patch_connection_configs
+from fides.api.util.data_category import get_user_data_categories
 from fides.api.util.errors import AlreadyExistsError, QueryError
+from fides.api.util.saas_util import (
+    load_config_from_string,
+    load_dataset_from_string,
+)
 from fides.api.util.text import to_snake_case
+from fides.api.v1.endpoints.dataset_config_endpoints import patch_dataset_configs
+from fides.api.v1.endpoints.saas_config_endpoints import (
+    instantiate_connection_from_template,
+)
 from fides.config import CONFIG
+from fides.service.dataset.dataset_config_service import DatasetConfigService
+from fides.system_integration_link.repository import SystemIntegrationLinkRepository
 
-from .crud import create_resource, get_resource, list_resource, upsert_resources
+from .crud import upsert_resources
 from .samples import (
     load_sample_connections_from_project,
     load_sample_resources_from_project,
@@ -112,36 +135,6 @@ def create_or_update_parent_user() -> None:
             db=db_session,
             data={"user_id": user.id, "roles": [OWNER]},
         )
-
-
-def filter_data_categories(
-    categories: List[str], excluded_categories: List[str]
-) -> List[str]:
-    """
-    Filter data categories and their children out of a list of categories.
-
-    We only want user-related data categories, but not the parent category
-    We also only want 2nd level categories, otherwise there are policy conflicts
-    """
-    user_categories = [
-        category
-        for category in categories
-        if category.startswith("user.") and len(category.split(".")) < 3
-    ]
-    if excluded_categories:
-        duplicated_categories = [
-            category
-            for excluded_category in excluded_categories
-            for category in user_categories
-            if not category.startswith(excluded_category)
-        ]
-        default_categories = {
-            category
-            for category in duplicated_categories
-            if duplicated_categories.count(category) == len(excluded_categories)
-        }
-        return sorted(list(default_categories))
-    return sorted(user_categories)
 
 
 def get_client_id(db_session: Session) -> str:
@@ -310,112 +303,80 @@ def load_default_erasure_policy(
     )
 
 
-def load_default_dsr_policies() -> None:
+def load_default_dsr_policies(session: Session) -> None:
     """
     Checks whether DSR execution policies exist in the database, and
     inserts them to target a default set of data categories if not.
     """
-    with sync_session() as db_session:  # type: ignore[attr-defined]
-        client_id = get_client_id(db_session)
+    client_id = get_client_id(session)
 
-        # By default, include all categories *except* those related to a user's
-        # financial, payment, and credentials data. These are typically not
-        # included in access and erasure requests as they are covered by other
-        # compliance programs (e.g. legal, tax, security) and most
-        # organizations need to be extra careful about how these are used -
-        # especially for erasure! Therefore, a safe default for "out of the
-        # box" behaviour is to exclude these
-        excluded_data_categories = [
-            "user.financial",
-            "user.payment",
-            "user.authorization",
-        ]
-        all_data_categories = [
-            str(category.fides_key) for category in DEFAULT_TAXONOMY.data_category
-        ]
-        default_data_categories = filter_data_categories(
-            all_data_categories, excluded_data_categories
-        )
-        log.debug(
-            f"Preparing to create default rules for the following Data Categories: {default_data_categories} if they do not already exist"
-        )
+    # By default, include all categories *except* those related to a user's
+    # financial, payment, and credentials data. These are typically not
+    # included in access and erasure requests as they are covered by other
+    # compliance programs (e.g. legal, tax, security) and most
+    # organizations need to be extra careful about how these are used -
+    # especially for erasure! Therefore, a safe default for "out of the
+    # box" behaviour is to exclude these
 
-        load_default_access_policy(db_session, client_id, default_data_categories)
-        load_default_erasure_policy(db_session, client_id, default_data_categories)
+    default_data_categories = get_user_data_categories()
 
-        log.info("All default policies & rules created")
+    log.debug(
+        f"Preparing to create default rules for the following Data Categories: {default_data_categories} if they do not already exist"
+    )
+
+    load_default_access_policy(session, client_id, default_data_categories)
+    load_default_erasure_policy(session, client_id, default_data_categories)
+
+    log.info("All default policies & rules created")
 
 
-async def load_default_organization(async_session: AsyncSession) -> None:
+def sync_oob_saas_config_versions(session: Session) -> None:
     """
-    Seed the database with a default organization unless
-    one with a matching name already exists.
+    Upserts a SaaSConfigVersion row for every bundled (OOB) SaaS connector
+    template currently loaded in memory.
+
+    Called on startup so the table is bootstrapped on first deploy and
+    picks up new template versions automatically on each upgrade.
+    Rows are immutable once written, so this is safe to call repeatedly.
     """
 
-    log.info("Loading the default organization...")
-    organizations: List[Dict] = list(map(dict, DEFAULT_TAXONOMY.dict()["organization"]))
-
-    inserted = 0
-    for org in organizations:
+    templates = FileConnectorTemplateLoader.get_connector_templates()
+    existing = {
+        (row.connector_type, row.version)
+        for row in session.query(
+            SaaSConfigVersion.connector_type, SaaSConfigVersion.version
+        ).filter(SaaSConfigVersion.is_custom == False)  # noqa: E712
+    }
+    for connector_type, template in templates.items():
         try:
-            existing = await get_resource(
-                sql_model_map["organization"],
-                org["fides_key"],
-                async_session,
-                raise_not_found=False,
+            saas_config = SaaSConfig(**load_config_from_string(template.config))
+            if (connector_type, saas_config.version) in existing:
+                continue
+            dataset = load_dataset_from_string(template.dataset)
+            SaaSConfigVersion.upsert(
+                db=session,
+                connector_type=connector_type,
+                version=saas_config.version,
+                config=saas_config.model_dump(mode="json"),
+                dataset=dataset,
+                is_custom=False,
             )
-            if not existing:
-                await create_resource(sql_model_map["organization"], org, async_session)
-                inserted += 1
-        except AlreadyExistsError:
-            pass
-
-    log.debug(f"INSERTED {inserted} organization resource(s)")
-    log.debug(f"SKIPPED {len(organizations)-inserted} organization resource(s)")
-
-
-async def load_default_taxonomy(async_session: AsyncSession) -> None:
-    """Seed the database with the default taxonomy resources."""
-
-    upsert_resource_types = list(DEFAULT_TAXONOMY.__fields_set__)
-    upsert_resource_types.remove("organization")
-
-    log.info("Loading the default fideslang taxonomy resources...")
-    for resource_type in upsert_resource_types:
-        log.debug(f"Processing {resource_type} resources...")
-        default_resources = DEFAULT_TAXONOMY.dict()[resource_type]
-        existing_resources = await list_resource(
-            sql_model_map[resource_type], async_session
-        )
-        existing_keys = [item.fides_key for item in existing_resources]
-        resources = [
-            resource
-            for resource in default_resources
-            if resource["fides_key"] not in existing_keys
-        ]
-
-        if len(resources) == 0:
-            log.debug(f"No new {resource_type} resources to add from default taxonomy.")
-            continue
-
-        try:
-            await upsert_resources(
-                sql_model_map[resource_type], resources, async_session
+        except Exception:  # pylint: disable=broad-except
+            log.exception(
+                "Failed to sync SaaSConfigVersion for OOB connector '{}'",
+                connector_type,
             )
-        except QueryError:  # pragma: no cover
-            pass  # The create_resource function will log the error
-        else:
-            log.debug(f"UPSERTED {len(resources)} {resource_type} resource(s)")
 
 
-async def load_default_resources(async_session: AsyncSession) -> None:
+def load_default_resources(session: Session) -> None:
     """
     Seed the database with default resources that the application
     expects to be available.
     """
-    await load_default_organization(async_session)
-    await load_default_taxonomy(async_session)
-    load_default_dsr_policies()
+    load_default_organization(session)
+    load_default_taxonomy(session)
+    load_default_dsr_policies(session)
+    sync_oob_saas_config_versions(session)
 
 
 async def load_samples(async_session: AsyncSession) -> None:
@@ -430,7 +391,7 @@ async def load_samples(async_session: AsyncSession) -> None:
                 else:
                     await upsert_resources(
                         sql_model_map[resource_type],
-                        [e.dict() for e in resources],
+                        [e.model_dump(mode="json") for e in resources],
                         async_session,
                     )
     except QueryError:  # pragma: no cover
@@ -475,8 +436,8 @@ async def load_samples(async_session: AsyncSession) -> None:
                     )  # not supported by this API!
                     instantiate_connection_from_template(
                         db=db_session,
-                        saas_connector_type=connection.saas_connector_type,
-                        template_values=SaasConnectionTemplateValues.parse_obj(
+                        connector_template_type=connection.saas_connector_type,
+                        template_values=SaasConnectionTemplateValues.model_validate(
                             saas_template_data
                         ),
                     )
@@ -505,7 +466,7 @@ async def load_samples(async_session: AsyncSession) -> None:
                 patch_connection_configs(
                     db=db_session,
                     configs=[
-                        CreateConnectionConfigurationWithSecrets.parse_obj(
+                        CreateConnectionConfigurationWithSecrets.model_validate(
                             connection_config_data
                         )
                     ],
@@ -537,9 +498,10 @@ async def load_samples(async_session: AsyncSession) -> None:
                     dataset_pair = DatasetConfigCtlDataset(
                         fides_key=dataset_key, ctl_dataset_fides_key=dataset_key
                     )
+                    dataset_config_service = DatasetConfigService(db=db_session)
                     patch_dataset_configs(
                         dataset_pairs=[dataset_pair],
-                        db=db_session,
+                        dataset_config_service=dataset_config_service,
                         connection_config=connection_config,
                     )
                     dataset_config = DatasetConfig.get_by(
@@ -566,19 +528,101 @@ async def load_samples(async_session: AsyncSession) -> None:
                         )
                         continue
 
-                    linked_connection_config = ConnectionConfig.create_or_update(
-                        db=db_session,
-                        data={
-                            **connection_config.__dict__,
-                            **{"system_id": system.id},
-                        },
-                        check_name=False,
+                    SystemIntegrationLinkRepository().create_or_update_link(
+                        system_id=system.id,
+                        connection_config_id=connection_config.id,
+                        session=db_session,
                     )
-                    if not linked_connection_config:
-                        log.debug(
-                            f"Failed to link sample connection '{connection.key}' to system '{system_key}'"
-                        )
-                        continue
 
     except QueryError:  # pragma: no cover
         pass  # The upsert_resources function will log any error
+
+    if os.getenv("MAILGUN_DOMAIN") and os.getenv("MAILGUN_API_KEY"):
+        log.info("Loading Mailgun messaging config")
+        with sync_session() as db:
+            messaging_config = create_or_update_messaging_config(
+                db=db,
+                config=MessagingConfigRequest(
+                    key="my_mailgun_config",
+                    name="Mailgun",
+                    service_type=MessagingServiceType.mailgun,
+                    details=MessagingServiceDetailsMailgun(
+                        domain=os.getenv("MAILGUN_DOMAIN")
+                    ),
+                ),
+            )
+            messaging_config.set_secrets(
+                db=db,
+                messaging_secrets={  # type: ignore[arg-type]  # model_validate accepts dicts
+                    "mailgun_api_key": os.getenv("MAILGUN_API_KEY"),
+                },
+            )
+            CONFIG.notifications.notification_service_type = "mailgun"
+            ApplicationConfig.update_config_set(db, CONFIG)
+
+
+def load_default_organization(db: Session) -> None:
+    """
+    Seed the database with a default organization unless
+    one with a matching name already exists.
+    """
+    log.info("Loading the default organization...")
+    organizations: List[Dict] = list(
+        map(dict, DEFAULT_TAXONOMY.model_dump(mode="json")["organization"])
+    )
+
+    inserted = 0
+    for org in organizations:
+        try:
+            existing = Organization.get_by(
+                db=db, field="fides_key", value=org["fides_key"]
+            )
+            if not existing:
+                Organization.create(db=db, data=org, check_name=False)
+                inserted += 1
+        except AlreadyExistsError:
+            pass
+
+    log.debug(f"INSERTED {inserted} organization resource(s)")
+    log.debug(f"SKIPPED {len(organizations) - inserted} organization resource(s)")
+
+
+def load_default_taxonomy(db: Session) -> None:
+    """Synchronous version: Seed the database with the default taxonomy resources."""
+    upsert_resource_types = list(DEFAULT_TAXONOMY.model_fields_set)
+    upsert_resource_types.remove("organization")
+
+    log.info("Loading the default fideslang taxonomy resources...")
+    for resource_type in upsert_resource_types:
+        sql_model = sql_model_map[resource_type]
+        log.debug(f"Processing {resource_type} resources...")
+        default_resources = DEFAULT_TAXONOMY.model_dump(mode="json")[resource_type]
+
+        try:
+            # Fetch existing keys first
+            existing_keys = {item[0] for item in db.query(sql_model.fides_key).all()}
+        except Exception as exc:
+            log.error(f"Error fetching existing keys for {resource_type}: {exc}")
+            continue  # Skip this resource type if we can't get existing keys
+
+        # Filter for resources that don't exist
+        resources_to_create = [
+            resource
+            for resource in default_resources
+            if resource["fides_key"] not in existing_keys
+        ]
+
+        if not resources_to_create:
+            log.debug(f"No new {resource_type} resources to add from default taxonomy.")
+            continue
+
+        created_count = 0
+        for resource_data in resources_to_create:
+            try:
+                sql_model.create_or_update(db=db, data=resource_data)
+                created_count += 1
+            except Exception:
+                pass
+
+        if created_count > 0:
+            log.debug(f"UPSERTED {created_count} {resource_type} resource(s)")

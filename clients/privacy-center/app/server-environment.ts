@@ -1,4 +1,4 @@
-/* eslint-disable no-console,consistent-return */
+/* eslint-disable no-console */
 /**
  * Utility functions and logic that is designed to exclusively run server-side to configure the environment for the app, e.g.:
  * 1) Securely loading ENV variables for the client to use
@@ -7,27 +7,29 @@
  *
  * During server-side rendering, call loadPrivacyCenterEnvironment() to initialize the environment values for the App.
  */
+import type { AttributionOptions } from "fides-js";
 import { URL } from "url";
-import getPropertyFromUrl from "~/app/server-utils/getPropertyFromUrl";
+
 import loadEnvironmentVariables from "~/app/server-utils/loadEnvironmentVariables";
 import { PrivacyCenterSettings } from "~/app/server-utils/PrivacyCenterSettings";
-
-import {
-  isV1ConsentConfig,
-  translateV1ConfigToV2,
-} from "~/features/consent/helpers";
+import { transformConfig, validateConfig } from "~/common/validation";
 import { Property } from "~/types/api";
 import { PrivacyCenterConfig } from "~/types/api/models/PrivacyCenterConfig";
-import {
-  LegacyConfig,
-  LegacyConsentConfig,
-  Config,
-  ConsentConfig,
-} from "~/types/config";
+import { Config } from "~/types/config";
 
 /**
- * SERVER-SIDE functions
+ * Subset of PrivacyCenterSettings that are for use only on server-side and
+ * should never be exposed to the client.
  */
+
+export type PrivacyCenterServerSettings = Pick<
+  PrivacyCenterSettings,
+  | "SERVER_SIDE_FIDES_API_URL"
+  | "FIDES_JS_MAX_AGE_SECONDS"
+  | "FIDES_JS_SERVE_STALE_SECONDS"
+  | "MISSING_EXPERIENCE_BEHAVIOR"
+  | "LOG_LEVEL"
+>;
 
 /**
  * Subset of PrivacyCenterSettings that are forwarded to the client.
@@ -37,7 +39,6 @@ import {
 export type PrivacyCenterClientSettings = Pick<
   PrivacyCenterSettings,
   | "FIDES_API_URL"
-  | "SERVER_SIDE_FIDES_API_URL"
   | "DEBUG"
   | "GEOLOCATION_API_URL"
   | "IS_GEOLOCATION_ENABLED"
@@ -46,6 +47,7 @@ export type PrivacyCenterClientSettings = Pick<
   | "OVERLAY_PARENT_ID"
   | "MODAL_LINK_ID"
   | "PRIVACY_CENTER_URL"
+  | "SHOW_BRAND_LINK"
   | "FIDES_EMBED"
   | "FIDES_DISABLE_SAVE_API"
   | "FIDES_DISABLE_NOTICES_SERVED_API"
@@ -60,6 +62,20 @@ export type PrivacyCenterClientSettings = Pick<
   | "BASE_64_COOKIE"
   | "FIDES_PRIMARY_COLOR"
   | "FIDES_CLEAR_COOKIE"
+  | "FIDES_CONSENT_OVERRIDE"
+  | "FIDES_DISABLED_NOTICES"
+  | "FIDES_DISABLED_SYSTEMS"
+  | "FIDES_CONSENT_NON_APPLICABLE_FLAG_MODE"
+  | "FIDES_CONSENT_FLAG_TYPE"
+  | "FIDES_INITIALIZED_EVENT_MODE"
+  | "FIDES_UNSUPPORTED_REPEATED_SCRIPT_LOADING"
+  | "FIDES_COOKIE_SUFFIX"
+  | "FIDES_COOKIE_COMPRESSION"
+  | "ATTRIBUTION_ENABLED"
+  | "ATTRIBUTION_ANCHOR_TEXT"
+  | "ATTRIBUTION_DESTINATION_URL"
+  | "ATTRIBUTION_NOFOLLOW"
+  | "PRIVACY_REQUEST_DISCLOSURE_ENABLED"
 >;
 
 export type Styles = string;
@@ -71,14 +87,20 @@ export interface PrivacyCenterEnvironment {
   settings: PrivacyCenterClientSettings;
   config?: Config | PrivacyCenterConfig;
   styles?: Styles;
-  property?: Property;
+  property?: Property | null;
+  location?: {
+    country?: string;
+    location?: string;
+    region?: string;
+  };
 }
 
 /**
  * Load a config file from the given list of URLs, trying them in order until one is successfully read.
  */
+/* eslint-disable consistent-return */
 const loadConfigFile = async (
-  urls: (string | undefined)[]
+  urls: (string | undefined)[],
 ): Promise<string | undefined> => {
   // Dynamically import the "fs" module to read from the filesystem. This module
   // doesn't exist in the browser context, so to allow the bundler to function
@@ -101,7 +123,7 @@ const loadConfigFile = async (
       // DEFER: add support for https:// to fetch remote config files!
       if (url.protocol !== "file:") {
         throw new Error(
-          `Config file URLs currently must use the 'file:' protocol: ${urlString}`
+          `Config file URLs currently must use the 'file:' protocol: ${urlString}`,
         );
       }
       // Relative paths (e.g. "file:./") aren't supported by node's URL class.
@@ -111,9 +133,7 @@ const loadConfigFile = async (
         path = urlString.replace("file:", "");
       }
       const file = await fsPromises.readFile(path || url, "utf-8");
-      if (process.env.NODE_ENV === "development") {
-        console.log(`Loaded configuration file: ${urlString}`);
-      }
+      console.debug(`Loaded configuration file: ${urlString}`);
       return file;
     } catch (err: any) {
       // Catch "file not found" errors (ENOENT)
@@ -121,86 +141,13 @@ const loadConfigFile = async (
         continue;
       }
       // Log everything else and continue
-      console.log(
+      console.error(
         `Failed to load configuration file from ${urlString}. Error: `,
-        err
+        err,
       );
     }
   }
   /* eslint-enable no-restricted-syntax,no-continue,no-await-in-loop */
-};
-
-/**
- * Transform the config to the latest version so that components can
- * reference config variables uniformly.
- */
-export const transformConfig = (config: LegacyConfig): Config => {
-  if (isV1ConsentConfig(config.consent)) {
-    const v1ConsentConfig: LegacyConsentConfig = config.consent;
-    const translatedConsent: ConsentConfig = translateV1ConfigToV2({
-      v1ConsentConfig,
-    });
-    return { ...config, consent: translatedConsent };
-  }
-  return { ...config, consent: config.consent };
-};
-
-/**
- * Validate the config object
- */
-export const validateConfig = (
-  input: Config | LegacyConfig
-): { isValid: boolean; message: string } => {
-  // First, ensure we support LegacyConfig type if provided
-  const config = transformConfig(input);
-
-  // Cannot currently have more than one consent be executable
-  if (config.consent) {
-    const options = config.consent.page.consentOptions;
-    const executables = options.filter((option) => option.executable);
-    if (executables.length > 1) {
-      return {
-        isValid: false,
-        message: "Cannot have more than one consent option be executable",
-      };
-    }
-  }
-
-  const invalidFieldMessages = config.actions.flatMap((action) => {
-    /*
-      Validate that hidden fields must have a default_value or a query_param_key
-      defined, otherwise the field would never get a value assigned.
-    */
-    const invalidFields = Object.entries(
-      action.custom_privacy_request_fields || {}
-    )
-      .filter(
-        ([, field]) =>
-          field.hidden &&
-          field.default_value === undefined &&
-          field.query_param_key === undefined
-      )
-      .map(([key]) => `'${key}'`);
-
-    return invalidFields.length > 0
-      ? [
-          `${invalidFields.join(", ")} in the action with policy_key '${
-            action.policy_key
-          }'`,
-        ]
-      : [];
-  });
-
-  if (invalidFieldMessages.length > 0) {
-    return {
-      isValid: false,
-      message: `A default_value or query_param_key is required for hidden field(s) ${invalidFieldMessages.join(
-        ", "
-      )}`,
-    };
-  }
-
-  return { isValid: true, message: "Config is valid" };
 };
 
 /**
@@ -216,7 +163,7 @@ export const validateConfig = (
  * configuration file from this well-known path.
  */
 export const loadConfigFromFile = async (
-  configJsonUrl?: string
+  configJsonUrl?: string,
 ): Promise<Config | undefined> => {
   const urls = [
     configJsonUrl,
@@ -225,14 +172,14 @@ export const loadConfigFromFile = async (
   ];
   const file = await loadConfigFile(urls);
   if (file) {
-    const config = transformConfig(JSON.parse(file));
-    const { isValid, message } = validateConfig(config);
-    // DEFER: add more validations here, log helpful warnings, etc.
-    // (see https://github.com/ethyca/fides/issues/3171)
+    const parsedConfig = JSON.parse(file);
+    const { isValid, message } = validateConfig(parsedConfig);
     if (!isValid) {
-      console.warn("WARN: Configuration file is invalid! Message:", message);
-      return;
+      throw new Error(
+        `Privacy Center configuration is invalid and cannot start: ${message}`,
+      );
     }
+    const config = transformConfig(parsedConfig);
     return config;
   }
 };
@@ -250,7 +197,7 @@ export const loadConfigFromFile = async (
  * configuration file from this well-known path.
  */
 export const loadStylesFromFile = async (
-  configCssUrl?: string
+  configCssUrl?: string,
 ): Promise<string | undefined> => {
   const urls = [
     configCssUrl,
@@ -262,51 +209,38 @@ export const loadStylesFromFile = async (
 };
 
 /**
- * Loads all the ENV variable settings, configuration files, etc. to initialize the environment
+ * Load server settings from global environment variables
+ * The returned Server settings should never be exposed to the client
  */
-// eslint-disable-next-line no-underscore-dangle,@typescript-eslint/naming-convention
+export const loadServerSettings = (): PrivacyCenterServerSettings => {
+  const settings = loadEnvironmentVariables();
+  const serverSideSettings: PrivacyCenterServerSettings = {
+    SERVER_SIDE_FIDES_API_URL:
+      settings.SERVER_SIDE_FIDES_API_URL || settings.FIDES_API_URL,
+    FIDES_JS_MAX_AGE_SECONDS: settings.FIDES_JS_MAX_AGE_SECONDS,
+    FIDES_JS_SERVE_STALE_SECONDS: settings.FIDES_JS_SERVE_STALE_SECONDS,
+    MISSING_EXPERIENCE_BEHAVIOR: settings.MISSING_EXPERIENCE_BEHAVIOR,
+    LOG_LEVEL: settings.LOG_LEVEL,
+  };
 
-export const loadPrivacyCenterEnvironment = async ({
-  customPropertyPath = undefined,
-}: { customPropertyPath?: string } = {}): Promise<PrivacyCenterEnvironment> => {
-  if (typeof window !== "undefined") {
-    throw new Error(
-      "Unexpected error, cannot load server environment from client code!"
-    );
-  }
-  // DEFER: Log a version number here (see https://github.com/ethyca/fides/issues/3171)
-  if (process.env.NODE_ENV === "development") {
-    console.log("Load Privacy Center environment for session...");
-  }
+  return serverSideSettings;
+};
 
+export const getFidesApiUrl = () => {
+  const settings = loadEnvironmentVariables();
+  return settings.SERVER_SIDE_FIDES_API_URL || settings.FIDES_API_URL;
+};
+
+/**
+ * Returns the env variables that should be shared with the client
+ */
+export const getClientSettings = (): PrivacyCenterClientSettings => {
   // Load environment variables
   const settings = loadEnvironmentVariables();
-
-  let property;
-  if (settings.CUSTOM_PROPERTIES && customPropertyPath) {
-    const result = await getPropertyFromUrl({
-      customPropertyPath,
-      fidesApiUrl: settings.SERVER_SIDE_FIDES_API_URL || settings.FIDES_API_URL,
-    });
-    if (result) {
-      property = result;
-    }
-  }
-
-  // Load configuration file (if it exists)
-  const config =
-    property?.privacy_center_config ||
-    (await loadConfigFromFile(settings.CONFIG_JSON_URL));
-
-  // Load styling file (if it exists)
-  const styles =
-    property?.stylesheet || (await loadStylesFromFile(settings.CONFIG_CSS_URL));
 
   // Load client settings (ensuring we only pass-along settings that are safe for the client)
   const clientSettings: PrivacyCenterClientSettings = {
     FIDES_API_URL: settings.FIDES_API_URL,
-    SERVER_SIDE_FIDES_API_URL:
-      settings.SERVER_SIDE_FIDES_API_URL || settings.FIDES_API_URL,
     DEBUG: settings.DEBUG,
     IS_OVERLAY_ENABLED: settings.IS_OVERLAY_ENABLED,
     IS_PREFETCH_ENABLED: settings.IS_PREFETCH_ENABLED,
@@ -315,6 +249,7 @@ export const loadPrivacyCenterEnvironment = async ({
     OVERLAY_PARENT_ID: settings.OVERLAY_PARENT_ID,
     MODAL_LINK_ID: settings.MODAL_LINK_ID,
     PRIVACY_CENTER_URL: settings.PRIVACY_CENTER_URL,
+    SHOW_BRAND_LINK: settings.SHOW_BRAND_LINK,
     FIDES_EMBED: settings.FIDES_EMBED,
     FIDES_DISABLE_SAVE_API: settings.FIDES_DISABLE_SAVE_API,
     FIDES_DISABLE_NOTICES_SERVED_API: settings.FIDES_DISABLE_NOTICES_SERVED_API,
@@ -329,35 +264,35 @@ export const loadPrivacyCenterEnvironment = async ({
     BASE_64_COOKIE: settings.BASE_64_COOKIE,
     FIDES_PRIMARY_COLOR: settings.FIDES_PRIMARY_COLOR,
     FIDES_CLEAR_COOKIE: settings.FIDES_CLEAR_COOKIE,
+    FIDES_CONSENT_OVERRIDE: settings.FIDES_CONSENT_OVERRIDE,
+    FIDES_DISABLED_NOTICES: settings.FIDES_DISABLED_NOTICES,
+    FIDES_DISABLED_SYSTEMS: settings.FIDES_DISABLED_SYSTEMS,
+    FIDES_CONSENT_NON_APPLICABLE_FLAG_MODE:
+      settings.FIDES_CONSENT_NON_APPLICABLE_FLAG_MODE,
+    FIDES_CONSENT_FLAG_TYPE: settings.FIDES_CONSENT_FLAG_TYPE,
+    FIDES_INITIALIZED_EVENT_MODE: settings.FIDES_INITIALIZED_EVENT_MODE,
+    FIDES_UNSUPPORTED_REPEATED_SCRIPT_LOADING:
+      settings.FIDES_UNSUPPORTED_REPEATED_SCRIPT_LOADING,
+    FIDES_COOKIE_SUFFIX: settings.FIDES_COOKIE_SUFFIX,
+    FIDES_COOKIE_COMPRESSION: settings.FIDES_COOKIE_COMPRESSION,
+    ATTRIBUTION_ENABLED: settings.ATTRIBUTION_ENABLED,
+    ATTRIBUTION_ANCHOR_TEXT: settings.ATTRIBUTION_ANCHOR_TEXT,
+    ATTRIBUTION_DESTINATION_URL: settings.ATTRIBUTION_DESTINATION_URL,
+    ATTRIBUTION_NOFOLLOW: settings.ATTRIBUTION_NOFOLLOW,
+    PRIVACY_REQUEST_DISCLOSURE_ENABLED:
+      settings.PRIVACY_REQUEST_DISCLOSURE_ENABLED,
   };
 
-  // For backwards-compatibility, override FIDES_API_URL with the value from the config file if present
-  // DEFER: remove backwards compatibility (see https://github.com/ethyca/fides/issues/1264)
-  if (
-    config &&
-    (config?.server_url_production ||
-      config?.server_url_development ||
-      (config as any)?.fidesops_host_production ||
-      (config as any)?.fidesops_host_development)
-  ) {
-    console.warn(
-      "Using deprecated 'server_url_production' or 'server_url_development' config. " +
-        "Please update to using FIDES_PRIVACY_CENTER__FIDES_API_URL environment variable instead."
-    );
-    const legacyApiUrl =
-      process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test"
-        ? config.server_url_development ||
-          (config as any).fidesops_host_development
-        : config.server_url_production ||
-          (config as any).fidesops_host_production;
-
-    clientSettings.FIDES_API_URL = legacyApiUrl;
-  }
-
-  return {
-    settings: clientSettings,
-    config,
-    styles,
-    property,
-  };
+  return clientSettings;
 };
+
+export const buildAttributionOptions = (
+  settings: PrivacyCenterClientSettings,
+): AttributionOptions | undefined =>
+  settings.ATTRIBUTION_ENABLED
+    ? {
+        anchorText: settings.ATTRIBUTION_ANCHOR_TEXT,
+        destinationUrl: settings.ATTRIBUTION_DESTINATION_URL,
+        nofollow: settings.ATTRIBUTION_NOFOLLOW,
+      }
+    : undefined;

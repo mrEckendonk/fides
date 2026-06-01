@@ -2,23 +2,26 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Any, Dict, Optional, Type
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String, event
+from loguru import logger
+from sqlalchemy import Boolean, Column, DateTime, Enum, String, event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import Session, relationship
-from sqlalchemy_utils.types.encrypted.encrypted_type import (
-    AesGcmEngine,
-    StringEncryptedType,
-)
+from sqlalchemy.orm import RelationshipProperty, Session, relationship
 
 from fides.api.common_exceptions import KeyOrNameAlreadyExists
 from fides.api.db.base_class import Base, FidesBase, JSONTypeOverride
+from fides.api.db.encryption_utils import encrypted_type
+from fides.api.models.connection_config_saas_history import ConnectionConfigSaaSHistory
+from fides.api.models.consent_automation import ConsentAutomation
 from fides.api.models.sql_models import System  # type: ignore[attr-defined]
 from fides.api.schemas.policy import ActionType
 from fides.api.schemas.saas.saas_config import SaaSConfig
-from fides.config import CONFIG
+
+if TYPE_CHECKING:
+    from fides.api.models.detection_discovery.core import MonitorConfig
+    from fides.api.schemas.connection_configuration.enums.system_type import SystemType
 
 
 class ConnectionTestStatus(enum.Enum):
@@ -34,21 +37,32 @@ class ConnectionType(enum.Enum):
     Supported types to which we can connect Fides.
     """
 
-    attentive = "attentive"
+    attentive_email = "attentive_email"
+    aws = "aws"  # AWS for cloud infra discovery
     bigquery = "bigquery"
+    datahub = "datahub"
     dynamodb = "dynamodb"
     fides = "fides"
     generic_consent_email = "generic_consent_email"  # Run after the traversal
     generic_erasure_email = "generic_erasure_email"  # Run after the traversal
+    dynamic_erasure_email = "dynamic_erasure_email"  # Run after the traversal
+    entra = "entra"  # Microsoft Entra ID (Azure AD) for IDP discovery
     google_cloud_sql_mysql = "google_cloud_sql_mysql"
+    google_cloud_sql_postgres = "google_cloud_sql_postgres"
+    google_workspace = "google_workspace"
     https = "https"
     manual = "manual"  # Deprecated - use manual_webhook instead
     manual_webhook = "manual_webhook"  # Runs upfront before the traversal
+    manual_task = "manual_task"  # Manual task integration
+    jira_ticket = "jira_ticket"  # Jira ticket integration for DSR workflow
     mariadb = "mariadb"
     mongodb = "mongodb"
     mssql = "mssql"
     mysql = "mysql"
+    okta = "okta"
     postgres = "postgres"
+    rds_mysql = "rds_mysql"
+    rds_postgres = "rds_postgres"
     redshift = "redshift"
     s3 = "s3"
     saas = "saas"
@@ -56,28 +70,43 @@ class ConnectionType(enum.Enum):
     snowflake = "snowflake"
     sovrn = "sovrn"
     timescale = "timescale"
+    website = "website"
+    # Test connection types, used for testing purposes only
+    test_datastore = "test_datastore"  # used for ConfigurableTestMonitor
+    test_website = "test_website"  # used for ConfigurableTestWebsiteMonitor
 
     @property
     def human_readable(self) -> str:
         """Human-readable mapping for ConnectionTypes
         Add to this mapping if you add a new ConnectionType
         """
-        readable_mapping: Dict[str, str] = {
-            ConnectionType.attentive.value: "Attentive",
+        readable_mapping: dict[str, str] = {
+            ConnectionType.attentive_email.value: "Attentive Email",
+            ConnectionType.aws.value: "Amazon Web Services",
             ConnectionType.bigquery.value: "BigQuery",
+            ConnectionType.datahub.value: "DataHub",
+            ConnectionType.dynamic_erasure_email.value: "Dynamic Erasure Email",
             ConnectionType.dynamodb.value: "DynamoDB",
+            ConnectionType.entra.value: "Microsoft Entra ID",
             ConnectionType.fides.value: "Fides Connector",
             ConnectionType.generic_consent_email.value: "Generic Consent Email",
             ConnectionType.generic_erasure_email.value: "Generic Erasure Email",
             ConnectionType.google_cloud_sql_mysql.value: "Google Cloud SQL for MySQL",
+            ConnectionType.google_cloud_sql_postgres.value: "Google Cloud SQL for Postgres",
+            ConnectionType.google_workspace.value: "Google Workspace",
             ConnectionType.https.value: "Policy Webhook",
             ConnectionType.manual_webhook.value: "Manual Process",
+            ConnectionType.manual_task.value: "Manual Task",
+            ConnectionType.jira_ticket.value: "Jira Ticket",
             ConnectionType.manual.value: "Manual Connector",
             ConnectionType.mariadb.value: "MariaDB",
             ConnectionType.mongodb.value: "MongoDB",
             ConnectionType.mssql.value: "Microsoft SQL Server",
             ConnectionType.mysql.value: "MySQL",
+            ConnectionType.okta.value: "Okta",
             ConnectionType.postgres.value: "PostgreSQL",
+            ConnectionType.rds_mysql.value: "RDS MySQL",
+            ConnectionType.rds_postgres.value: "RDS Postgres",
             ConnectionType.redshift.value: "Amazon Redshift",
             ConnectionType.s3.value: "Amazon S3",
             ConnectionType.saas.value: "SaaS",
@@ -85,6 +114,9 @@ class ConnectionType(enum.Enum):
             ConnectionType.snowflake.value: "Snowflake",
             ConnectionType.sovrn.value: "Sovrn",
             ConnectionType.timescale.value: "TimescaleDB",
+            ConnectionType.website.value: "Website",
+            ConnectionType.test_datastore.value: "Test Datastore Connector -- not for production use",
+            ConnectionType.test_website.value: "Test Website Connector -- not for production use",
         }
         try:
             return readable_mapping[self.value]
@@ -92,6 +124,56 @@ class ConnectionType(enum.Enum):
             raise NotImplementedError(
                 "Add new ConnectionType to human_readable mapping"
             )
+
+    @property
+    def system_type(self) -> "SystemType":
+        from fides.api.schemas.connection_configuration.enums.system_type import (
+            SystemType,
+        )
+
+        system_type_mapping: dict[str, SystemType] = {
+            ConnectionType.attentive_email.value: SystemType.email,
+            ConnectionType.aws.value: SystemType.service,
+            ConnectionType.bigquery.value: SystemType.database,
+            ConnectionType.datahub.value: SystemType.data_catalog,
+            ConnectionType.dynamic_erasure_email.value: SystemType.email,
+            ConnectionType.dynamodb.value: SystemType.database,
+            ConnectionType.entra.value: SystemType.system,
+            ConnectionType.fides.value: SystemType.manual,
+            ConnectionType.generic_consent_email.value: SystemType.email,
+            ConnectionType.generic_erasure_email.value: SystemType.email,
+            ConnectionType.google_cloud_sql_mysql.value: SystemType.database,
+            ConnectionType.google_cloud_sql_postgres.value: SystemType.database,
+            ConnectionType.google_workspace.value: SystemType.system,
+            ConnectionType.https.value: SystemType.manual,
+            ConnectionType.manual_webhook.value: SystemType.manual,
+            ConnectionType.manual_task.value: SystemType.manual,
+            ConnectionType.jira_ticket.value: SystemType.manual,
+            ConnectionType.manual.value: SystemType.manual,
+            ConnectionType.mariadb.value: SystemType.database,
+            ConnectionType.mongodb.value: SystemType.database,
+            ConnectionType.mssql.value: SystemType.database,
+            ConnectionType.mysql.value: SystemType.database,
+            ConnectionType.okta.value: SystemType.system,
+            ConnectionType.postgres.value: SystemType.database,
+            ConnectionType.rds_mysql.value: SystemType.database,
+            ConnectionType.rds_postgres.value: SystemType.database,
+            ConnectionType.redshift.value: SystemType.database,
+            ConnectionType.s3.value: SystemType.database,
+            ConnectionType.saas.value: SystemType.saas,
+            ConnectionType.scylla.value: SystemType.database,
+            ConnectionType.snowflake.value: SystemType.database,
+            ConnectionType.sovrn.value: SystemType.email,
+            ConnectionType.timescale.value: SystemType.database,
+            ConnectionType.website.value: SystemType.website,
+            ConnectionType.test_datastore.value: SystemType.database,
+            ConnectionType.test_website.value: SystemType.website,
+        }
+
+        try:
+            return system_type_mapping[self.value]
+        except KeyError:
+            raise NotImplementedError("Add new ConnectionType to system_type mapping")
 
 
 class AccessLevel(enum.Enum):
@@ -116,33 +198,44 @@ class ConnectionConfig(Base):
     description = Column(String, index=True, nullable=True)
     connection_type = Column(Enum(ConnectionType), nullable=False)
     access = Column(Enum(AccessLevel), nullable=False)
+    # NOTE: fidesplus registers SQLAlchemy attribute events on this column
+    # for cross-connection credential sync (Jira SaaS → jira_ticket).
+    # Avoid bulk/raw SQL updates to secrets; use ORM instance-level updates
+    # to ensure events fire. See fidesplus/jira/jira_credential_sync.py
     secrets = Column(
-        MutableDict.as_mutable(
-            StringEncryptedType(
-                JSONTypeOverride,
-                CONFIG.security.app_encryption_key,
-                AesGcmEngine,
-                "pkcs5",
-            )
-        ),
+        MutableDict.as_mutable(encrypted_type(type_in=JSONTypeOverride)),
         nullable=True,
-    )  # Type bytea in the db
+    )  # Type bytes in the db
     last_test_timestamp = Column(DateTime(timezone=True))
     last_test_succeeded = Column(Boolean)
+    # When True, this connection is excluded from privacy request (DSR)
+    # execution — see graph_task.skip_if_disabled, the request runner's
+    # collection / dataset filters, and the manual-webhook DSR utilities.
+    # It does NOT exclude the connection from discovery monitors, connection
+    # tests, or any non-DSR consumer; those have their own enable/disable
+    # controls.
     disabled = Column(Boolean, server_default="f", default=False)
     disabled_at = Column(DateTime(timezone=True))
+
+    # Optional column to store the last time the connection was "ran"
+    # Each integration can determine the semantics of what "being run" is
+    last_run_timestamp = Column(DateTime(timezone=True), nullable=True)
 
     # only applicable to ConnectionConfigs of connection type saas
     saas_config = Column(
         MutableDict.as_mutable(JSONB), index=False, unique=False, nullable=True
     )
 
-    system_id = Column(
-        String, ForeignKey(System.id_field_path), nullable=True, index=True
-    )
-
     datasets = relationship(  # type: ignore[misc]
         "DatasetConfig",
+        back_populates="connection_config",
+        cascade="all, delete",
+    )
+
+    # Monitor configs related to this connection config.
+    # If the connection config is deleted, the monitor configs will be deleted as well.
+    monitors: RelationshipProperty[List["MonitorConfig"]] = relationship(
+        "MonitorConfig",
         back_populates="connection_config",
         cascade="all, delete",
     )
@@ -154,31 +247,75 @@ class ConnectionConfig(Base):
         uselist=False,
     )
 
+    manual_task = relationship(  # type: ignore[misc]
+        "ManualTask",
+        primaryjoin="and_(ConnectionConfig.id == foreign(ManualTask.parent_entity_id), "
+        "ManualTask.parent_entity_type == 'connection_config')",
+        cascade="delete",
+        uselist=False,
+    )
+
     pre_approval_webhooks = relationship(  # type: ignore[misc]
         "PreApprovalWebhook",
         back_populates="connection_config",
         cascade="delete",
     )
 
-    system = relationship(System, back_populates="connection_configs", uselist=False)
+    # system_id FK has been migrated to the system_connection_config_link join table;
+    # this relationship uses that table via secondary=.
+    system = relationship(
+        System,
+        secondary="system_connection_config_link",
+        uselist=False,
+        viewonly=True,
+    )
+
+    consent_automation: RelationshipProperty[Optional[ConsentAutomation]] = (
+        relationship(ConsentAutomation, uselist=False, cascade="all, delete-orphan")
+    )
 
     # Identifies the privacy actions needed from this connection by the associated system.
     enabled_actions = Column(
         ARRAY(Enum(ActionType, native_enum=False)), unique=False, nullable=True
     )
 
+    oauth_config = relationship(  # type: ignore[misc]
+        "OAuthConfig",
+        back_populates="connection_config",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
     @property
     def system_key(self) -> Optional[str]:
-        """Property for caching a system identifier for systems (or connector names as a fallback) for consent reporting"""
+        """Returns the system fides_key (or connector name as a fallback).
+
+        .. deprecated::
+            Use :attr:`consent_tracking_key` for consent status tracking.
+            ``system_key`` returns the *system* fides_key, which conflates
+            multiple integrations on the same system.  Retained for any
+            external callers and backward compatibility only.
+        """
         if self.system:
             return self.system.fides_key
-        # TODO: Remove this fallback once all connection configs are linked to systems
-        # This will always be None in the future. `self.system` will always be set.
         return self.name
+
+    @property
+    def consent_tracking_key(self) -> str:
+        """Unique key used for per-connection consent status tracking.
+
+        Uses the ConnectionConfig key so that each integration on a system
+        gets its own entry in ``affected_system_status``, avoiding the
+        overwrite bug when a system has multiple integrations.
+        """
+        return self.key
 
     @property
     def authorized(self) -> bool:
         """Returns True if the connection config has an access token, used for OAuth2 connections"""
+
+        if self.connection_type == ConnectionType.jira_ticket:
+            return bool(self.secrets and "access_token" in self.secrets)
 
         saas_config = self.get_saas_config()
         if not saas_config:
@@ -189,10 +326,18 @@ class ConnectionConfig(Base):
             return False
 
         # hard-coding to avoid cyclic dependency
-        if authentication.strategy != "oauth2_authorization_code":
+        if authentication.strategy not in [
+            "oauth2_authorization_code",
+            "oauth2_client_credentials",
+        ]:
             return False
 
-        return bool(self.secrets and self.secrets.get("access_token"))
+        return bool(self.secrets and "access_token" in self.secrets.keys())
+
+    @property
+    def name_or_key(self) -> str:
+        """Returns the ConnectionConfig name if it exists, or its key otherwise."""
+        return self.name or self.key
 
     @classmethod
     def create_without_saving(
@@ -221,10 +366,20 @@ class ConnectionConfig(Base):
         self,
         db: Session,
         saas_config: SaaSConfig,
+        datasets: Optional[List[Dict[str, Any]]] = None,
+        record_history: bool = True,
     ) -> None:
         """
         Updates the SaaS config and initializes any empty secrets with
-        connector param default values if available (will not override any existing secrets)
+        connector param default values if available (will not override any existing secrets).
+
+        The optional ``datasets`` argument is a pre-fetched list of dataset dicts
+        associated with this connection.  Callers that want a history snapshot to
+        include dataset context should query DatasetConfig themselves and pass the
+        result here.
+
+        Set ``record_history=False`` to skip creating a ConnectionConfigSaaSHistory
+        snapshot (e.g. in tests or one-off migrations where audit history is not needed).
         """
         default_secrets = {
             connector_param.name: connector_param.default_value
@@ -233,7 +388,18 @@ class ConnectionConfig(Base):
         }
         updated_secrets = {**default_secrets, **(self.secrets or {})}
         self.secrets = updated_secrets
-        self.saas_config = saas_config.dict()
+        self.saas_config = saas_config.model_dump(mode="json")
+
+        if record_history:
+            ConnectionConfigSaaSHistory.create_snapshot(
+                db=db,
+                connection_config_id=self.id,
+                connection_key=self.key,
+                version=saas_config.version,
+                config=self.saas_config,
+                datasets=datasets,
+            )
+
         self.save(db)
 
     def update_test_status(
@@ -252,8 +418,20 @@ class ConnectionConfig(Base):
 
     def delete(self, db: Session) -> Optional[FidesBase]:
         """Hard deletes datastores that map this ConnectionConfig."""
+        logger.info(
+            "Deleting connection config {}...",
+            self.key,
+        )
         for dataset in self.datasets:
             dataset.delete(db=db)
+
+        for monitor in self.monitors:
+            logger.info(
+                "Deleting monitor config {} associated with connection config {}...",
+                monitor.key,
+                self.key,
+            )
+            monitor.delete(db=db)
 
         return super().delete(db=db)
 

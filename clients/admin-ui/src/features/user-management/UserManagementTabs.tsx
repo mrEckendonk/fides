@@ -1,17 +1,19 @@
-import { Box, Flex } from "fidesui";
+import { Flex, Tabs } from "fidesui";
 import RoleDescriptionDrawer from "user-management/RoleDescriptionDrawer";
 
 import { useAppSelector } from "~/app/hooks";
-import DataTabs, { type TabData } from "~/features/common/DataTabs";
+import { useFeatures } from "~/features/common/features";
 import { ScopeRegistryEnum } from "~/types/api";
 
 import { useHasPermission } from "../common/Restrict";
 import PermissionsForm from "./PermissionsForm";
+import RolesForm from "./RolesForm";
+import StewardshipTab from "./StewardshipTab";
 import {
   selectActiveUserId,
   useGetUserByIdQuery,
 } from "./user-management.slice";
-import UserForm, { type Props as UserFormProps } from "./UserForm";
+import UserForm, { type UserFormProps } from "./UserForm";
 
 const UserManagementTabs = ({
   onSubmit,
@@ -19,6 +21,7 @@ const UserManagementTabs = ({
   ...props
 }: UserFormProps) => {
   const activeUserId = useAppSelector(selectActiveUserId);
+  const { rbac: isRbacEnabled } = useFeatures();
 
   // Subscribe to active user
   useGetUserByIdQuery(activeUserId as string, { skip: !activeUserId });
@@ -28,12 +31,13 @@ const UserManagementTabs = ({
   ]);
 
   // If it is a new user, or if the user does not have permission
-  const permissionsTabDisabled = !activeUserId || !canUpdateUserPermissions;
+  const rolesTabDisabled = !activeUserId || !canUpdateUserPermissions;
 
-  const tabs: TabData[] = [
+  const tabs = [
     {
       label: "Profile",
-      content: (
+      key: "profile",
+      children: (
         <UserForm
           onSubmit={onSubmit}
           initialValues={initialValues}
@@ -42,31 +46,38 @@ const UserManagementTabs = ({
       ),
     },
     {
-      label: "Permissions",
-      content: (
-        <Flex gap="97px">
-          <Box w={{ base: "100%", md: "50%", xl: "50%" }}>
+      label: isRbacEnabled ? "Roles" : "Permissions",
+      key: "roles",
+      children: isRbacEnabled ? (
+        <div className="w-full p-4 md:w-[70%] xl:w-3/5">
+          <RolesForm />
+        </div>
+      ) : (
+        <Flex style={{ gap: "97px" }}>
+          <div className="w-full md:w-1/2 xl:w-1/2">
             <PermissionsForm />
-          </Box>
-          <Box
-            position="absolute"
-            top="96px"
-            right={6}
-            height="calc(100% + 100px)"
-            overflowY="scroll"
-            padding={6}
-            w="35%"
-            borderLeftWidth="1px"
+          </div>
+          <div
+            className="absolute right-6 w-[35%] overflow-y-scroll border-l p-6"
+            style={{ top: "96px", height: "calc(100% + 100px)" }}
           >
             <RoleDescriptionDrawer />
-          </Box>
+          </div>
         </Flex>
       ),
-      isDisabled: permissionsTabDisabled,
+      disabled: rolesTabDisabled,
+      forceRender: !rolesTabDisabled,
+    },
+    {
+      label: "Stewardship",
+      key: "stewardship",
+      children: <StewardshipTab />,
+      disabled: !activeUserId,
+      forceRender: !!activeUserId,
     },
   ];
 
-  return <DataTabs data={tabs} />;
+  return <Tabs items={tabs} />;
 };
 
 export default UserManagementTabs;

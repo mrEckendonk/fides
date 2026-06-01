@@ -1,4 +1,8 @@
+import { CUSTOM_TAG_COLOR } from "fidesui";
+
 import { ActionType, DrpAction, PrivacyRequestStatus } from "~/types/api";
+import { ExecutionAndAuditLogResponse } from "~/types/api/models/ExecutionAndAuditLogResponse";
+import { PrivacyRequestUser } from "~/types/api/models/PrivacyRequestUser";
 
 export interface DenyPrivacyRequest {
   id: string;
@@ -17,12 +21,60 @@ export enum ExecutionLogStatus {
   COMPLETE = "complete",
   ERROR = "error",
   PAUSED = "paused",
+  AWAITING_PROCESSING = "awaiting_processing",
   RETRYING = "retrying",
   SKIPPED = "skipped",
+  POLLING = "polling",
+  // Audit log statuses for pre-approval webhooks
+  APPROVED = "approved",
+  DENIED = "denied",
+  PRE_APPROVAL_WEBHOOK_TRIGGERED = "pre_approval_webhook_triggered",
+  PRE_APPROVAL_ELIGIBLE = "pre_approval_eligible",
+  PRE_APPROVAL_NOT_ELIGIBLE = "pre_approval_not_eligible",
 }
 
-export interface ExecutionLog {
-  collection_name: string;
+export const ExecutionLogStatusLabels: Record<ExecutionLogStatus, string> = {
+  [ExecutionLogStatus.IN_PROCESSING]: "In processing",
+  [ExecutionLogStatus.PENDING]: "Pending",
+  [ExecutionLogStatus.COMPLETE]: "Complete",
+  [ExecutionLogStatus.ERROR]: "Error",
+  [ExecutionLogStatus.PAUSED]: "Paused",
+  [ExecutionLogStatus.AWAITING_PROCESSING]: "Awaiting input",
+  [ExecutionLogStatus.RETRYING]: "Retrying",
+  [ExecutionLogStatus.SKIPPED]: "Skipped",
+  [ExecutionLogStatus.POLLING]: "Awaiting polling",
+  [ExecutionLogStatus.APPROVED]: "Approved",
+  [ExecutionLogStatus.DENIED]: "Denied",
+  [ExecutionLogStatus.PRE_APPROVAL_WEBHOOK_TRIGGERED]: "Webhooks triggered",
+  [ExecutionLogStatus.PRE_APPROVAL_ELIGIBLE]: "Eligible",
+  [ExecutionLogStatus.PRE_APPROVAL_NOT_ELIGIBLE]: "Not eligible",
+};
+
+export const ExecutionLogStatusColors: Record<
+  ExecutionLogStatus,
+  CUSTOM_TAG_COLOR | undefined
+> = {
+  [ExecutionLogStatus.ERROR]: CUSTOM_TAG_COLOR.ERROR,
+  [ExecutionLogStatus.SKIPPED]: CUSTOM_TAG_COLOR.WARNING,
+  [ExecutionLogStatus.AWAITING_PROCESSING]: CUSTOM_TAG_COLOR.MINOS,
+  [ExecutionLogStatus.IN_PROCESSING]: undefined,
+  [ExecutionLogStatus.PENDING]: undefined,
+  [ExecutionLogStatus.COMPLETE]: undefined,
+  [ExecutionLogStatus.PAUSED]: undefined,
+  [ExecutionLogStatus.RETRYING]: undefined,
+  [ExecutionLogStatus.POLLING]: CUSTOM_TAG_COLOR.WARNING,
+  [ExecutionLogStatus.APPROVED]: CUSTOM_TAG_COLOR.SUCCESS,
+  [ExecutionLogStatus.DENIED]: CUSTOM_TAG_COLOR.WARNING,
+  [ExecutionLogStatus.PRE_APPROVAL_WEBHOOK_TRIGGERED]: CUSTOM_TAG_COLOR.INFO,
+  [ExecutionLogStatus.PRE_APPROVAL_ELIGIBLE]: CUSTOM_TAG_COLOR.SUCCESS,
+  [ExecutionLogStatus.PRE_APPROVAL_NOT_ELIGIBLE]: CUSTOM_TAG_COLOR.WARNING,
+};
+
+export interface ExecutionLog extends Pick<
+  ExecutionAndAuditLogResponse,
+  "connection_key" | "saas_version"
+> {
+  collection_name: string | null;
   fields_affected: FieldsAffected[];
   message: string;
   action_type: string;
@@ -52,10 +104,11 @@ export type PrivacyRequestResults = Record<string, ExecutionLog[]>;
 export interface PrivacyRequestEntity {
   status: PrivacyRequestStatus;
   results?: PrivacyRequestResults;
+  task_status_by_dataset?: Record<string, string>;
   identity: {
-    [key: string]: { label: string; value: any };
+    [key: string]: { label: string; value: string | null };
   };
-  identity_verified_at?: string;
+  identity_verified_at?: string | null;
   custom_privacy_request_fields?: {
     [key: string]: { label: string; value: any };
   };
@@ -68,14 +121,18 @@ export interface PrivacyRequestEntity {
     drp_action?: DrpAction;
     execution_timeframe?: number;
   };
-  reviewer: {
-    id: string;
-    username: string;
-  };
+  reviewer?: PrivacyRequestUser;
   created_at: string;
-  reviewed_by: string;
+  reviewed_by?: string;
+  submitted_by?: string;
+  finalized_at?: string;
+  submitter?: PrivacyRequestUser;
+  finalized_by?: string;
   id: string;
   days_left?: number;
+  source?: string;
+  location?: string;
+  property_id?: string | null;
 }
 
 export interface PrivacyRequestResponse {
@@ -89,9 +146,11 @@ export interface PrivacyRequestResponse {
 export interface PrivacyRequestParams {
   status?: PrivacyRequestStatus[];
   action_type?: ActionType[];
+  fuzzy_search_str?: string;
   id: string;
   from: string;
   to: string;
+  is_overdue?: boolean;
   page: number;
   size: number;
   verbose?: boolean;
@@ -103,12 +162,6 @@ export type RetryRequests = {
   checkAll: boolean;
   errorRequests: string[];
 };
-
-export interface MessagingConfigResponse {
-  storage: {
-    active_default_storage_type: string;
-  };
-}
 
 export interface StorageConfigResponse {
   notifications: {
@@ -134,12 +187,28 @@ export interface ConfigStorageDetailsRequest {
   format?: string;
 }
 
+export interface S3SecretsDetails {
+  aws_access_key_id: string;
+  aws_secret_access_key: string;
+}
+
+export interface GCSSecretsDetails {
+  type: string;
+  project_id: string;
+  private_key_id: string;
+  private_key: string;
+  client_email: string;
+  client_id: string;
+  auth_uri: string;
+  token_uri: string;
+  auth_provider_x509_cert_url: string;
+  client_x509_cert_url: string;
+  universe_domain: string;
+}
+
 export interface ConfigStorageSecretsDetailsRequest {
   type?: string;
-  details?: {
-    aws_access_key_id: string;
-    aws_secret_access_key: string;
-  };
+  details?: S3SecretsDetails | GCSSecretsDetails;
 }
 
 export interface ConfigMessagingRequest {
@@ -165,4 +234,40 @@ export interface ConfigMessagingSecretsRequest {
     twilio_messaging_service_sid?: string;
     twilio_sender_phone_number?: string;
   };
+}
+
+export enum ActivityTimelineItemTypeEnum {
+  REQUEST_UPDATE = "Request update",
+  INTERNAL_COMMENT = "Internal comment",
+  INTERNAL_AUTOMATION_COMMENT = "Internal automation comment",
+  MANUAL_TASK = "Manual task",
+}
+
+export const TimelineItemColorMap: Record<
+  ActivityTimelineItemTypeEnum,
+  CUSTOM_TAG_COLOR
+> = {
+  [ActivityTimelineItemTypeEnum.REQUEST_UPDATE]: CUSTOM_TAG_COLOR.DEFAULT,
+  [ActivityTimelineItemTypeEnum.INTERNAL_COMMENT]: CUSTOM_TAG_COLOR.MARBLE,
+  [ActivityTimelineItemTypeEnum.INTERNAL_AUTOMATION_COMMENT]:
+    CUSTOM_TAG_COLOR.MARBLE,
+  [ActivityTimelineItemTypeEnum.MANUAL_TASK]: CUSTOM_TAG_COLOR.NECTAR,
+};
+
+export interface ActivityTimelineItem {
+  author: string;
+  title?: string;
+  date: Date;
+  type: ActivityTimelineItemTypeEnum;
+  logCount?: number;
+  onClick?: () => void;
+  description?: string;
+  isError: boolean;
+  isSkipped: boolean;
+  isAwaitingInput: boolean;
+  isPolling: boolean;
+  id: string;
+  attachments?: { id: string; file_name: string }[];
+  isDuplicateDetection?: boolean;
+  hasRelatedRequests?: boolean;
 }

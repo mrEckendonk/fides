@@ -16,12 +16,12 @@ import {
   TableSkeletonLoader,
   useServerSidePagination,
 } from "common/table/v2";
-import { Button, Flex, HStack } from "fidesui";
+import { Button, ChakraFlex as Flex, ChakraHStack as HStack } from "fidesui";
 import { useRouter } from "next/router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getQueryParamsFromList } from "~/features/common/modals/FilterModal";
-import { ADD_MULTIPLE_VENDORS_ROUTE } from "~/features/common/nav/v2/routes";
+import { ADD_MULTIPLE_VENDORS_ROUTE } from "~/features/common/nav/routes";
 import AddVendor from "~/features/configure-consent/AddVendor";
 import {
   ConsentManagementFilterModal,
@@ -76,12 +76,12 @@ export const ConsentManagementTable = () => {
 
   const selectedDataUseFilters = useMemo(
     () => getQueryParamsFromList(dataUseOptions, "data_uses"),
-    [dataUseOptions]
+    [dataUseOptions],
   );
 
   const selectedLegalBasisFilters = useMemo(
     () => getQueryParamsFromList(legalBasisOptions, "legal_bases"),
-    [legalBasisOptions]
+    [legalBasisOptions],
   );
   const selectedPurposeFilters = useMemo(() => {
     const normalOptions = purposeOptions
@@ -103,7 +103,7 @@ export const ConsentManagementTable = () => {
   }, [purposeOptions]);
   const selectedConsentCategoryFilters = useMemo(
     () => getQueryParamsFromList(consentCategoryOptions, "consent_category"),
-    [consentCategoryOptions]
+    [consentCategoryOptions],
   );
 
   const {
@@ -123,10 +123,13 @@ export const ConsentManagementTable = () => {
 
   const [globalFilter, setGlobalFilter] = useState<string>();
 
-  const updateGlobalFilter = (searchTerm: string) => {
-    resetPageIndexToDefault();
-    setGlobalFilter(searchTerm);
-  };
+  const updateGlobalFilter = useCallback(
+    (searchTerm: string) => {
+      resetPageIndexToDefault();
+      setGlobalFilter(searchTerm);
+    },
+    [resetPageIndexToDefault, setGlobalFilter],
+  );
 
   const {
     isFetching: isReportFetching,
@@ -216,7 +219,7 @@ export const ConsentManagementTable = () => {
         header: (props) => <DefaultHeaderCell value="Cookies" {...props} />,
       }),
     ],
-    []
+    [],
   );
 
   const tableInstance = useReactTable<SystemSummary>({
@@ -277,17 +280,14 @@ export const ConsentManagementTable = () => {
           consentCategoryOptions={consentCategoryOptions}
           onConsentCategoryChange={onConsentCategoryChange}
         />
-        <HStack alignItems="center" spacing={4}>
+        <HStack alignItems="center" spacing={2}>
           <AddVendor
             buttonLabel="Add vendors"
-            buttonVariant="outline"
             onButtonClick={dictionaryService ? goToAddMultiple : undefined}
           />
           <Button
             onClick={onOpenFilter}
             data-testid="filter-multiple-systems-btn"
-            size="xs"
-            variant="outline"
           >
             Filter
           </Button>
@@ -295,7 +295,7 @@ export const ConsentManagementTable = () => {
       </TableActionBar>
       <FidesTableV2 tableInstance={tableInstance} onRowClick={onRowClick} />
       <PaginationBar
-        totalRows={totalRows}
+        totalRows={totalRows || 0}
         pageSizes={PAGE_SIZES}
         setPageSize={setPageSize}
         onPreviousPageClick={onPreviousPageClick}

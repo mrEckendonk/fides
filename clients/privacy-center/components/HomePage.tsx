@@ -1,0 +1,289 @@
+"use client";
+
+import {
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraHeading as Heading,
+  ChakraLink as Link,
+  ChakraStack as Stack,
+  useChakraDisclosure as useDisclosure,
+  useChakraToast as useToast,
+} from "fidesui";
+import type { NextPage } from "next";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import React, { ReactNode, useEffect, useState } from "react";
+
+import { useAppSelector } from "~/app/hooks";
+import { getEffectivePrivacyCenterLinks } from "~/common/config-links";
+import { encodePolicyKey } from "~/common/policy-key";
+import { ConfigErrorToastOptions } from "~/common/toast-options";
+import BrandLink from "~/components/BrandLink";
+import ConsentCard from "~/components/consent/ConsentCard";
+import {
+  ConsentRequestModal,
+  useConsentRequestModal,
+} from "~/components/modals/consent-request-modal/ConsentRequestModal";
+import NoticeEmptyStateModal from "~/components/modals/NoticeEmptyStateModal";
+import PrivacyCard from "~/components/PrivacyCard";
+import TextOrHtml from "~/components/TextOrHtml";
+import { useConfig } from "~/features/common/config.slice";
+import {
+  selectIsNoticeDriven,
+  useSettings,
+} from "~/features/common/settings.slice";
+import { selectPrivacyExperience } from "~/features/consent/consent.slice";
+import { useSubscribeToPrivacyExperienceQuery } from "~/features/consent/hooks";
+import { useGetIdVerificationConfigQuery } from "~/features/id-verification";
+
+const HomePage: NextPage = () => {
+  const config = useConfig();
+  const router = useRouter();
+  const params = useParams();
+  const propertyPath = params?.propertyPath as string | undefined;
+  const basePath = propertyPath ? `/${propertyPath}` : "";
+  const [isVerificationRequired, setIsVerificationRequired] =
+    useState<boolean>(false);
+  const [isConsentVerificationDisabled, setIsConsentVerificationDisabled] =
+    useState<boolean>(false);
+  const toast = useToast();
+
+  const {
+    isOpen: isConsentModalOpenConst,
+    onOpen: onConsentModalOpen,
+    onClose: onConsentModalClose,
+    currentView: currentConsentModalView,
+    setCurrentView: setCurrentConsentModalView,
+    consentRequestId,
+    setConsentRequestId,
+    successHandler: consentModalSuccessHandler,
+  } = useConsentRequestModal();
+  let isConsentModalOpen = isConsentModalOpenConst;
+  const getIdVerificationConfigQuery = useGetIdVerificationConfigQuery();
+
+  const {
+    SHOW_BRAND_LINK,
+    ALLOW_HTML_DESCRIPTION,
+    PRIVACY_REQUEST_DISCLOSURE_ENABLED,
+  } = useSettings();
+
+  const policyLinks = getEffectivePrivacyCenterLinks(config);
+
+  // Subscribe to experiences just to see if there are any notices.
+  // The subscription automatically handles skipping if overlay is not enabled
+  useSubscribeToPrivacyExperienceQuery();
+  const noticeEmptyStateModal = useDisclosure();
+
+  const searchParams = useSearchParams();
+
+  const experience = useAppSelector(selectPrivacyExperience);
+  const isNoticeDriven = useAppSelector(selectIsNoticeDriven);
+  const emptyNotices = !experience?.privacy_notices?.length;
+
+  const handleConsentCardOpen = () => {
+    if (isNoticeDriven && emptyNotices) {
+      noticeEmptyStateModal.onOpen();
+    } else {
+      onConsentModalOpen();
+    }
+  };
+
+  useEffect(() => {
+    if (getIdVerificationConfigQuery.isError) {
+      // TODO(#2299): Use error utils from shared package.
+      const errorData = (getIdVerificationConfigQuery.error as any)?.data;
+      toast({
+        description: errorData?.detail,
+        ...ConfigErrorToastOptions,
+      });
+      return;
+    }
+
+    if (getIdVerificationConfigQuery.isSuccess) {
+      setIsVerificationRequired(
+        getIdVerificationConfigQuery.data.identity_verification_required,
+      );
+      setIsConsentVerificationDisabled(
+        getIdVerificationConfigQuery.data.disable_consent_identity_verification,
+      );
+    }
+  }, [
+    getIdVerificationConfigQuery,
+    setIsVerificationRequired,
+    setIsConsentVerificationDisabled,
+    toast,
+  ]);
+
+  const handlePrivacyRequestOpen = (policyKey: string) => {
+    // Preserve search params and property path prefix when navigating
+    const currentSearchParams = searchParams?.toString();
+    const encoded = encodePolicyKey(policyKey);
+    const url = currentSearchParams
+      ? `${basePath}/privacy-request/${encoded}?${currentSearchParams}`
+      : `${basePath}/privacy-request/${encoded}`;
+    router.push(url);
+  };
+
+  const actions = config.actions ?? [];
+  const content: ReactNode[] = [];
+
+  actions.forEach((action, index) => {
+    content.push(
+      <PrivacyCard
+        // eslint-disable-next-line react/no-array-index-key
+        key={index}
+        title={action.title}
+        iconPath={action.icon_path}
+        description={action.description}
+        onClick={() =>
+          handlePrivacyRequestOpen(`${index}:${action.policy_key}`)
+        }
+      />,
+    );
+  });
+
+  const showConsentModal = searchParams?.get("showConsentModal") === "true";
+  if (config.includeConsent && config.consent) {
+    content.push(
+      <ConsentCard
+        key="consentCard"
+        title={config.consent.button.title}
+        iconPath={config.consent.button.icon_path}
+        description={config.consent.button.description}
+        onOpen={handleConsentCardOpen}
+      />,
+    );
+    if (showConsentModal) {
+      // manually override whether to show the consent modal given
+      // the query param `showConsentModal`
+      isConsentModalOpen = true;
+    }
+  }
+
+  return (
+    <main data-testid="home" className="pc-page pc-page--home">
+      <Stack align="center" py={["6", "16"]} px={5} spacing={14}>
+        <Stack align="center" spacing={3}>
+          <Heading
+            className="pc-page__heading"
+            fontSize={["3xl", "4xl"]}
+            color="gray.800"
+            fontWeight="semibold"
+            textAlign="center"
+            data-testid="heading"
+          >
+            {config.title}
+          </Heading>
+
+          <TextOrHtml
+            className="pc-page__description"
+            fontSize={["small", "medium"]}
+            fontWeight="medium"
+            maxWidth={624}
+            textAlign="center"
+            color="gray.800"
+            data-testid="description"
+            allowHTMLDescription={ALLOW_HTML_DESCRIPTION}
+          >
+            {config.description}
+          </TextOrHtml>
+
+          {config.description_subtext?.map((paragraph, index) => (
+            <TextOrHtml
+              fontSize={["small", "medium"]}
+              fontWeight="medium"
+              maxWidth={624}
+              textAlign="center"
+              color="gray.800"
+              data-testid={`description-${index}`}
+              allowHTMLDescription={ALLOW_HTML_DESCRIPTION}
+              // eslint-disable-next-line react/no-array-index-key
+              key={`description-${index}`}
+            >
+              {paragraph}
+            </TextOrHtml>
+          ))}
+        </Stack>
+        <Flex m={-2} flexDirection={["column", "column", "row"]}>
+          {content}
+        </Flex>
+
+        {config.addendum?.map((paragraph, index) => (
+          <TextOrHtml
+            fontSize={["small", "medium"]}
+            fontWeight="medium"
+            maxWidth={624}
+            color="gray.800"
+            data-testid={`addendum-${index}`}
+            allowHTMLDescription={ALLOW_HTML_DESCRIPTION}
+            // eslint-disable-next-line react/no-array-index-key
+            key={`addendum-${index}`}
+          >
+            {paragraph}
+          </TextOrHtml>
+        ))}
+
+        {(SHOW_BRAND_LINK ||
+          policyLinks.length > 0 ||
+          PRIVACY_REQUEST_DISCLOSURE_ENABLED) && (
+          <Box position="relative" width="100%">
+            <Flex
+              className="pc-policy-links"
+              justifyContent="center"
+              gap={6}
+              flexWrap="wrap"
+            >
+              {policyLinks.map(({ url, label }) => (
+                <Link
+                  className="pc-policy-links__link"
+                  key={`${url}-${label}`}
+                  fontSize={["small", "medium"]}
+                  fontWeight="medium"
+                  textAlign="center"
+                  textDecoration="underline"
+                  color="gray.800"
+                  href={url}
+                  isExternal
+                >
+                  {label}
+                </Link>
+              ))}
+              {PRIVACY_REQUEST_DISCLOSURE_ENABLED && (
+                <Link
+                  fontSize={["small", "medium"]}
+                  fontWeight="medium"
+                  textAlign="center"
+                  textDecoration="underline"
+                  color="gray.800"
+                  href={`${basePath}/privacy-request-metrics`}
+                >
+                  {config.metrics?.link_text ?? "Privacy request disclosures"}
+                </Link>
+              )}
+            </Flex>
+            <BrandLink isHomePage position="absolute" right={6} bottom={0} />
+          </Box>
+        )}
+      </Stack>
+
+      <ConsentRequestModal
+        isOpen={isConsentModalOpen}
+        onClose={onConsentModalClose}
+        currentView={currentConsentModalView}
+        setCurrentView={setCurrentConsentModalView}
+        consentRequestId={consentRequestId}
+        setConsentRequestId={setConsentRequestId}
+        isVerificationRequired={
+          isVerificationRequired && !isConsentVerificationDisabled
+        }
+        successHandler={consentModalSuccessHandler}
+      />
+
+      <NoticeEmptyStateModal
+        isOpen={noticeEmptyStateModal.isOpen}
+        onClose={noticeEmptyStateModal.onClose}
+      />
+    </main>
+  );
+};
+
+export default HomePage;

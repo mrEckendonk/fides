@@ -18,7 +18,7 @@ const hexToHSL = (hex: string): Hsl | null => {
     let g = parseInt(result[2], 16);
     let b = parseInt(result[3], 16);
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions,no-sequences
-    (r /= 255), (g /= 255), (b /= 255);
+    ((r /= 255), (g /= 255), (b /= 255));
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     let h;
@@ -30,7 +30,6 @@ const hexToHSL = (hex: string): Hsl | null => {
     } else {
       const d = max - min;
       s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      // eslint-disable-next-line default-case
       switch (max) {
         case r:
           h = (g - b) / d + (g < b ? 6 : 0);
@@ -41,11 +40,12 @@ const hexToHSL = (hex: string): Hsl | null => {
         case b:
           h = (r - g) / d + 4;
           break;
+        default:
+          h = 0;
+          break;
       }
-      // @ts-ignore
       h /= 6;
     }
-    // @ts-ignore
     return { h, s, l };
   } catch (e) {
     return null;
@@ -80,7 +80,7 @@ export enum ColorFormat {
 export const generateLighterColor = (
   color: string | Hsl,
   format: ColorFormat,
-  grade: 1 | 2
+  grade: 1 | 2,
 ): string => {
   const hsl: Hsl | null =
     format === ColorFormat.HEX ? hexToHSL(color as string) : (color as Hsl);

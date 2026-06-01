@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from enum import Enum
+from enum import Enum, StrEnum
 from functools import lru_cache
 from os.path import dirname, join
-from typing import Any, Dict, Iterable, List, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
 import yaml
 from pydantic import BaseModel
@@ -308,7 +308,7 @@ class LocationRegulationBase(Selection):
     """Base Location Regulation Schema"""
 
     name: str
-    continent: Continent
+    continent: Optional[Continent] = None
     default_selected: bool = False
 
 
@@ -317,6 +317,7 @@ class Location(LocationRegulationBase):
 
     belongs_to: List[str] = []
     regulation: List[str] = []
+    is_country: bool = False
 
 
 class LocationGroup(Location):
@@ -332,7 +333,7 @@ def load_locations() -> Dict[str, Location]:
         _locations = yaml.safe_load(file).get("locations", [])
         location_dict = {}
         for location in _locations:
-            location_dict[location["id"]] = Location.parse_obj(location)
+            location_dict[location["id"]] = Location.model_validate(location)
         return location_dict
 
 
@@ -343,7 +344,7 @@ def load_location_groups() -> Dict[str, LocationGroup]:
         _location_groups = yaml.safe_load(file).get("location_groups", [])
         location_group_dict = {}
         for location_group in _location_groups:
-            location_group_dict[location_group["id"]] = LocationGroup.parse_obj(
+            location_group_dict[location_group["id"]] = LocationGroup.model_validate(
                 location_group
             )
         return location_group_dict
@@ -377,7 +378,7 @@ def load_regulations() -> Dict[str, LocationRegulationBase]:
         _regulations = yaml.safe_load(file).get("regulations", [])
         regulation_dict = {}
         for regulation in _regulations:
-            regulation_dict[regulation["id"]] = LocationRegulationBase.parse_obj(
+            regulation_dict[regulation["id"]] = LocationRegulationBase.model_validate(
                 regulation
             )
         return regulation_dict
@@ -407,11 +408,33 @@ privacy_notice_regions_by_id: Dict[str, Union[Location, LocationGroup]] = (
 )  # should only be accessed for read-only access
 
 
+def get_location_by_id(location: str) -> Optional[Location]:
+    """
+    Get a Location object by ID, with automatic format normalization.
+
+    Handles various location formats (e.g., "US-CA", "us-ca", "us_ca") by
+    normalizing to the internal format (lowercase with underscores) used in locations.yml.
+
+    Args:
+        location: Location string in any format
+
+    Returns:
+        Location object if found, None otherwise
+
+    Examples:
+        >>> get_location_by_id("US-CA")  # ISO 3166 format
+        >>> get_location_by_id("us_ca")  # Internal format
+        >>> get_location_by_id("us-ca")  # Mixed format
+    """
+    normalized = location.lower().replace("-", "_")
+    return locations_by_id.get(normalized)
+
+
 # dynamically create an enum based on definitions loaded from YAML
 # This is a combination of "locations" and "location groups" for use on Privacy Experiences
-PrivacyNoticeRegion: Enum = Enum(  # type: ignore[misc]
+PrivacyNoticeRegion = StrEnum(  # type: ignore[misc]
     "PrivacyNoticeRegion",
-    {location.id: location.id for location in privacy_notice_regions_by_id.values()},
+    [(location.id, location.id) for location in privacy_notice_regions_by_id.values()],
 )
 
 # Create a notice region enum that includes regions we no longer support but still preserve

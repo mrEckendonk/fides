@@ -1,3 +1,4 @@
+/* eslint-disable no-underscore-dangle */
 /**
  * Extension for GPP
  *
@@ -11,35 +12,38 @@ import {
   CmpStatus,
   SignalStatus,
   TcfEuV2,
-  UsCaV1,
-  UsCoV1,
-  UsCtV1,
-  UsNatV1,
-  UsUtV1,
-  UsVaV1,
+  UsNat,
 } from "@iabgpp/cmpapi";
-import { makeStub } from "./lib/gpp/stub";
-import { extractTCStringForCmpApi } from "./lib/tcf/events";
+
+import { FidesEvent } from "./fides";
+import { getGpcContext } from "./lib/consent-context";
 import {
-  allNoticesAreDefaultOptIn,
-  isPrivacyExperience,
-  shouldResurfaceConsent,
-} from "./lib/consent-utils";
-import { ETHYCA_CMP_ID } from "./lib/tcf/constants";
-import type {
   FidesGlobal,
   FidesOptions,
   NoticeConsent,
   PrivacyNoticeWithPreference,
 } from "./lib/consent-types";
-import { GPPUSApproach, GppFunction } from "./lib/gpp/types";
-import { FidesEvent } from "./fides";
+import {
+  allNoticesAreDefaultOptIn,
+  isPrivacyExperience,
+  shouldResurfaceBanner,
+} from "./lib/consent-utils";
+import { saveFidesCookie } from "./lib/cookie";
+import { formatFidesStringWithGpp } from "./lib/fides-string";
+import {
+  CMP_VERSION,
+  FIDES_US_REGION_TO_GPP_SECTION,
+  GPPUSApproach,
+} from "./lib/gpp/constants";
+import { fidesStringToConsent } from "./lib/gpp/string-to-consent";
+import { makeStub } from "./lib/gpp/stub";
+import { GppFunction } from "./lib/gpp/types";
 import {
   setGppNoticesProvidedFromExperience,
   setGppOptOutsFromCookieAndExperience,
 } from "./lib/gpp/us-notices";
-
-const CMP_VERSION = 1;
+import { ETHYCA_CMP_ID } from "./lib/tcf/constants";
+import { extractTCStringForCmpApi } from "./lib/tcf/events";
 
 declare global {
   interface Window {
@@ -64,7 +68,7 @@ declare global {
 const userHasExistingPrefs = (
   savedConsent: NoticeConsent | undefined,
   fides_string: string | undefined,
-  notices: Array<PrivacyNoticeWithPreference> | undefined
+  notices: Array<PrivacyNoticeWithPreference> | undefined,
 ): boolean => {
   if (!savedConsent) {
     return false;
@@ -74,10 +78,10 @@ const userHasExistingPrefs = (
   }
   return Boolean(
     notices &&
-      Object.entries(savedConsent).some(
-        ([key, val]) =>
-          key in notices.map((i) => i.notice_key) && val !== undefined
-      )
+    Object.entries(savedConsent).some(
+      ([key, val]) =>
+        key in notices.map((i) => i.notice_key) && val !== undefined,
+    ),
   );
 };
 
@@ -87,7 +91,7 @@ const userHasExistingPrefs = (
  * @param event: FidesEvent
  * @param cmpApi: the CMP API model
  */
-const setTcString = (event: FidesEvent, cmpApi: CmpApi) => {
+const setTcString = (event: FidesEvent, cmpApi: CmpApi): boolean => {
   if (!isPrivacyExperience(window.Fides.experience)) {
     return false;
   }
@@ -107,51 +111,88 @@ const setTcString = (event: FidesEvent, cmpApi: CmpApi) => {
 
 /** From our options, derive what APIs of GPP are applicable */
 const getSupportedApis = () => {
-  const supportedApis: string[] = [];
+  const experienceSupportedApis: string[] = [];
   if (isPrivacyExperience(window.Fides.experience)) {
     const { gpp_settings: gppSettings } = window.Fides.experience;
     if (gppSettings && gppSettings.enabled) {
       if (window.Fides.options.tcfEnabled && gppSettings.enable_tcfeu_string) {
-        supportedApis.push(`${TcfEuV2.ID}:${TcfEuV2.NAME}`);
+        experienceSupportedApis.push(`${TcfEuV2.ID}:${TcfEuV2.NAME}`);
       }
-      if (gppSettings.us_approach === GPPUSApproach.NATIONAL) {
-        supportedApis.push(`${UsNatV1.ID}:${UsNatV1.NAME}`);
+      fidesDebugger("GPP settings", gppSettings);
+      if (
+        gppSettings.us_approach === GPPUSApproach.NATIONAL ||
+        gppSettings.us_approach === GPPUSApproach.ALL
+      ) {
+        fidesDebugger("GPP: setting US National APIs");
+        experienceSupportedApis.push(`${UsNat.ID}:${UsNat.NAME}`);
       }
-      if (gppSettings.us_approach === GPPUSApproach.STATE) {
+      if (
+        gppSettings.us_approach === GPPUSApproach.STATE ||
+        gppSettings.us_approach === GPPUSApproach.ALL
+      ) {
+        fidesDebugger("GPP: setting US State APIs");
         // TODO: include the states based off of locations/regulations.
-        // For now, hard code all of them. https://ethyca.atlassian.net/browse/PROD-1595
-        [UsCaV1, UsCoV1, UsCtV1, UsUtV1, UsVaV1].forEach((state) => {
-          supportedApis.push(`${state.ID}:${state.NAME}`);
+        // For now, use all of them. https://ethyca.atlassian.net/browse/PROD-1595
+        Object.values(FIDES_US_REGION_TO_GPP_SECTION).forEach((state) => {
+          if (state.id !== UsNat.ID) {
+            experienceSupportedApis.push(`${state.id}:${state.name}`);
+          }
         });
       }
     }
   }
-  return supportedApis;
+  return experienceSupportedApis;
 };
 
 const initializeGppCmpApi = () => {
   makeStub();
   const cmpApi = new CmpApi(ETHYCA_CMP_ID, CMP_VERSION);
   cmpApi.setCmpStatus(CmpStatus.LOADED);
-  window.addEventListener("FidesInitialized", (event) => {
-    // TODO (PROD-1439): re-evaluate if GPP is "cheating" accessing window.Fides instead of using the event details only
+  window.addEventListener("FidesReady", (event) => {
     const { experience, saved_consent: savedConsent, options } = window.Fides;
-    const isTcfEnabled = options.tcfEnabled;
-    cmpApi.setSupportedAPIs(getSupportedApis());
-    // Set status to ready immediately upon initialization, if either:
-    // A. Consent should not be resurfaced
-    // B. User has no prefs and has all opt-in notices and TCF is disabled
+    const experienceSupportedApis = getSupportedApis();
+
+    // Set up supported APIs before validating experience since getSupportedApis() needs it
+    cmpApi.setSupportedAPIs(experienceSupportedApis);
+
+    if (!isPrivacyExperience(experience)) {
+      return;
+    }
+
+    // Check for fides_string override in options and set consent preferences if present.
+    const { fidesString } = options;
+    if (fidesString) {
+      fidesStringToConsent({
+        fidesString,
+        cmpApi,
+      });
+    }
+
+    // When there's no fides_string, determine if we should immediately set up the GPP state and mark it as ready.
+    // We proceed if EITHER:
+    // 1. Consent should not be resurfaced (i.e., user has valid consent that hasn't expired)
+    //    OR
+    // 2. ALL of these conditions are met:
+    //    - TCF is disabled (not using TCF EU consent)
+    //    - All notices in the experience default to opt-in
+    //    - User has no existing preferences (either in cookie, fides_string, or mapped to notices)
     if (
-      isPrivacyExperience(experience) &&
-      (!shouldResurfaceConsent(experience, event.detail, savedConsent) ||
-        (!isTcfEnabled &&
+      !fidesString &&
+      (!shouldResurfaceBanner(
+        experience,
+        event.detail,
+        savedConsent,
+        options,
+      ) ||
+        (!options.tcfEnabled &&
           allNoticesAreDefaultOptIn(experience.privacy_notices) &&
           !userHasExistingPrefs(
             savedConsent,
             event.detail.fides_string,
-            experience.privacy_notices
+            experience.privacy_notices,
           )))
     ) {
+      const context = getGpcContext();
       const tcSet = setTcString(event, cmpApi);
       if (tcSet) {
         cmpApi.setApplicableSections([TcfEuV2.ID]);
@@ -159,11 +200,13 @@ const initializeGppCmpApi = () => {
       const sectionsSet = setGppNoticesProvidedFromExperience({
         cmpApi,
         experience,
+        context,
       });
       const sectionsChanged = setGppOptOutsFromCookieAndExperience({
         cmpApi,
         cookie: event.detail,
         experience,
+        context,
       });
       if (sectionsChanged.length) {
         cmpApi.setApplicableSections(sectionsChanged.map((s) => s.id));
@@ -172,22 +215,30 @@ const initializeGppCmpApi = () => {
         cmpApi.setApplicableSections([-1]);
       }
       cmpApi.setSignalStatus(SignalStatus.READY);
+      const newFidesString = formatFidesStringWithGpp(cmpApi);
+      window.Fides.fides_string = newFidesString;
+      fidesDebugger("GPP: updated fides_string", newFidesString);
+    }
+
+    if (window.Fides.options.debug && typeof window?.__gpp === "function") {
+      window?.__gpp?.("ping", (data) => {
+        fidesDebugger("GPP Ping Data:", data);
+      });
     }
   });
 
   window.addEventListener("FidesUIShown", (event) => {
     // Set US GPP notice fields
     const { experience, saved_consent: savedConsent, options } = window.Fides;
-    const isTcfEnabled = options.tcfEnabled;
     if (isPrivacyExperience(experience)) {
       // set signal status to ready only for users with no existing prefs and if notices are all opt-in by default and TCF is disabled
       if (
-        !isTcfEnabled &&
+        !options.tcfEnabled &&
         allNoticesAreDefaultOptIn(experience.privacy_notices) &&
         !userHasExistingPrefs(
           savedConsent,
           event.detail.fides_string,
-          experience.privacy_notices
+          experience.privacy_notices,
         )
       ) {
         cmpApi.setSignalStatus(SignalStatus.READY);
@@ -198,6 +249,7 @@ const initializeGppCmpApi = () => {
       const sectionsChanged = setGppNoticesProvidedFromExperience({
         cmpApi,
         experience,
+        context: getGpcContext(),
       });
       if (sectionsChanged.length) {
         cmpApi.setApplicableSections(sectionsChanged.map((s) => s.id));
@@ -220,7 +272,7 @@ const initializeGppCmpApi = () => {
     }
   });
 
-  window.addEventListener("FidesUpdated", (event) => {
+  window.addEventListener("FidesUpdated", async (event) => {
     // In our flows, whenever FidesUpdated fires, the UI has closed
     cmpApi.setCmpDisplayStatus(CmpDisplayStatus.HIDDEN);
     const tcSet = setTcString(event, cmpApi);
@@ -235,6 +287,7 @@ const initializeGppCmpApi = () => {
         cmpApi,
         cookie: event.detail,
         experience: window.Fides.experience,
+        context: getGpcContext(),
       });
       if (sectionsChanged.length) {
         cmpApi.setApplicableSections(sectionsChanged.map((s) => s.id));
@@ -242,12 +295,25 @@ const initializeGppCmpApi = () => {
           cmpApi.fireSectionChange(section.name);
         });
       }
+
+      // Update fides_string with GPP string
+      const fidesString = formatFidesStringWithGpp(cmpApi);
+      if (window.Fides.cookie) {
+        window.Fides.fides_string = fidesString;
+        window.Fides.cookie.fides_string = fidesString;
+        await saveFidesCookie(window.Fides.cookie, window.Fides.options);
+        fidesDebugger("GPP: updated fides_string", fidesString);
+      }
     }
     cmpApi.setSignalStatus(SignalStatus.READY);
   });
 };
 window.addEventListener("FidesInitializing", (event) => {
-  if (event.detail.extraDetails?.gppEnabled) {
+  if (
+    event.detail.extraDetails?.gppEnabled &&
+    typeof window !== "undefined" &&
+    !window.Fides?.initialized
+  ) {
     initializeGppCmpApi();
   }
 });

@@ -11,7 +11,7 @@ export interface State {
 
 const initialState: State = {
   page: 1,
-  pageSize: 50,
+  pageSize: 300,
 };
 
 interface PropertyParams {
@@ -83,12 +83,12 @@ const selectProperties = (state: RootState) => state.properties;
 
 export const selectPage = createSelector(
   selectProperties,
-  (state) => state.page
+  (state) => state.page,
 );
 
 export const selectPageSize = createSelector(
   selectProperties,
-  (state) => state.pageSize
+  (state) => state.pageSize,
 );
 
 const emptyProperties: Property[] = [];
@@ -100,5 +100,5 @@ export const selectAllProperties = createSelector(
       size: pageSize,
     })(RootState)?.data;
     return data ? data.items : emptyProperties;
-  }
+  },
 );

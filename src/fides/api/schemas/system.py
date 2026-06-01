@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
-from fideslang.models import Cookies, PrivacyDeclaration, System
-from pydantic import Field
+from fideslang.models import PrivacyDeclaration, System
+from fideslang.validation import FidesKey
+from pydantic import ConfigDict, Field
 from pydantic.main import BaseModel
 
 from fides.api.schemas.connection_configuration.connection_config import (
@@ -17,7 +18,6 @@ class PrivacyDeclarationResponse(PrivacyDeclaration):
     id: str = Field(
         description="The database-assigned ID of the privacy declaration on the system. This is meant to be a read-only field, returned only in API responses"
     )
-    cookies: Optional[List[Cookies]] = []
 
 
 class BasicSystemResponse(System):
@@ -44,7 +44,7 @@ class SystemResponse(BasicSystemResponse):
         description=PrivacyDeclarationResponse.__doc__,
     )
 
-    connection_configs: Optional[ConnectionConfigurationResponse] = Field(
+    connection_configs: Optional[List[ConnectionConfigurationResponse]] = Field(
         description=ConnectionConfigurationResponse.__doc__,
     )
 
@@ -56,11 +56,16 @@ class SystemResponse(BasicSystemResponse):
 class SystemHistoryResponse(BaseModel):
     """Response schema for a single system history entry"""
 
-    edited_by: Optional[str]
+    edited_by: Optional[str] = None
     system_id: str
     before: Dict[str, Any]
     after: Dict[str, Any]
     created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        orm_mode = True
+
+class AssignStewardRequest(BaseModel):
+    """Request schema for assigning a data steward to one or more systems."""
+
+    data_steward: str
+    system_keys: List[FidesKey]

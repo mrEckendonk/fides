@@ -1,42 +1,42 @@
 import { createSelector, createSlice, PayloadAction } from "@reduxjs/toolkit";
+import dayjs, { Dayjs } from "dayjs";
+import { isEmpty, isNil, pickBy } from "lodash";
 
 import { baseApi } from "~/features/common/api.slice";
 import {
   ActionType,
   BulkPostPrivacyRequests,
-  GPPApplicationConfigResponse,
-  PlusApplicationConfig as ApplicationConfig,
-  PrivacyCenterConfig,
-  PrivacyRequestCreate,
+  ColumnSort,
+  fides__api__schemas__privacy_center_config__PrivacyCenterConfig as PrivacyCenterConfig,
+  Page_Union_PrivacyRequestVerboseResponseExtended__PrivacyRequestResponseExtended__,
+  PrivacyRequestAccessResults,
+  PrivacyRequestCreateExtended as PrivacyRequestCreate,
+  PrivacyRequestFilter,
   PrivacyRequestNotificationInfo,
   PrivacyRequestStatus,
-  SecurityApplicationConfig,
 } from "~/types/api";
+import { PrivacyRequestSource } from "~/types/api/models/PrivacyRequestSource";
 
 import type { RootState } from "../../app/store";
-import { BASE_URL } from "../../constants";
+import { SubjectRequestStatusMap } from "./constants";
 import {
-  ConfigMessagingDetailsRequest,
-  ConfigMessagingRequest,
-  ConfigMessagingSecretsRequest,
   ConfigStorageDetailsRequest,
   ConfigStorageSecretsDetailsRequest,
   DenyPrivacyRequest,
   GetUploadedManualWebhookDataRequest,
-  MessagingConfigResponse,
   PatchUploadManualWebhookDataRequest,
   PrivacyRequestEntity,
   PrivacyRequestParams,
   PrivacyRequestResponse,
   RetryRequests,
-  StorageConfigResponse,
 } from "./types";
 
 // Helpers
-export function mapFiltersToSearchParams({
+export function deprecatedMapFiltersToSearchParams({
   status,
   action_type,
   id,
+  fuzzy_search_str,
   from,
   to,
   page,
@@ -44,105 +44,133 @@ export function mapFiltersToSearchParams({
   verbose,
   sort_direction,
   sort_field,
-}: Partial<PrivacyRequestParams>): any {
-  let fromISO;
+}: Partial<PrivacyRequestParams>): URLSearchParams {
+  let fromDay: Dayjs | undefined;
   if (from) {
-    fromISO = new Date(from);
-    fromISO.setUTCHours(0, 0, 0);
+    fromDay = dayjs(from);
   }
 
-  let toISO;
+  let toDay: Dayjs | undefined;
   if (to) {
-    toISO = new Date(to);
-    toISO.setUTCHours(23, 59, 59);
+    toDay = dayjs(to);
   }
 
-  return {
-    include_identities: "true",
-    include_custom_privacy_request_fields: "true",
-    ...(action_type && action_type.length > 0
-      ? { action_type: action_type.join("&action_type=") }
-      : {}),
-    ...(status && status.length > 0 ? { status: status.join("&status=") } : {}),
-    ...(id ? { request_id: id } : {}),
-    ...(fromISO ? { created_gt: fromISO.toISOString() } : {}),
-    ...(toISO ? { created_lt: toISO.toISOString() } : {}),
-    ...(page ? { page: `${page}` } : {}),
-    ...(typeof size !== "undefined" ? { size: `${size}` } : {}),
-    ...(verbose ? { verbose } : {}),
-    ...(sort_direction ? { sort_direction } : {}),
-    ...(sort_field ? { sort_field } : {}),
-  };
+  const params = new URLSearchParams();
+
+  params.set("include_identities", "true");
+  params.set("include_custom_privacy_request_fields", "true");
+
+  if (Array.isArray(action_type) && action_type.length > 0) {
+    action_type.forEach((value) => {
+      params.append("action_type", String(value));
+    });
+  }
+
+  if (Array.isArray(status) && status.length > 0) {
+    status.forEach((value) => {
+      params.append("status", String(value));
+    });
+  }
+
+  if (id) {
+    params.set("request_id", id);
+  }
+
+  if (fuzzy_search_str) {
+    params.set("fuzzy_search_str", fuzzy_search_str);
+  }
+
+  if (fromDay) {
+    params.set("created_gt", fromDay.startOf("day").utc().toISOString());
+  }
+  if (toDay) {
+    params.set("created_lt", toDay.endOf("day").utc().toISOString());
+  }
+
+  if (page) {
+    params.set("page", `${page}`);
+  }
+
+  if (typeof size !== "undefined") {
+    params.set("size", `${size}`);
+  }
+
+  if (typeof verbose !== "undefined") {
+    params.set("verbose", String(verbose));
+  }
+
+  if (sort_direction) {
+    params.set("sort_direction", sort_direction);
+  }
+
+  if (sort_field) {
+    params.set("sort_field", sort_field);
+  }
+
+  return params;
 }
 
-export const requestCSVDownload = async ({
-  id,
-  from,
-  to,
-  status,
-  action_type,
-  token,
-}: PrivacyRequestParams & { token: string | null }) => {
-  if (!token) {
-    return null;
-  }
+// Friendlier interface for date range params
+// These get converted to created_gt and created_lt with the correct timezone in processFilterParams
+interface DateRangeParams {
+  from?: string | null;
+  to?: string | null;
+}
 
-  return fetch(
-    `${BASE_URL}/privacy-request?${new URLSearchParams({
-      ...mapFiltersToSearchParams({
-        id,
-        from,
-        to,
-        status,
-        action_type,
-      }),
-      download_csv: "true",
-    })}`,
-    {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        Authorization: `Bearer ${token}`,
-        "X-Fides-Source": "fidesops-admin-ui",
-      },
+export interface SearchFilterParams
+  extends
+    Omit<Partial<PrivacyRequestFilter>, "sort_field" | "sort_direction">,
+    Partial<DateRangeParams> {
+  sort_field?: string | null;
+  sort_direction?: ColumnSort | null;
+}
+
+const processFilterParams = ({ from, to, ...filters }: SearchFilterParams) => ({
+  // Include identities and custom privacy request fields by default
+  include_identities: true,
+  include_custom_privacy_request_fields: true,
+
+  // Include any filter that has a value
+  ...pickBy(filters, (value) => {
+    if (Array.isArray(value)) {
+      return !isEmpty(value);
     }
-  )
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error("Got a bad response from the server");
-      }
-      return response.blob();
-    })
-    .then((data) => {
-      const a = document.createElement("a");
-      a.href = window.URL.createObjectURL(data);
-      a.download = "privacy-requests.csv";
-      a.click();
-    })
-    .catch((error) => Promise.reject(error));
-};
+    return !isNil(value) && value !== "";
+  }),
 
-export const selectPrivacyRequestFilters = (
-  state: RootState
-): PrivacyRequestParams => ({
-  action_type: state.subjectRequests.action_type,
-  from: state.subjectRequests.from,
-  id: state.subjectRequests.id,
-  page: state.subjectRequests.page,
-  size: state.subjectRequests.size,
-  sort_direction: state.subjectRequests.sort_direction,
-  sort_field: state.subjectRequests.sort_field,
-  status: state.subjectRequests.status,
-  to: state.subjectRequests.to,
-  verbose: state.subjectRequests.verbose,
+  // Convert from and to to ISO strings on local time for the date range
+  created_gt: from ? dayjs(from).startOf("day").utc().toISOString() : undefined,
+  created_lt: to ? dayjs(to).endOf("day").utc().toISOString() : undefined,
 });
+
+export const selectPrivacyRequestFilters = createSelector(
+  [(state: RootState) => state.subjectRequests],
+  (subjectRequests): PrivacyRequestParams => ({
+    action_type: subjectRequests.action_type,
+    from: subjectRequests.from,
+    id: subjectRequests.id,
+    fuzzy_search_str: subjectRequests.fuzzy_search_str,
+    is_overdue: subjectRequests.is_overdue,
+    page: subjectRequests.page,
+    size: subjectRequests.size,
+    sort_direction: subjectRequests.sort_direction,
+    sort_field: subjectRequests.sort_field,
+    status: subjectRequests.status,
+    to: subjectRequests.to,
+    verbose: subjectRequests.verbose,
+  }),
+);
 
 export const selectRequestStatus = (state: RootState) =>
   state.subjectRequests.status;
 
-export const selectRetryRequests = (state: RootState): RetryRequests => ({
-  checkAll: state.subjectRequests.checkAll,
-  errorRequests: state.subjectRequests.errorRequests,
-});
+export const selectRetryRequests = createSelector(
+  [(state: RootState) => state.subjectRequests],
+  (subjectRequests): RetryRequests => ({
+    checkAll: subjectRequests.checkAll,
+    errorRequests: subjectRequests.errorRequests,
+  }),
+);
 
 // Subject requests state (filters, etc.)
 type SubjectRequestsState = {
@@ -151,6 +179,8 @@ type SubjectRequestsState = {
   errorRequests: string[];
   from: string;
   id: string;
+  fuzzy_search_str?: string;
+  is_overdue?: boolean;
   page: number;
   size: number;
   sort_direction?: string;
@@ -160,7 +190,24 @@ type SubjectRequestsState = {
   verbose?: boolean;
 };
 
+// Default status filter: all statuses except DUPLICATE
+const defaultStatusFilter = [...SubjectRequestStatusMap.keys()].filter(
+  (status) => status !== PrivacyRequestStatus.DUPLICATE,
+);
+
 const initialState: SubjectRequestsState = {
+  checkAll: false,
+  errorRequests: [],
+  from: "",
+  id: "",
+  page: 1,
+  size: 25,
+  to: "",
+  status: defaultStatusFilter,
+};
+
+// State to return when clearing all filters (no default status filter)
+const clearedState: SubjectRequestsState = {
   checkAll: false,
   errorRequests: [],
   from: "",
@@ -175,9 +222,9 @@ export const subjectRequestsSlice = createSlice({
   initialState,
   reducers: {
     clearAllFilters: () => ({
-      ...initialState,
+      ...clearedState,
     }),
-    clearSortFields: (state) => ({
+    clearSortKeys: (state) => ({
       ...state,
       sort_direction: undefined,
       sort_field: undefined,
@@ -196,9 +243,10 @@ export const subjectRequestsSlice = createSlice({
       page: initialState.page,
       id: action.payload,
     }),
+
     setRequestStatus: (
       state,
-      action: PayloadAction<PrivacyRequestStatus[]>
+      action: PayloadAction<PrivacyRequestStatus[]>,
     ) => ({
       ...state,
       page: initialState.page,
@@ -208,6 +256,11 @@ export const subjectRequestsSlice = createSlice({
       ...state,
       page: initialState.page,
       action_type: action.payload,
+    }),
+    setRequestOverdue: (state, action: PayloadAction<boolean | undefined>) => ({
+      ...state,
+      page: initialState.page,
+      is_overdue: action.payload,
     }),
     setRequestTo: (state, action: PayloadAction<string>) => ({
       ...state,
@@ -223,7 +276,7 @@ export const subjectRequestsSlice = createSlice({
       ...state,
       sort_direction: action.payload,
     }),
-    setSortField: (state, action: PayloadAction<string>) => ({
+    setSortKey: (state, action: PayloadAction<string>) => ({
       ...state,
       sort_field: action.payload,
     }),
@@ -241,16 +294,17 @@ export const subjectRequestsSlice = createSlice({
 
 export const {
   clearAllFilters,
-  clearSortFields,
+  clearSortKeys,
   setPage,
   setRequestFrom,
   setRequestId,
   setRequestStatus,
   setRequestActionType,
+  setRequestOverdue,
   setRequestTo,
   setRetryRequests,
   setSortDirection,
-  setSortField,
+  setSortKey,
   setVerbose,
 } = subjectRequestsSlice.actions;
 
@@ -269,6 +323,17 @@ export const privacyRequestApi = baseApi.injectEndpoints({
         body: {
           request_ids: [id],
         },
+      }),
+      invalidatesTags: ["Request"],
+    }),
+    bulkApproveRequest: build.mutation<
+      { succeeded: string[]; failed: any[] },
+      { request_ids: string[] }
+    >({
+      query: (body) => ({
+        url: "privacy-request/administrate/approve",
+        method: "PATCH",
+        body,
       }),
       invalidatesTags: ["Request"],
     }),
@@ -291,14 +356,55 @@ export const privacyRequestApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["Request"],
     }),
+    bulkDenyRequest: build.mutation<
+      { succeeded: string[]; failed: any[] },
+      { request_ids: string[]; reason?: string }
+    >({
+      query: (body) => ({
+        url: "privacy-request/administrate/deny",
+        method: "PATCH",
+        body,
+      }),
+      invalidatesTags: ["Request"],
+    }),
+    softDeleteRequest: build.mutation<
+      PrivacyRequestEntity,
+      Partial<PrivacyRequestEntity> & Pick<PrivacyRequestEntity, "id">
+    >({
+      query: ({ id }) => ({
+        url: `privacy-request/${id}/soft-delete`,
+        method: "POST",
+      }),
+      invalidatesTags: ["Request"],
+    }),
+    bulkSoftDeleteRequest: build.mutation<
+      { succeeded: string[]; failed: any[] },
+      { request_ids: string[] }
+    >({
+      query: (body) => ({
+        url: `privacy-request/bulk/soft-delete`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["Request"],
+    }),
+    bulkFinalizeRequest: build.mutation<
+      { succeeded: string[]; failed: any[] },
+      { request_ids: string[] }
+    >({
+      query: (body) => ({
+        url: `privacy-request/bulk/finalize`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["Request"],
+    }),
     getAllPrivacyRequests: build.query<
       PrivacyRequestResponse,
       Partial<PrivacyRequestParams>
     >({
       query: (filters) => ({
-        url: `privacy-request?${decodeURIComponent(
-          new URLSearchParams(mapFiltersToSearchParams(filters)).toString()
-        )}`,
+        url: `privacy-request?${deprecatedMapFiltersToSearchParams(filters).toString()}`,
       }),
       providesTags: () => ["Request"],
       async onQueryStarted(_key, { dispatch, queryFulfilled }) {
@@ -310,6 +416,46 @@ export const privacyRequestApi = baseApi.injectEndpoints({
         });
       },
     }),
+    searchPrivacyRequests: build.query<
+      Page_Union_PrivacyRequestVerboseResponseExtended__PrivacyRequestResponseExtended__,
+      SearchFilterParams & { page: number; size: number }
+    >({
+      providesTags: () => ["Request"],
+      query: (params) => {
+        const { page, size, ...filters } = params;
+
+        return {
+          url: `privacy-request/search`,
+          method: "POST",
+          params: {
+            page,
+            size,
+          },
+          body: processFilterParams(filters),
+        };
+      },
+    }),
+    downloadPrivacyRequestCsvV2: build.query<any, SearchFilterParams>({
+      query: (filters) => {
+        return {
+          url: `privacy-request/search`,
+          method: "POST",
+          body: { ...processFilterParams(filters), download_csv: true },
+          responseHandler: "content-type",
+        };
+      },
+    }),
+    downloadPrivacyRequestCsv: build.query<any, Partial<PrivacyRequestParams>>({
+      query: (filters) => {
+        return {
+          url: `privacy-request?${deprecatedMapFiltersToSearchParams(filters).toString()}`,
+          params: {
+            download_csv: true,
+          },
+          responseHandler: "content-type",
+        };
+      },
+    }),
     postPrivacyRequest: build.mutation<
       PrivacyRequestResponse,
       PrivacyRequestCreate[]
@@ -317,7 +463,10 @@ export const privacyRequestApi = baseApi.injectEndpoints({
       query: (payload) => ({
         url: `privacy-request/authenticated`,
         method: "POST",
-        body: payload,
+        body: payload.map((item) => ({
+          ...item,
+          source: PrivacyRequestSource.REQUEST_MANAGER,
+        })),
       }),
       invalidatesTags: () => ["Request"],
     }),
@@ -331,7 +480,7 @@ export const privacyRequestApi = baseApi.injectEndpoints({
         const cloneResponse = { ...response };
         if (cloneResponse.email_addresses?.length > 0) {
           cloneResponse.email_addresses = cloneResponse.email_addresses.filter(
-            (item) => item !== ""
+            (item) => item !== "",
           );
         }
         return cloneResponse;
@@ -378,44 +527,6 @@ export const privacyRequestApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ["Notification"],
     }),
-    patchConfigurationSettings: build.mutation<
-      any,
-      | ApplicationConfig
-      | MessagingConfigResponse
-      | StorageConfigResponse
-      | SecurityApplicationConfig
-    >({
-      query: (params) => ({
-        url: `/config`,
-        method: "PATCH",
-        body: params,
-      }),
-      // Switching GPP settings causes the backend to update privacy notices behind the scenes, so
-      // invalidate privacy notices when a patch goes through.
-      invalidatesTags: ["Configuration Settings", "Privacy Notices"],
-    }),
-    putConfigurationSettings: build.mutation<
-      ApplicationConfig,
-      ApplicationConfig
-    >({
-      query: (params) => ({
-        url: `/config`,
-        method: "PUT",
-        body: params,
-      }),
-      invalidatesTags: ["Configuration Settings"],
-    }),
-    getConfigurationSettings: build.query<
-      Record<string, any>,
-      { api_set: boolean }
-    >({
-      query: ({ api_set }) => ({
-        url: `/config`,
-        method: "GET",
-        params: { api_set },
-      }),
-      providesTags: ["Configuration Settings"],
-    }),
     getActiveStorage: build.query<any, void>({
       query: () => ({
         url: `storage/default/active`,
@@ -441,43 +552,6 @@ export const privacyRequestApi = baseApi.injectEndpoints({
         url: `storage/default/${params.type}/secret`,
         method: "PUT",
         body: params.details,
-      }),
-    }),
-    getActiveMessagingProvider: build.query<any, void>({
-      query: () => ({
-        url: `messaging/default/active`,
-      }),
-    }),
-    getMessagingConfigurationDetails: build.query<any, ConfigMessagingRequest>({
-      query: (params) => ({
-        url: `messaging/default/${params.type}`,
-      }),
-    }),
-    createMessagingConfiguration: build.mutation<
-      any,
-      ConfigMessagingDetailsRequest
-    >({
-      query: (params) => ({
-        url: `messaging/default`,
-        method: "PUT",
-        body: params,
-      }),
-    }),
-    createMessagingConfigurationSecrets: build.mutation<
-      any,
-      ConfigMessagingSecretsRequest
-    >({
-      query: (params) => ({
-        url: `messaging/default/${params.service_type}/secret`,
-        method: "PUT",
-        body: params.details,
-      }),
-    }),
-    createTestConnectionMessage: build.mutation<any, any>({
-      query: (params) => ({
-        url: `messaging/config/test`,
-        method: "POST",
-        body: params,
       }),
     }),
     uploadManualAccessWebhookData: build.mutation<
@@ -506,14 +580,65 @@ export const privacyRequestApi = baseApi.injectEndpoints({
         url: `plus/privacy-center-config`,
       }),
     }),
+    getPrivacyRequestAccessResults: build.query<
+      PrivacyRequestAccessResults,
+      { privacy_request_id: string }
+    >({
+      query: ({ privacy_request_id }) => ({
+        method: "GET",
+        url: `privacy-request/${privacy_request_id}/access-results`,
+      }),
+    }),
+    getFilteredResults: build.query<
+      {
+        privacy_request_id: string;
+        status: PrivacyRequestStatus;
+        results: {
+          [key: string]: Array<Record<string, any>>;
+        };
+      },
+      { privacy_request_id: string }
+    >({
+      query: ({ privacy_request_id }) => ({
+        method: "GET",
+        url: `privacy-request/${privacy_request_id}/filtered-results`,
+      }),
+    }),
+    getTestLogs: build.query<
+      Array<{
+        timestamp: string;
+        level: string;
+        module_info: string;
+        message: string;
+      }>,
+      { privacy_request_id: string }
+    >({
+      query: ({ privacy_request_id }) => ({
+        method: "GET",
+        url: `privacy-request/${privacy_request_id}/logs`,
+      }),
+    }),
+    postPrivacyRequestFinalize: build.mutation({
+      query: ({ privacyRequestId }: { privacyRequestId: string }) => ({
+        method: "POST",
+        url: `/privacy-request/${privacyRequestId}/finalize`,
+      }),
+      invalidatesTags: ["Request"],
+    }),
   }),
 });
 
 export const {
   useApproveRequestMutation,
+  useBulkApproveRequestMutation,
+  useBulkDenyRequestMutation,
   useBulkRetryMutation,
+  useBulkSoftDeleteRequestMutation,
+  useBulkFinalizeRequestMutation,
   useDenyRequestMutation,
+  useSoftDeleteRequestMutation,
   useGetAllPrivacyRequestsQuery,
+  useSearchPrivacyRequestsQuery,
   usePostPrivacyRequestMutation,
   useGetNotificationQuery,
   useResumePrivacyRequestFromRequiresInputMutation,
@@ -525,98 +650,11 @@ export const {
   useGetStorageDetailsQuery,
   useCreateStorageMutation,
   useCreateStorageSecretsMutation,
-  usePatchConfigurationSettingsMutation,
-  usePutConfigurationSettingsMutation,
-  useGetConfigurationSettingsQuery,
-  useGetMessagingConfigurationDetailsQuery,
-  useGetActiveMessagingProviderQuery,
   useGetActiveStorageQuery,
-  useCreateMessagingConfigurationMutation,
-  useCreateMessagingConfigurationSecretsMutation,
-  useCreateTestConnectionMessageMutation,
+  useGetPrivacyRequestAccessResultsQuery,
+  useGetFilteredResultsQuery,
+  useGetTestLogsQuery,
+  usePostPrivacyRequestFinalizeMutation,
+  useLazyDownloadPrivacyRequestCsvQuery,
+  useLazyDownloadPrivacyRequestCsvV2Query,
 } = privacyRequestApi;
-
-export type CORSOrigins = Pick<SecurityApplicationConfig, "cors_origins">;
-/**
- * NOTE:
- * 1. "configSet" stores the results from `/api/v1/config?api_set=false`, and
- *    contains the config settings that are set exclusively on the server via
- *    TOML/ENV configuration.
- * 2. "apiSet" stores the results from `/api/v1/config?api_set=true`, and
- *    are the config settings that we can read/write via the API.
- *
- * These two settings are merged together at runtime by Fides when enforcing
- * CORS origins, and although they're awkwardly-named concepts (try saying
- * "config set config settings" 10 times fast), we're mirroring the API here to
- * be consistent!
- */
-export type CORSOriginsSettings = {
-  configSet: SecurityApplicationConfig & { cors_origin_regex?: string };
-  apiSet: SecurityApplicationConfig;
-};
-
-export const selectCORSOrigins: (state: RootState) => CORSOriginsSettings =
-  createSelector(
-    [
-      (state) => state,
-      privacyRequestApi.endpoints.getConfigurationSettings.select({
-        api_set: true,
-      }),
-      privacyRequestApi.endpoints.getConfigurationSettings.select({
-        api_set: false,
-      }),
-    ],
-    (_, { data: apiSetConfig }, { data: configSetConfig }) => {
-      // Return a single state contains the current CORS config with both
-      // config-set and api-set values
-      const currentCORSOriginSettings: CORSOriginsSettings = {
-        configSet: {
-          cors_origins: configSetConfig?.security?.cors_origins || [],
-          cors_origin_regex: configSetConfig?.security?.cors_origin_regex,
-        },
-        apiSet: {
-          cors_origins: apiSetConfig?.security?.cors_origins || [],
-        },
-      };
-      return currentCORSOriginSettings;
-    }
-  );
-
-export const selectApplicationConfig = () =>
-  createSelector(
-    [
-      (state) => state,
-      privacyRequestApi.endpoints.getConfigurationSettings.select({
-        api_set: true,
-      }),
-    ],
-    (_, { data }) => data as ApplicationConfig
-  );
-
-const defaultGppSettings: GPPApplicationConfigResponse = {
-  enabled: false,
-};
-export const selectGppSettings: (
-  state: RootState
-) => GPPApplicationConfigResponse = createSelector(
-  [
-    (state) => state,
-    privacyRequestApi.endpoints.getConfigurationSettings.select({
-      api_set: true,
-    }),
-    privacyRequestApi.endpoints.getConfigurationSettings.select({
-      api_set: false,
-    }),
-  ],
-  (state, { data: apiSetConfig }, { data: config }) => {
-    const hasApi = apiSetConfig && apiSetConfig.gpp;
-    const hasDefault = config && config.gpp;
-    if (hasApi && hasDefault) {
-      return { ...config.gpp, ...apiSetConfig.gpp };
-    }
-    if (hasDefault) {
-      return config.gpp;
-    }
-    return defaultGppSettings;
-  }
-);

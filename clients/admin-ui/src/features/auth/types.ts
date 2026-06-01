@@ -5,6 +5,12 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface LoginWithOIDCRequest {
+  provider: string;
+  code: string;
+  state: string;
+}
+
 export interface LoginResponse {
   user_data: User;
   token_data: {
@@ -14,3 +20,8 @@ export interface LoginResponse {
 
 export interface LogoutRequest {}
 export interface LogoutResponse {}
+
+export interface AuthenticationMethods {
+  username_password: boolean;
+  sso: boolean;
+}

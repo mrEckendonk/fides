@@ -1,30 +1,156 @@
-import { h } from "preact";
-import { I18n } from "../lib/i18n";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "preact/hooks";
+
+import { FidesInitOptions } from "../lib/consent-types";
+import {
+  DEFAULT_LOCALE,
+  loadMessagesFromGVLTranslations,
+  Locale,
+} from "../lib/i18n";
 import { useI18n } from "../lib/i18n/i18n-context";
-import { debugLog, FidesInitOptions } from "../fides";
+import { GVLContext } from "../lib/tcf/gvl-context";
+import { fetchGvlTranslations } from "../services/api";
 import MenuItem from "./MenuItem";
-import { FIDES_OVERLAY_WRAPPER } from "../lib/consent-constants";
 
 interface LanguageSelectorProps {
-  i18n: I18n;
+  availableLocales: Locale[];
   options: FidesInitOptions;
+  isTCF?: boolean;
 }
 
-const LanguageSelector = ({ i18n, options }: LanguageSelectorProps) => {
-  const { currentLocale, setCurrentLocale } = useI18n();
+const LanguageSelector = ({
+  availableLocales,
+  options,
+  isTCF,
+}: LanguageSelectorProps) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const { i18n, currentLocale, setCurrentLocale, setIsLoading } = useI18n();
+  const contextGvl = useContext(GVLContext);
 
-  const handleLocaleSelect = (locale: string) => {
-    if (locale !== i18n.locale) {
-      i18n.activate(locale);
-      setCurrentLocale(locale);
-      document.getElementById(FIDES_OVERLAY_WRAPPER)?.focus();
-      debugLog(options.debug, `Fides locale updated to ${locale}`);
-    }
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleToggle = () => {
+    setIsOpen(!isOpen);
   };
 
+  const handleLocaleSelect = async (locale: string) => {
+    if (locale !== i18n.locale) {
+      if (isTCF) {
+        setIsLoading(true);
+        const gvlTranslations = await fetchGvlTranslations(
+          options.fidesApiUrl,
+          [locale],
+        );
+        setIsLoading(false);
+        if (gvlTranslations && Object.keys(gvlTranslations).length) {
+          contextGvl.setGvlTranslations(gvlTranslations[locale]);
+          loadMessagesFromGVLTranslations(
+            i18n,
+            gvlTranslations,
+            availableLocales || [DEFAULT_LOCALE],
+          );
+          setCurrentLocale(locale);
+          fidesDebugger(`Fides locale updated to ${locale}`);
+        } else {
+          // eslint-disable-next-line no-console
+          console.error(`Unable to load GVL translation for ${locale}`);
+        }
+      } else {
+        setCurrentLocale(locale);
+        fidesDebugger(`Fides locale updated to ${locale}`);
+      }
+    }
+    setIsOpen(false);
+    buttonRef.current?.focus();
+  };
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!isOpen) {
+        return;
+      }
+
+      const menuItems =
+        menuRef.current?.querySelectorAll<HTMLButtonElement>(
+          ".fides-menu-item",
+        ) || [];
+      const { key } = event;
+
+      if (key === "Escape" || key === "Tab") {
+        setIsOpen(false);
+        buttonRef.current?.focus();
+        return;
+      }
+
+      if (key === "ArrowUp" || key === "ArrowDown") {
+        event.preventDefault();
+        const focusedIndex = Array.from(menuItems).findIndex(
+          (item) => item === document.activeElement,
+        );
+
+        let newIndex = focusedIndex;
+        if (key === "ArrowDown") {
+          newIndex =
+            focusedIndex === menuItems.length - 1 ? 0 : focusedIndex + 1;
+        } else if (key === "ArrowUp") {
+          newIndex =
+            focusedIndex === 0 ? menuItems.length - 1 : focusedIndex - 1;
+        }
+
+        menuItems[newIndex]?.focus();
+      }
+    },
+    [isOpen],
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
+  useEffect(() => {
+    if (isOpen) {
+      const menuItems =
+        menuRef.current?.querySelectorAll<HTMLButtonElement>(
+          ".fides-menu-item",
+        );
+      menuItems?.[0]?.focus();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isOpen &&
+        menuRef.current &&
+        !menuRef.current.contains(event.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
   return (
-    <div className="fides-i18n-menu">
-      <div role="group" className="fides-i18n-popover">
+    <div
+      className={`fides-i18n-menu ${isOpen ? "fides-i18n-menu-open" : ""}`}
+      ref={menuRef}
+    >
+      <div role="menu" className="fides-i18n-popover" id="fides-i18n-popover">
         {i18n.availableLanguages.map((lang) => (
           <MenuItem
             key={lang.locale}
@@ -35,17 +161,29 @@ const LanguageSelector = ({ i18n, options }: LanguageSelectorProps) => {
             onClick={() => handleLocaleSelect(lang.locale)}
             isActive={currentLocale === lang.locale}
             title={lang.label_en}
+            aria-label={lang.label_en}
+            tabIndex={-1}
           >
             {lang.label_original}
           </MenuItem>
         ))}
       </div>
-      <div className="fides-i18n-pseudo-button">
+      <button
+        type="button"
+        className="fides-i18n-button"
+        onClick={handleToggle}
+        ref={buttonRef}
+        aria-haspopup="true"
+        aria-expanded={isOpen}
+        aria-controls="fides-i18n-popover"
+        aria-label={`Select language, current language is ${currentLocale}`}
+      >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           height="100%"
           viewBox="0 0 36 36"
           fill="currentColor"
+          id="fides-i18n-icon"
         >
           <path
             fill="currentColor"
@@ -62,7 +200,7 @@ const LanguageSelector = ({ i18n, options }: LanguageSelectorProps) => {
         >
           <path d="M12 13.172L16.95 8.22198L18.364 9.63598L12 16L5.63599 9.63598L7.04999 8.22198L12 13.172Z" />
         </svg>
-      </div>
+      </button>
     </div>
   );
 };

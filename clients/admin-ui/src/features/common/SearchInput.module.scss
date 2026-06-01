@@ -1,0 +1,9 @@
+.searchInput {
+  width: 385px;
+}
+.searchInputCompact {
+  width: 260px;
+}
+.searchInputIcon {
+  --fidesui-padding-xxs: var(--fidesui-padding-xs); // right margin of icon
+}

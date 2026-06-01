@@ -39,7 +39,11 @@ export const useDatamapTable = () => {
    * better way to share code to the plus ui.
    */
   const columnData = useAppSelector(selectColumns);
-  const { data: responseData, isLoading } = useGetDatamapQuery({
+  const {
+    data: responseData,
+    isLoading,
+    error,
+  } = useGetDatamapQuery({
     organizationName: "default_organization",
   });
 
@@ -71,7 +75,7 @@ export const useDatamapTable = () => {
 
   const data = useMemo(
     () => (responseData ? responseData.rows : []),
-    [responseData]
+    [responseData],
   );
 
   const columns = useMemo(
@@ -88,9 +92,9 @@ export const useDatamapTable = () => {
             return value;
           },
           filterFn: FILTER_TYPES.multifield,
-        })
+        }),
       ),
-    [columnData]
+    [columnData],
   );
 
   // This is memoized under the hood of the table library, and only is recreated
@@ -105,6 +109,7 @@ export const useDatamapTable = () => {
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getFacetedUniqueValues(),
     manualPagination: true,
+    columnResizeMode: "onChange",
   });
 
   // When the table is created for the first time, store a reference to it on
@@ -112,11 +117,12 @@ export const useDatamapTable = () => {
   // purposes
   useEffect(
     () => updateTableInstance(tableInstance),
-    [tableInstance, updateTableInstance]
+    [tableInstance, updateTableInstance],
   );
 
   return {
     ...tableInstance,
     isLoading,
+    error,
   };
 };

@@ -1,21 +1,17 @@
 import {
-  Code,
-  IconButton,
-  Link,
+  Button,
+  ChakraCode as Code,
+  ChakraLink as Link,
+  ChakraStack as Stack,
+  ChakraText as Text,
+  Icons,
   Modal,
-  ModalBody,
-  ModalContent,
-  ModalHeader,
-  ModalOverlay,
-  Stack,
-  Text,
-  useDisclosure,
+  useChakraDisclosure as useDisclosure,
 } from "fidesui";
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import ClipboardButton from "~/features/common/ClipboardButton";
 import { useFeatures } from "~/features/common/features";
-import { GearLightIcon } from "~/features/common/Icon";
 import { useGetFidesCloudConfigQuery } from "~/features/plus/plus.slice";
 import { Property } from "~/types/api";
 
@@ -30,25 +26,24 @@ interface Props {
 
 const NewJavaScriptTag = ({ property }: Props) => {
   const modal = useDisclosure();
-  const initialRef = useRef(null);
   const { fidesCloud: isFidesCloud } = useFeatures();
 
   const { data: fidesCloudConfig, isSuccess } = useGetFidesCloudConfigQuery(
     undefined,
     {
       skip: !isFidesCloud,
-    }
+    },
   );
 
   const fidesJsScriptTag = useMemo(() => {
     const script = FIDES_JS_SCRIPT_TEMPLATE.replace(
       PROPERTY_UNIQUE_ID_TEMPLATE,
-      property.id!.toString()
+      property.id!.toString(),
     );
     if (isFidesCloud && isSuccess && fidesCloudConfig?.privacy_center_url) {
       script.replace(
         PRIVACY_CENTER_HOSTNAME_TEMPLATE,
-        fidesCloudConfig.privacy_center_url
+        fidesCloudConfig.privacy_center_url,
       );
     }
     return script;
@@ -56,79 +51,71 @@ const NewJavaScriptTag = ({ property }: Props) => {
 
   return (
     <>
-      <IconButton
+      <Button
         aria-label="Install property"
-        variant="outline"
-        size="xs"
-        marginRight="10px"
-        icon={<GearLightIcon />}
+        size="small"
+        icon={<Icons.Settings />}
         onClick={(e: React.MouseEvent<HTMLButtonElement, MouseEvent>) => {
           e.stopPropagation();
           modal.onOpen();
         }}
       />
       <Modal
-        isOpen={modal.isOpen}
-        onClose={modal.onClose}
-        isCentered
-        size="xl"
-        initialFocusRef={initialRef}
+        open={modal.isOpen}
+        onCancel={modal.onClose}
+        centered
+        destroyOnHidden
+        data-testid="copy-js-tag-modal"
+        title="Install Fides Consent Manager"
+        footer={null}
       >
-        <ModalOverlay />
-        <ModalContent data-testid="copy-js-tag-modal">
-          {/* Setting tabIndex and a ref makes this the initial modal focus.
-              This is helpful because otherwise the copy button receives the focus
-              which triggers unexpected tooltip behavior */}
-          <ModalHeader tabIndex={-1} ref={initialRef} pb={0}>
-            Install Fides Consent Manager
-          </ModalHeader>
-          <ModalBody pt={3} pb={6} fontSize="14px" fontWeight={500}>
-            <Stack spacing={3}>
-              <Text>
-                Copy the code below and paste it onto every page of the{" "}
-                {property.name} property.
-              </Text>
-              <Text>
-                1. Paste this code as high in the <b>&lt;head&gt;</b> of the
-                page as possible:
-              </Text>
-              <Code
-                display="flex"
-                justifyContent="space-between"
-                alignItems="top"
-                p={0}
-              >
-                <Text p={4}>{fidesJsScriptTag}</Text>
-                <ClipboardButton copyText={fidesJsScriptTag} />
-              </Code>
-              <Text>
-                2. Optionally, you can enable Google Tag Manager for managing
-                tags on your website by including the script tag below along
-                with the Fides.js tag. Place it below the Fides.js script tag.
-              </Text>
-              <Code
-                display="flex"
-                justifyContent="space-between"
-                alignItems="center"
-                p={0}
-              >
-                <Text p={4}>{FIDES_GTM_SCRIPT_TAG}</Text>
-                <ClipboardButton copyText={FIDES_GTM_SCRIPT_TAG} />
-              </Code>
-              <Text>
-                For more information about adding a JavaScript tag to your
-                website, please visit{" "}
-                <Link
-                  color="complimentary.500"
-                  href="https://docs.ethyca.com/tutorials/consent-management-configuration/install-fides#install-fidesjs-script-on-your-website"
-                  isExternal
-                >
-                  docs.ethyca.com
-                </Link>
-              </Text>
-            </Stack>
-          </ModalBody>
-        </ModalContent>
+        {/* Setting tabIndex and a ref makes this the initial modal focus.
+            This is helpful because otherwise the copy button receives the focus
+            which triggers unexpected tooltip behavior */}
+        <Stack spacing={3}>
+          <Text>
+            Copy the code below and paste it onto every page of the{" "}
+            {property.name} property.
+          </Text>
+          <Text>
+            1. Paste this code as high in the <b>&lt;head&gt;</b> of the page as
+            possible:
+          </Text>
+          <Code
+            display="flex"
+            justifyContent="space-between"
+            alignItems="top"
+            p={0}
+          >
+            <Text p={4}>{fidesJsScriptTag}</Text>
+            <ClipboardButton copyText={fidesJsScriptTag} />
+          </Code>
+          <Text>
+            2. Optionally, you can enable Google Tag Manager for managing tags
+            on your website by including the script tag below along with the
+            Fides.js tag. Place it below the Fides.js script tag.
+          </Text>
+          <Code
+            display="flex"
+            justifyContent="space-between"
+            alignItems="center"
+            p={0}
+          >
+            <Text p={4}>{FIDES_GTM_SCRIPT_TAG}</Text>
+            <ClipboardButton copyText={FIDES_GTM_SCRIPT_TAG} />
+          </Code>
+          <Text>
+            For more information about adding a JavaScript tag to your website,
+            please visit{" "}
+            <Link
+              color="complimentary.500"
+              href="https://docs.ethyca.com/tutorials/consent-management-configuration/install-fides#install-fidesjs-script-on-your-website"
+              isExternal
+            >
+              docs.ethyca.com
+            </Link>
+          </Text>
+        </Stack>
       </Modal>
     </>
   );

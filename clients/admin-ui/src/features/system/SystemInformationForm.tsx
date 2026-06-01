@@ -1,21 +1,27 @@
 import { SerializedError } from "@reduxjs/toolkit";
-import { FetchBaseQueryError } from "@reduxjs/toolkit/dist/query/fetchBaseQuery";
-import { Box, Button, Collapse, Heading, Stack, Text, useToast } from "fidesui";
-import { Form, Formik, FormikHelpers } from "formik";
-import { useMemo } from "react";
-import * as Yup from "yup";
+import { FetchBaseQueryError } from "@reduxjs/toolkit/query";
+import {
+  Alert,
+  Button,
+  Flex,
+  Form,
+  FormRule,
+  Input,
+  Select,
+  Switch,
+  Typography,
+  useMessage,
+} from "fidesui";
+import { isEqual } from "lodash";
+import { useEffect, useMemo } from "react";
 
 import { useAppDispatch, useAppSelector } from "~/app/hooks";
 import {
   CustomFieldsList,
   useCustomFields,
 } from "~/features/common/custom-fields";
+import { LegacyResourceTypes } from "~/features/common/custom-fields/types";
 import { useFeatures } from "~/features/common/features/features.slice";
-import {
-  CustomSelect,
-  CustomSwitch,
-  CustomTextInput,
-} from "~/features/common/form/inputs";
 import {
   extractVendorSource,
   getErrorMessage,
@@ -24,6 +30,8 @@ import {
   VendorSources,
 } from "~/features/common/helpers";
 import { FormGuard } from "~/features/common/hooks/useIsAnyFormDirty";
+import { useHasPermission } from "~/features/common/Restrict";
+import DatasetSelectOption from "~/features/dataset/DatasetSelectOption";
 import {
   selectAllDictEntries,
   useGetAllDictionaryEntriesQuery,
@@ -35,9 +43,7 @@ import {
   setSuggestions,
 } from "~/features/system/dictionary-form/dict-suggestion.slice";
 import {
-  DictSuggestionCreatableSelect,
   DictSuggestionNumberInput,
-  DictSuggestionSelect,
   DictSuggestionSwitch,
   DictSuggestionTextArea,
   DictSuggestionTextInput,
@@ -49,53 +55,73 @@ import {
   transformFormValuesToSystem,
   transformSystemToFormValues,
 } from "~/features/system/form";
+import { usePrivacyDeclarationData } from "~/features/system/privacy-declarations/hooks";
 import {
-  selectAllSystems,
+  useBulkAssignStewardMutation,
   useCreateSystemMutation,
+  useGetAllSystemsQuery,
+  useLazyGetSystemByFidesKeyQuery,
+  useLazyGetSystemsQuery,
   useUpdateSystemMutation,
 } from "~/features/system/system.slice";
+import { usePopulateSystemAssetsMutation } from "~/features/system/system-assets.slice";
+import { useGetAllSystemGroupsQuery } from "~/features/system/system-groups.slice";
 import SystemFormInputGroup from "~/features/system/SystemFormInputGroup";
-import VendorSelector from "~/features/system/VendorSelector";
-import { ResourceTypes, SystemResponse } from "~/types/api";
-
-import { usePrivacyDeclarationData } from "./privacy-declarations/hooks";
 import {
   legalBasisForProfilingOptions,
   legalBasisForTransferOptions,
   responsibilityOptions,
-} from "./SystemInformationFormSelectOptions";
+} from "~/features/system/SystemInformationFormSelectOptions";
+import VendorSelector from "~/features/system/VendorSelector";
+import {
+  useGetAllUsersQuery,
+  useRemoveUserManagedSystemMutation,
+} from "~/features/user-management";
+import { ScopeRegistryEnum, SystemResponse } from "~/types/api";
 
-const SystemHeading = ({ system }: { system?: SystemResponse }) => {
-  const isManual = !system;
-  const headingName = isManual
-    ? "your new system"
-    : system.name ?? "this system";
-
-  return (
-    <Heading as="h3" size="lg">
-      Describe {headingName}
-    </Heading>
-  );
-};
+import { formatUser } from "../common/utils";
 
 interface Props {
   onSuccess: (system: SystemResponse) => void;
   system?: SystemResponse;
-  withHeader?: boolean;
   children?: React.ReactNode;
 }
 
 const SystemInformationForm = ({
   onSuccess,
   system: passedInSystem,
-  withHeader,
   children,
 }: Props) => {
-  const systems = useAppSelector(selectAllSystems);
+  const [form] = Form.useForm<FormValues>();
+  const { data: systems = [] } = useGetAllSystemsQuery();
+  const features = useFeatures();
+  const { plus: systemGroupsEnabled, rbac: isRbacEnabled } = features;
+
+  const canUpdateSystems = useHasPermission([
+    ScopeRegistryEnum.SYSTEM_UPDATE,
+    ScopeRegistryEnum.SYSTEM_MANAGER_UPDATE,
+  ]);
+  const isReadOnly = isRbacEnabled && passedInSystem && !canUpdateSystems;
 
   const dispatch = useAppDispatch();
+
+  const { data: eligibleUsersData } = useGetAllUsersQuery({
+    page: 1,
+    size: 100,
+    include_external: false,
+    exclude_approvers: true,
+  });
+
+  const dataStewardOptions = useMemo(() => {
+    const users = eligibleUsersData?.items || [];
+    return users.map((user) => ({
+      label: formatUser(user),
+      value: user.username,
+    }));
+  }, [eligibleUsersData]);
+
   const customFields = useCustomFields({
-    resourceType: ResourceTypes.SYSTEM,
+    resourceType: LegacyResourceTypes.SYSTEM,
     resourceFidesKey: passedInSystem?.fides_key,
   });
 
@@ -109,44 +135,67 @@ const SystemInformationForm = ({
       passedInSystem
         ? transformSystemToFormValues(
             passedInSystem,
-            customFields.customFieldValues
+            customFields.customFieldValues,
           )
         : defaultInitialValues,
-    [passedInSystem, customFields.customFieldValues]
+    [passedInSystem, customFields.customFieldValues],
   );
 
-  const ValidationSchema = useMemo(
-    () =>
-      Yup.object().shape({
-        name: Yup.string()
-          .required()
-          .label("System name")
-          .test("is-unique", "", (value, context) => {
-            const takenSystemNames = systems
-              .map((s) => s.name)
-              .filter((name) => name !== initialValues.name);
-            if (takenSystemNames.some((name) => name === value)) {
-              return context.createError({
-                message: `You already have a system called "${value}". Please specify a unique name for this system.`,
-              });
-            }
-            return true;
-          }),
-        privacy_policy: Yup.string().min(1).url().nullable(),
-      }),
-    [systems, initialValues.name]
-  );
+  const [getSystemQueryTrigger] = useLazyGetSystemsQuery();
 
-  const features = useFeatures();
+  const nameUniquenessRule: FormRule = useMemo(
+    () => ({
+      validator: async (_, value) => {
+        if (!value) {
+          return Promise.resolve();
+        }
+        const { data } = await getSystemQueryTrigger({
+          page: 1,
+          size: 10,
+          search: value,
+        });
+        const systemResults = data?.items || [];
+        const similarSystemNames = systemResults.filter(
+          (s) => s.name !== initialValues.name,
+        );
+        if (similarSystemNames.some((s) => s.name === value)) {
+          return Promise.reject(
+            new Error(
+              `You already have a system called "${value}". Please specify a unique name for this system.`,
+            ),
+          );
+        }
+        return Promise.resolve();
+      },
+    }),
+    [getSystemQueryTrigger, initialValues.name],
+  );
 
   const [createSystemMutationTrigger, createSystemMutationResult] =
     useCreateSystemMutation();
   const [updateSystemMutationTrigger, updateSystemMutationResult] =
     useUpdateSystemMutation();
+  const [bulkAssignSteward] = useBulkAssignStewardMutation();
+  const [populateSystemAssets] = usePopulateSystemAssetsMutation();
+  const [getSystemByFidesKey] = useLazyGetSystemByFidesKeyQuery();
+  const [removeUserManagedSystem] = useRemoveUserManagedSystemMutation();
   useGetAllDictionaryEntriesQuery(undefined, {
     skip: !features.dictionaryService,
   });
   const [getDictionaryDataUseTrigger] = useLazyGetDictionaryDataUsesQuery();
+
+  const { data: allSystemGroups } = useGetAllSystemGroupsQuery(undefined, {
+    skip: !systemGroupsEnabled,
+  });
+
+  const systemGroupOptions = useMemo(
+    () =>
+      allSystemGroups?.map((group) => ({
+        value: group.fides_key,
+        label: group.name,
+      })) || [],
+    [allSystemGroups],
+  );
 
   const dictionaryOptions = useAppSelector(selectAllDictEntries);
   const lockedForGVL = useAppSelector(selectLockedForGVL);
@@ -155,9 +204,9 @@ const SystemInformationForm = ({
     () =>
       Boolean(
         passedInSystem &&
-          systems?.some((s) => s.fides_key === passedInSystem?.fides_key)
+        systems?.some((s) => s.fides_key === passedInSystem?.fides_key),
       ),
-    [passedInSystem, systems]
+    [passedInSystem, systems],
   );
 
   const datasetSelectOptions = useMemo(
@@ -168,17 +217,51 @@ const SystemInformationForm = ({
             label: ds.name ? ds.name : ds.fides_key,
           }))
         : [],
-    [dataProps.allDatasets]
+    [dataProps.allDatasets],
   );
 
-  const toast = useToast();
+  const message = useMessage();
+  const { Text } = Typography;
 
-  const handleSubmit = async (
-    values: FormValues,
-    formikHelpers: FormikHelpers<FormValues>
-  ) => {
+  // Fall back to initialValues when the watch is still undefined (first render
+  // before the form publishes its state, or transient undefineds during the
+  // dict-suggestion show/hide lifecycle) so conditional sections don't blink
+  // out and unmount.
+  const processesPersonalData =
+    Form.useWatch("processes_personal_data", form) ??
+    initialValues.processes_personal_data;
+  const exemptFromPrivacyRegulations =
+    Form.useWatch("exempt_from_privacy_regulations", form) ??
+    initialValues.exempt_from_privacy_regulations;
+  const usesProfiling =
+    Form.useWatch("uses_profiling", form) ?? initialValues.uses_profiling;
+  const doesInternationalTransfers =
+    Form.useWatch("does_international_transfers", form) ??
+    initialValues.does_international_transfers;
+  const requiresDpas =
+    Form.useWatch("requires_data_protection_assessments", form) ??
+    initialValues.requires_data_protection_assessments;
+  const fidesKey = Form.useWatch("fides_key", form);
+
+  // Custom field values load asynchronously after the form mounts; once they're
+  // available, push them into the form so the registered Form.Items pick them
+  // up. Only relevant in edit mode (create mode has no pre-existing values).
+  useEffect(() => {
+    if (passedInSystem && !customFields.isLoading) {
+      form.setFieldsValue({
+        customFieldValues: customFields.customFieldValues,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customFields.isLoading, customFields.customFieldValues]);
+
+  const handleSubmit = async (submittedValues: FormValues) => {
+    // antd's onFinish only includes registered Form.Item fields; merge with
+    // initialValues so non-rendered fields (privacy_declarations,
+    // system_type, etc.) make it into the payload.
+    const values: FormValues = { ...initialValues, ...submittedValues };
     let dictionaryDeclarations;
-    if (values.vendor_id && values.privacy_declarations.length === 0) {
+    if (values.vendor_id && (values.privacy_declarations?.length ?? 0) === 0) {
       const dataUseQueryResult = await getDictionaryDataUseTrigger({
         vendor_id: values.vendor_id!,
       });
@@ -189,9 +272,9 @@ const SystemInformationForm = ({
         if (!isNotFoundError) {
           const dataUseErrorMsg = getErrorMessage(
             dataUseQueryResult.error,
-            `A problem occurred while fetching data uses from Fides Compass for your system.  Please try again.`
+            `A problem occurred while fetching data uses from Fides Compass for your system.  Please try again.`,
           );
-          toast({ status: "error", description: dataUseErrorMsg });
+          message.error(dataUseErrorMsg);
         }
       } else if (
         dataUseQueryResult.data &&
@@ -215,28 +298,25 @@ const SystemInformationForm = ({
     const handleResult = (
       result:
         | { data: SystemResponse }
-        | { error: FetchBaseQueryError | SerializedError }
+        | { error: FetchBaseQueryError | SerializedError },
     ) => {
       if (isErrorResult(result)) {
         const attemptedAction = isEditing ? "editing" : "creating";
         const errorMsg = getErrorMessage(
           result.error,
-          `An unexpected error occurred while ${attemptedAction} the system. Please try again.`
+          `An unexpected error occurred while ${attemptedAction} the system. Please try again.`,
         );
-        toast({
-          status: "error",
-          description: errorMsg,
-        });
+        message.error(errorMsg);
       } else {
-        toast.closeAll();
-        // Reset state such that isDirty will be checked again before next save
-        formikHelpers.resetForm({ values });
+        message.destroy();
         onSuccess(result.data);
         dispatch(setSuggestions("initial"));
       }
     };
 
-    let result;
+    let result:
+      | { data: SystemResponse }
+      | { error: FetchBaseQueryError | SerializedError };
     if (isEditing) {
       result = await updateSystemMutationTrigger(systemBody);
     } else {
@@ -245,10 +325,108 @@ const SystemInformationForm = ({
 
     await customFields.upsertCustomFields(values);
 
+    if (
+      !isEditing &&
+      values.vendor_id &&
+      !isErrorResult(result) &&
+      result.data?.fides_key
+    ) {
+      const assetResult = await populateSystemAssets({
+        systemKey: result.data.fides_key,
+      });
+      if (isErrorResult(assetResult)) {
+        message.error(
+          "An unexpected error occurred while populating the system assets from Compass. Please try again.",
+        );
+      }
+    }
+
+    if (!isErrorResult(result) && result.data?.fides_key) {
+      const systemData = result.data;
+      const currentStewardsMap = new Map(
+        (systemData.data_stewards || []).map(
+          (user: { username: string; id: string }) => [user.username, user.id],
+        ),
+      );
+      const currentStewards = Array.from(currentStewardsMap.keys());
+      const desiredStewards = values.data_stewards || [];
+
+      const stewardsToAdd = desiredStewards.filter(
+        (steward) => !currentStewards.includes(steward),
+      );
+
+      const stewardsToRemove = currentStewards.filter(
+        (steward: string) => !desiredStewards.includes(steward),
+      );
+
+      await Promise.all(
+        stewardsToAdd.map(async (steward) => {
+          const assignResult = await bulkAssignSteward({
+            data_steward: steward,
+            system_keys: [systemData.fides_key],
+          });
+          if (isErrorResult(assignResult)) {
+            message.warning(
+              `Failed to assign ${steward} as data steward. ${getErrorMessage(
+                assignResult.error,
+                "Please try again.",
+              )}`,
+            );
+          }
+        }),
+      );
+
+      await Promise.all(
+        stewardsToRemove
+          .map((steward) => {
+            const stewardId = currentStewardsMap.get(steward);
+            if (!stewardId) {
+              message.warning(
+                `Could not find user ID for ${steward}. Skipping removal.`,
+              );
+              return null;
+            }
+            return { steward, stewardId };
+          })
+          .filter(
+            (item): item is { steward: string; stewardId: string } =>
+              item !== null,
+          )
+          .map(async ({ steward, stewardId }) => {
+            const removeResult = await removeUserManagedSystem({
+              userId: stewardId,
+              systemKey: systemData.fides_key,
+            });
+            if (isErrorResult(removeResult)) {
+              message.warning(
+                `Failed to remove ${steward} as data steward. ${getErrorMessage(
+                  removeResult.error,
+                  "Please try again.",
+                )}`,
+              );
+            }
+          }),
+      );
+
+      if (stewardsToAdd.length > 0 || stewardsToRemove.length > 0) {
+        const refreshedSystemResult = await getSystemByFidesKey(
+          systemData.fides_key,
+        );
+        if (
+          refreshedSystemResult &&
+          "data" in refreshedSystemResult &&
+          refreshedSystemResult.data &&
+          !("error" in refreshedSystemResult)
+        ) {
+          result.data = refreshedSystemResult.data as SystemResponse;
+        }
+      }
+    }
+
     handleResult(result);
   };
 
-  const handleVendorSelected = (newVendorId: string | undefined) => {
+  const handleVendorSelected = (newVendorId?: string | null) => {
     if (!features.dictionaryService) {
       return;
     }
@@ -274,227 +452,257 @@ const SystemInformationForm = ({
     customFields.isLoading;
 
   return (
-    <Formik
+    <Form
+      form={form}
       initialValues={initialValues}
-      enableReinitialize
-      onSubmit={handleSubmit}
-      validationSchema={ValidationSchema}
+      onFinish={handleSubmit}
+      layout="vertical"
+      key={passedInSystem?.fides_key ?? "create"}
     >
-      {({ dirty, values, isValid }) => (
-        <Form>
-          <FormGuard id="SystemInfoTab" name="System Info" />
-          <Stack spacing={0} maxWidth={{ base: "100%", lg: "70%" }}>
-            {withHeader ? <SystemHeading system={passedInSystem} /> : null}
+      <Form.Item shouldUpdate noStyle>
+        {() => (
+          <FormGuard
+            id="SystemInfoTab"
+            name="System Info"
+            isDirty={!isEqual(form.getFieldsValue(true), initialValues)}
+          />
+        )}
+      </Form.Item>
+      {isReadOnly && (
+        <Alert
+          title="Read-only access"
+          description="You have read-only access to this system. Contact an administrator if you need to make changes."
+          type="info"
+          showIcon
+          className="mb-4"
+        />
+      )}
+      <fieldset disabled={isReadOnly} className="border-0 p-0">
+        <Flex vertical className="w-full lg:max-w-[70%]">
+          <Text>
+            Adding appropriate detail and context to each system helps everyone
+            understand the tech stack better and makes reporting easier.
+          </Text>
 
-            <Text fontSize="sm" fontWeight="medium">
-              By providing a small amount of additional context for each system
-              we can make reporting and understanding our tech stack much easier
-              for everyone from engineering to legal teams. So let’s do this
-              now.
-            </Text>
-            {withHeader ? <SystemHeading system={passedInSystem} /> : null}
-
-            <SystemFormInputGroup heading="System details">
-              {features.dictionaryService ? (
-                <VendorSelector
-                  label="System name"
-                  options={dictionaryOptions}
-                  onVendorSelected={handleVendorSelected}
-                  isCreate={!passedInSystem}
-                  lockedForGVL={lockedForGVL}
-                />
-              ) : (
-                <CustomTextInput
-                  id="name"
-                  name="name"
-                  label="System name"
-                  tooltip="Give the system a unique, and relevant name for reporting purposes. e.g. “Email Data Warehouse”"
-                  variant="stacked"
-                  isRequired
-                />
-              )}
-              {passedInSystem?.fides_key && (
-                <CustomTextInput
-                  id="fides_key"
-                  name="fides_key"
-                  label="Unique ID"
-                  disabled
-                  variant="stacked"
-                  tooltip="An auto-generated unique ID based on the system name"
-                />
-              )}
-              <DictSuggestionTextArea
-                id="description"
-                name="description"
-                label="Description"
-                tooltip="What services does this system perform?"
-                disabled={lockedForGVL}
+          <SystemFormInputGroup heading="System details">
+            {features.dictionaryService ? (
+              <VendorSelector
+                label="System name"
+                options={dictionaryOptions}
+                onVendorSelected={handleVendorSelected}
+                isCreate={!passedInSystem}
+                lockedForGVL={lockedForGVL}
+                nameRules={[
+                  { required: true, message: "System name is required" },
+                  nameUniquenessRule,
+                ]}
               />
-              <DictSuggestionCreatableSelect
+            ) : (
+              <Form.Item
+                name="name"
+                label="System name"
+                tooltip="Give the system a unique, and relevant name for reporting purposes. e.g. “Email Data Warehouse”"
+                required
+                rules={[
+                  { required: true, message: "System name is required" },
+                  nameUniquenessRule,
+                ]}
+              >
+                <Input id="name" data-testid="input-name" />
+              </Form.Item>
+            )}
+            {passedInSystem?.fides_key && (
+              <Form.Item
+                name="fides_key"
+                label="Unique ID"
+                tooltip="An auto-generated unique ID based on the system name"
+              >
+                <Input id="fides_key" disabled data-testid="input-fides_key" />
+              </Form.Item>
+            )}
+            <DictSuggestionTextArea
+              id="description"
+              name="description"
+              label="Description"
+              tooltip="What services does this system perform?"
+            />
+            <Form.Item
+              name="tags"
+              label="System Tags"
+              tooltip="Are there any tags to associate with this system?"
+            >
+              <Select
                 id="tags"
-                name="tags"
-                label="System Tags"
+                mode="tags"
+                aria-label="System Tags"
                 options={
                   initialValues.tags
-                    ? initialValues.tags.map((s) => ({
-                        value: s,
-                        label: s,
-                      }))
+                    ? initialValues.tags.map((s) => ({ value: s, label: s }))
                     : []
                 }
-                tooltip="Are there any tags to associate with this system?"
-                isMulti
-                disabled={lockedForGVL}
+                data-testid="controlled-select-tags"
               />
-            </SystemFormInputGroup>
-            <SystemFormInputGroup heading="Dataset reference">
-              <CustomSelect
-                name="dataset_references"
-                label="Dataset references"
-                options={datasetSelectOptions}
-                tooltip="Is there a dataset configured for this system?"
-                isMulti
-                variant="stacked"
-                isDisabled={lockedForGVL}
-              />
-            </SystemFormInputGroup>
-            <SystemFormInputGroup heading="Data processing properties">
-              <Stack spacing={0}>
-                <Box mb={4}>
-                  <DictSuggestionSwitch
-                    name="processes_personal_data"
-                    label="This system processes personal data"
-                    tooltip="Does this system process personal data?"
-                    disabled={lockedForGVL}
-                  />
-                </Box>
-                <Box padding={4} borderRadius={4} backgroundColor="gray.50">
-                  <Stack spacing={0}>
-                    <DictSuggestionSwitch
-                      name="exempt_from_privacy_regulations"
-                      label="This system is exempt from privacy regulations"
-                      tooltip="Is this system exempt from privacy regulations?"
-                      disabled={!values.processes_personal_data || lockedForGVL}
-                    />
-                    <Collapse
-                      in={values.exempt_from_privacy_regulations}
-                      animateOpacity
-                    >
-                      <Box mt={4}>
-                        <CustomTextInput
-                          name="reason_for_exemption"
-                          label="Reason for exemption"
-                          tooltip="Why is this system exempt from privacy regulation?"
-                          variant="stacked"
-                          isRequired={values.exempt_from_privacy_regulations}
-                          disabled={lockedForGVL}
-                        />
-                      </Box>
-                    </Collapse>
-                  </Stack>
-                </Box>
-                <Collapse
-                  in={
-                    values.processes_personal_data &&
-                    !values.exempt_from_privacy_regulations
-                  }
-                  style={{
-                    overflow: "visible",
-                  }}
-                  animateOpacity
-                >
-                  <Stack spacing={4} mt={4}>
-                    <Stack spacing={0}>
-                      <DictSuggestionSwitch
-                        name="uses_profiling"
-                        label="This system performs profiling"
-                        tooltip="Does this system perform profiling that could have a legal effect?"
-                        disabled={lockedForGVL}
-                      />
-                      <Collapse
-                        in={values.uses_profiling}
-                        animateOpacity
-                        style={{
-                          overflow: "visible",
-                        }}
-                      >
-                        <Box mt={4}>
-                          <DictSuggestionSelect
-                            name="legal_basis_for_profiling"
-                            label="Legal basis for profiling"
-                            options={legalBasisForProfilingOptions}
-                            tooltip="What is the legal basis under which profiling is performed?"
-                            isMulti
-                            disabled={lockedForGVL}
-                            isRequired={values.uses_profiling}
-                          />
-                        </Box>
-                      </Collapse>
-                    </Stack>
-                    <Stack spacing={0}>
-                      <DictSuggestionSwitch
-                        name="does_international_transfers"
-                        label="This system transfers data"
-                        tooltip="Does this system transfer data to other countries or international organizations?"
-                        disabled={lockedForGVL}
-                      />
-                      <Collapse
-                        in={values.does_international_transfers}
-                        animateOpacity
-                        style={{
-                          overflow: "visible",
-                        }}
-                      >
-                        <Box mt={4}>
-                          <DictSuggestionSelect
-                            name="legal_basis_for_transfers"
-                            label="Legal basis for transfer"
-                            options={legalBasisForTransferOptions}
-                            tooltip="What is the legal basis under which the data is transferred?"
-                            isMulti
-                            isRequired={values.does_international_transfers}
-                            disabled={lockedForGVL}
-                          />
-                        </Box>
-                      </Collapse>
-                    </Stack>
-                    <Stack spacing={0}>
-                      <CustomSwitch
-                        name="requires_data_protection_assessments"
-                        label="This system requires Data Privacy Assessments"
-                        tooltip="Does this system require (DPA/DPIA) assessments?"
-                        variant="stacked"
-                        isDisabled={lockedForGVL}
-                      />
-                      <Collapse
-                        in={values.requires_data_protection_assessments}
-                        animateOpacity
-                      >
-                        <Box mt={4}>
-                          <CustomTextInput
-                            label="DPIA/DPA location"
-                            name="dpa_location"
-                            tooltip="Where is the DPA/DPIA stored?"
-                            variant="stacked"
-                            disabled={lockedForGVL}
-                            isRequired={
-                              values.requires_data_protection_assessments
-                            }
-                          />
-                        </Box>
-                      </Collapse>
-                    </Stack>
-                  </Stack>
-                </Collapse>
-              </Stack>
-            </SystemFormInputGroup>
-            <Collapse
-              in={
-                values.processes_personal_data &&
-                !values.exempt_from_privacy_regulations
-              }
-              animateOpacity
+            </Form.Item>
+            {systemGroupsEnabled && (
+              <Form.Item
+                name="system_groups"
+                label="System groups"
+                tooltip="Which system groups are associated with this system?"
+              >
+                <Select
+                  mode="multiple"
+                  aria-label="System groups"
+                  options={systemGroupOptions}
+                  data-testid="controlled-select-system_groups"
+                />
+              </Form.Item>
+            )}
+          </SystemFormInputGroup>
+
+          <SystemFormInputGroup heading="Dataset reference">
+            <Form.Item
+              name="dataset_references"
+              label="Dataset references"
+              tooltip="Is there a dataset configured for this system?"
             >
+              <Select
+                mode="multiple"
+                aria-label="Dataset references"
+                options={datasetSelectOptions}
+                optionRender={DatasetSelectOption}
+                data-testid="controlled-select-dataset_references"
+              />
+            </Form.Item>
+          </SystemFormInputGroup>
+
+          <SystemFormInputGroup heading="Data processing properties">
+            <Flex vertical>
+              <div className="mb-4">
+                <DictSuggestionSwitch
+                  name="processes_personal_data"
+                  label="This system processes personal data"
+                  tooltip="Does this system process personal data?"
+                  disabled={lockedForGVL}
+                />
+              </div>
+              <div className="rounded bg-gray-50 p-4">
+                <Flex vertical>
+                  <DictSuggestionSwitch
+                    name="exempt_from_privacy_regulations"
+                    label="This system is exempt from privacy regulations"
+                    tooltip="Is this system exempt from privacy regulations?"
+                    disabled={!processesPersonalData || lockedForGVL}
+                  />
+                  {exemptFromPrivacyRegulations && (
+                    <div className="mt-4">
+                      <Form.Item
+                        name="reason_for_exemption"
+                        label="Reason for exemption"
+                        tooltip="Why is this system exempt from privacy regulation?"
+                        required={exemptFromPrivacyRegulations}
+                      >
+                        <Input
+                          disabled={lockedForGVL}
+                          data-testid="input-reason_for_exemption"
+                        />
+                      </Form.Item>
+                    </div>
+                  )}
+                </Flex>
+              </div>
+              {processesPersonalData && !exemptFromPrivacyRegulations && (
+                <Flex vertical className="mt-4 gap-4">
+                  <Flex vertical>
+                    <DictSuggestionSwitch
+                      name="uses_profiling"
+                      label="This system performs profiling"
+                      tooltip="Does this system perform profiling that could have a legal effect?"
+                      disabled={lockedForGVL}
+                    />
+                    {usesProfiling && (
+                      <div className="mt-4">
+                        <Form.Item
+                          name="legal_basis_for_profiling"
+                          label="Legal basis for profiling"
+                          tooltip="What is the legal basis under which profiling is performed?"
+                          required={usesProfiling}
+                        >
+                          <Select
+                            mode="multiple"
+                            aria-label="Legal basis for profiling"
+                            options={legalBasisForProfilingOptions}
+                            disabled={lockedForGVL}
+                            data-testid="controlled-select-legal_basis_for_profiling"
+                          />
+                        </Form.Item>
+                      </div>
+                    )}
+                  </Flex>
+                  <Flex vertical>
+                    <DictSuggestionSwitch
+                      name="does_international_transfers"
+                      label="This system transfers data"
+                      tooltip="Does this system transfer data to other countries or international organizations?"
+                      disabled={lockedForGVL}
+                    />
+                    {doesInternationalTransfers && (
+                      <div className="mt-4">
+                        <Form.Item
+                          name="legal_basis_for_transfers"
+                          label="Legal basis for transfer"
+                          tooltip="What is the legal basis under which the data is transferred?"
+                          required={doesInternationalTransfers}
+                        >
+                          <Select
+                            mode="multiple"
+                            aria-label="Legal basis for transfer"
+                            options={legalBasisForTransferOptions}
+                            disabled={lockedForGVL}
+                            data-testid="controlled-select-legal_basis_for_transfers"
+                          />
+                        </Form.Item>
+                      </div>
+                    )}
+                  </Flex>
+                  <Flex vertical>
+                    <Form.Item
+                      name="requires_data_protection_assessments"
+                      label="This system requires Data Privacy Assessments"
+                      tooltip="Does this system require (DPA/DPIA) assessments?"
+                      layout="horizontal"
+                      colon={false}
+                      valuePropName="checked"
+                      className="mb-0"
+                    >
+                      <Switch
+                        size="small"
+                        disabled={lockedForGVL}
+                        data-testid="input-requires_data_protection_assessments"
+                      />
+                    </Form.Item>
+                    {requiresDpas && (
+                      <div className="mt-4">
+                        <Form.Item
+                          name="dpa_location"
+                          label="DPIA/DPA location"
+                          tooltip="Where is the DPA/DPIA stored?"
+                          required={requiresDpas}
+                        >
+                          <Input
+                            disabled={lockedForGVL}
+                            data-testid="input-dpa_location"
+                          />
+                        </Form.Item>
+                      </div>
+                    )}
+                  </Flex>
+                </Flex>
+              )}
+            </Flex>
+          </SystemFormInputGroup>
+
+          {processesPersonalData && !exemptFromPrivacyRegulations && (
+            <>
               <SystemFormInputGroup heading="Cookie properties">
                 <DictSuggestionSwitch
                   name="uses_cookies"
@@ -521,58 +729,79 @@ const SystemInformationForm = ({
                   disabled={lockedForGVL}
                 />
               </SystemFormInputGroup>
+
               <SystemFormInputGroup heading="Administrative properties">
-                <CustomTextInput
-                  label="Data stewards"
+                <Form.Item
                   name="data_stewards"
+                  label="Data stewards"
                   tooltip="Who are the stewards assigned to the system?"
-                  variant="stacked"
-                  disabled
-                />
+                >
+                  <Select
+                    mode="multiple"
+                    aria-label="Data stewards"
+                    options={dataStewardOptions}
+                    showSearch
+                    filterOption={(input, option) =>
+                      String(option?.label ?? "")
+                        .toLowerCase()
+                        .includes(input.toLowerCase())
+                    }
+                    placeholder="Select data stewards"
+                    data-testid="controlled-select-data_stewards"
+                  />
+                </Form.Item>
                 <DictSuggestionTextInput
                   id="privacy_policy"
                   name="privacy_policy"
                   label="Privacy policy URL"
                   tooltip="Where can the privacy policy be located?"
                   disabled={lockedForGVL}
+                  rules={[
+                    {
+                      type: "url",
+                      message: "Privacy policy must be a valid URL",
+                    },
+                  ]}
                 />
                 <DictSuggestionTextInput
                   id="legal_name"
                   name="legal_name"
                   label="Legal name"
                   tooltip="What is the legal name of the business?"
-                  disabled={lockedForGVL}
                 />
                 <DictSuggestionTextArea
                   id="legal_address"
                   name="legal_address"
                   label="Legal address"
                   tooltip="What is the legal address for the business?"
-                  disabled={lockedForGVL}
                 />
-                <CustomTextInput
-                  label="Department"
+                <Form.Item
                   name="administrating_department"
+                  label="Department"
                   tooltip="Which department is concerned with this system?"
-                  variant="stacked"
-                  disabled={
-                    !values.processes_personal_data ||
-                    values.exempt_from_privacy_regulations ||
-                    lockedForGVL
-                  }
-                />
-                <DictSuggestionSelect
-                  label="Responsibility"
+                >
+                  <Input
+                    disabled={
+                      !processesPersonalData || exemptFromPrivacyRegulations
+                    }
+                    data-testid="input-administrating_department"
+                  />
+                </Form.Item>
+                <Form.Item
                   name="responsibility"
-                  options={responsibilityOptions}
+                  label="Responsibility"
                   tooltip="What is the role of the business with regard to data processing?"
-                  isMulti
-                  disabled={
-                    !values.processes_personal_data ||
-                    values.exempt_from_privacy_regulations ||
-                    lockedForGVL
-                  }
-                />
+                >
+                  <Select
+                    mode="multiple"
+                    aria-label="Responsibility"
+                    options={responsibilityOptions}
+                    disabled={
+                      !processesPersonalData || exemptFromPrivacyRegulations
+                    }
+                    data-testid="controlled-select-responsibility"
+                  />
+                </Form.Item>
                 <DictSuggestionTextInput
                   name="dpo"
                   id="dpo"
@@ -580,23 +809,23 @@ const SystemInformationForm = ({
                   tooltip="What is the official privacy contact information?"
                   disabled={lockedForGVL}
                 />
-                <CustomTextInput
-                  label="Joint controller"
+                <Form.Item
                   name="joint_controller_info"
+                  label="Joint controller"
                   tooltip="Who are the party or parties that share responsibility for processing data?"
-                  variant="stacked"
-                  disabled={
-                    !values.processes_personal_data ||
-                    values.exempt_from_privacy_regulations ||
-                    lockedForGVL
-                  }
-                />
+                >
+                  <Input
+                    disabled={
+                      !processesPersonalData || exemptFromPrivacyRegulations
+                    }
+                    data-testid="input-joint_controller_info"
+                  />
+                </Form.Item>
                 <DictSuggestionTextInput
                   label="Data security practices"
                   name="data_security_practices"
                   id="data_security_practices"
                   tooltip="Which data security practices are employed to keep the data safe?"
-                  disabled={lockedForGVL}
                 />
                 <DictSuggestionTextInput
                   label="Legitimate interest disclosure URL"
@@ -609,35 +838,50 @@ const SystemInformationForm = ({
                   name="vendor_deleted_date"
                   id="vendor_deleted_date"
                   tooltip="If this vendor is no longer active, it will be 'soft' deleted. When that occurs, it's deleted date will be recorded here for reporting."
-                  // disable this field for editing:
-                  // deleted date is populated by the GVL and should not be editable by users
                   disabled
                 />
               </SystemFormInputGroup>
-              {values.fides_key ? (
+              {fidesKey ? (
                 <CustomFieldsList
-                  resourceType={ResourceTypes.SYSTEM}
-                  resourceFidesKey={values.fides_key}
+                  resourceType={LegacyResourceTypes.SYSTEM}
+                  resourceFidesKey={fidesKey}
                 />
               ) : null}
-            </Collapse>
-          </Stack>
-          <Box mt={6}>
-            <Button
-              type="submit"
-              variant="primary"
-              size="sm"
-              isDisabled={isLoading || !dirty || !isValid}
-              isLoading={isLoading}
-              data-testid="save-btn"
-            >
-              Save
-            </Button>
-          </Box>
-          {children}
-        </Form>
+            </>
+          )}
+        </Flex>
+      </fieldset>
+      {!isReadOnly && (
+        <div className="mt-6">
+          <Form.Item shouldUpdate noStyle>
+            {() => {
+              // Deep-compare instead of form.isFieldsTouched(): VendorSelector
+              // and the dict-suggestion fields commit values via setFieldsValue,
+              // which doesn't mark fields as touched.
+              const isDirty = !isEqual(
+                form.getFieldsValue(true),
+                initialValues,
+              );
+              const hasErrors = form
+                .getFieldsError()
+                .some(({ errors }) => errors.length > 0);
+              return (
+                <Button
+                  htmlType="submit"
+                  type="primary"
+                  disabled={isLoading || !isDirty || hasErrors}
+                  loading={isLoading}
+                  data-testid="save-btn"
+                >
+                  Save
+                </Button>
+              );
+            }}
+          </Form.Item>
+        </div>
       )}
-    </Formik>
+      {children}
+    </Form>
   );
 };
 

@@ -1,7 +1,7 @@
 import React from "react";
 
 import { useCustomFields } from "~/features/common/custom-fields/hooks";
-import { ResourceTypes } from "~/types/api";
+import { LegacyResourceTypes } from "~/features/common/custom-fields/types";
 
 import SystemDataGroup from "../SystemDataGroup";
 import SystemDataTags from "./SystemDataTags";
@@ -9,13 +9,13 @@ import SystemDataTextField from "./SystemDataTextField";
 
 interface SystemCustomFieldGroupProps {
   customFields?: Record<string, any>;
-  resourceType: ResourceTypes;
+  resourceType: LegacyResourceTypes;
 }
 
-const SystemCustomFieldGroup: React.FC<SystemCustomFieldGroupProps> = ({
+const SystemCustomFieldGroup = ({
   customFields = {},
   resourceType,
-}) => {
+}: SystemCustomFieldGroupProps) => {
   const { idToCustomFieldDefinition } = useCustomFields({
     resourceType,
   });
@@ -25,11 +25,11 @@ const SystemCustomFieldGroup: React.FC<SystemCustomFieldGroupProps> = ({
    */
   const isMultivalued = (name: string): boolean =>
     Array.from(idToCustomFieldDefinition.values()).some(
-      (value) => value.name === name && !!value.allow_list_id
+      (value) => value.name === name && !!value.allow_list_id,
     );
 
   const prefix =
-    resourceType === ResourceTypes.SYSTEM
+    resourceType === LegacyResourceTypes.SYSTEM
       ? "custom_fields"
       : "privacy_declarations[0].custom_fields";
 
@@ -51,7 +51,7 @@ const SystemCustomFieldGroup: React.FC<SystemCustomFieldGroupProps> = ({
             label={fieldName}
             name={`${prefix}.${fieldName}`}
           />
-        )
+        ),
       )}
     </SystemDataGroup>
   );

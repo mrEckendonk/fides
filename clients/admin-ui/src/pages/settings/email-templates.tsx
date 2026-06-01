@@ -1,7 +1,8 @@
-import { Box, Heading, Spinner, Text } from "fidesui";
+import { ChakraBox as Box, ChakraText as Text, Spin } from "fidesui";
 import type { NextPage } from "next";
 
 import Layout from "~/features/common/Layout";
+import PageHeader from "~/features/common/PageHeader";
 import EmailTemplatesForm from "~/features/messaging-templates/EmailTemplatesForm";
 import { useGetMessagingTemplatesQuery } from "~/features/messaging-templates/messaging-templates.slice";
 
@@ -12,7 +13,7 @@ const EmailTemplates: NextPage = () => {
   if (isLoading) {
     return (
       <Layout title="Email templates">
-        <Spinner />
+        <Spin />
       </Layout>
     );
   }
@@ -20,9 +21,7 @@ const EmailTemplates: NextPage = () => {
   return (
     <Layout title="Email templates">
       <Box data-testid="email-templates">
-        <Heading marginBottom={2} fontSize="2xl">
-          Email templates
-        </Heading>
+        <PageHeader heading="Email Templates" />
         <Box maxWidth="720px">
           <Text fontSize="sm">
             When privacy requests are submitted, Fides emails the data subject

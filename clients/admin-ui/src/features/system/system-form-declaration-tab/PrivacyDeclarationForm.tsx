@@ -1,49 +1,44 @@
 /**
- * Exports various parts of the privacy declaration form for flexibility
+ * antd-based privacy declaration form for the system configure / add-system flow.
+ *
+ * Composes the shared per-field components in `~/features/system/privacy-declaration-fields/`
+ * with the modal-only fields (legal basis + impact assessment, special category, third parties,
+ * features, retention period). Validation lives on each Form.Item's `rules` array — no Yup.
  */
 
-import { Box, Button, Collapse, Flex, Spacer, Stack } from "fidesui";
-import { Form, Formik, FormikHelpers } from "formik";
+import { Button, Card, Flex, Form, Input, Select, Spin, Switch } from "fidesui";
 import { useMemo } from "react";
-import * as Yup from "yup";
 
 import { useAppSelector } from "~/app/hooks";
 import {
-  CustomFieldsList,
   CustomFieldValues,
   useCustomFields,
 } from "~/features/common/custom-fields";
-import {
-  CustomCreatableSelect,
-  CustomSelect,
-  CustomSwitch,
-  CustomTextInput,
-} from "~/features/common/form/inputs";
-import { FormGuard } from "~/features/common/hooks/useIsAnyFormDirty";
+import { LegacyResourceTypes } from "~/features/common/custom-fields/types";
 import { selectLockedForGVL } from "~/features/system/dictionary-form/dict-suggestion.slice";
-import SystemFormInputGroup from "~/features/system/SystemFormInputGroup";
+import {
+  DataCategoriesFormItem,
+  DatasetReferencesFormItem,
+  DataSubjectsFormItem,
+  DataUseFormItem,
+  DeclarationNameFormItem,
+  PrivacyDeclarationCustomFields,
+} from "~/features/system/privacy-declaration-fields";
 import {
   DataCategory,
   Dataset,
   DataSubject,
   DataUse,
-  LegalBasisForProcessingEnum,
   PrivacyDeclarationResponse,
-  ResourceTypes,
-  SpecialCategoryLegalBasisEnum,
 } from "~/types/api";
-import { Cookies } from "~/types/api/models/Cookies";
 
-export const ValidationSchema = Yup.object().shape({
-  data_categories: Yup.array(Yup.string())
-    .min(1, "Must assign at least one data category")
-    .label("Data categories"),
-  data_use: Yup.string().required().label("Data use"),
-});
+import useLegalBasisOptions from "./useLegalBasisOptions";
+import useSpecialCategoryLegalBasisOptions from "./useSpecialCategoryLegalBasisOptions";
+
+const LEGITIMATE_INTERESTS = "Legitimate interests";
 
 export type FormValues = Omit<PrivacyDeclarationResponse, "cookies"> & {
   customFieldValues: CustomFieldValues;
-  cookies?: string[];
 };
 
 const defaultInitialValues: FormValues = {
@@ -64,18 +59,16 @@ const defaultInitialValues: FormValues = {
   third_parties: "",
   shared_categories: [],
   customFieldValues: {},
-  cookies: [],
   id: "",
 };
 
-const transformFormValueToDeclaration = (values: FormValues) => {
-  // transform cookies from strings into object with default values
-  const transformedCookies = values.cookies
-    ? values.cookies.map((name) => ({ name, path: "/" }))
-    : undefined;
-
-  const declaration = {
-    ...values,
+const transformFormValueToDeclaration = (
+  values: FormValues,
+): PrivacyDeclarationResponse => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { customFieldValues, ...rest } = values;
+  return {
+    ...rest,
     // fill in an empty string for name: https://github.com/ethyca/fideslang/issues/98
     name: values.name ?? "",
     special_category_legal_basis: values.processes_special_category_data
@@ -87,10 +80,19 @@ const transformFormValueToDeclaration = (values: FormValues) => {
     shared_categories: values.data_shared_with_third_parties
       ? values.shared_categories
       : undefined,
-    cookies: transformedCookies,
   };
-  return declaration;
 };
+
+export const transformPrivacyDeclarationToFormValues = (
+  privacyDeclaration?: PrivacyDeclarationResponse,
+  customFieldValues?: CustomFieldValues,
+): FormValues =>
+  privacyDeclaration
+    ? {
+        ...privacyDeclaration,
+        customFieldValues: customFieldValues ?? {},
+      }
+    : defaultInitialValues;
 
 export interface DataProps {
   allDataCategories: DataCategory[];
@@ -98,306 +100,39 @@ export interface DataProps {
   allDataSubjects: DataSubject[];
   allDatasets?: Dataset[];
   includeCustomFields?: boolean;
-  cookies?: Cookies[];
 }
 
-export const PrivacyDeclarationFormComponents = ({
+interface Props {
+  onSubmit: (
+    values: PrivacyDeclarationResponse,
+  ) => Promise<PrivacyDeclarationResponse[] | undefined>;
+  onCancel: () => void;
+  initialValues?: PrivacyDeclarationResponse;
+  /** Fires whenever the form transitions to a dirty state. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export const PrivacyDeclarationForm = ({
+  onSubmit,
+  onCancel,
+  initialValues: passedInInitialValues,
+  onDirtyChange,
   allDataUses,
   allDataCategories,
   allDataSubjects,
   allDatasets,
-  cookies,
-  values,
   includeCustomFields,
-  privacyDeclarationId,
-  lockedForGVL,
-}: DataProps & {
-  values: FormValues;
-  privacyDeclarationId?: string;
-  lockedForGVL?: boolean;
-}) => {
+}: Props & DataProps) => {
+  const privacyDeclarationId = passedInInitialValues?.id;
   const isEditing = !!privacyDeclarationId;
+  const lockedForGVL = useAppSelector(selectLockedForGVL);
 
-  const legalBasisForProcessingOptions = useMemo(
-    () =>
-      (
-        Object.keys(LegalBasisForProcessingEnum) as Array<
-          keyof typeof LegalBasisForProcessingEnum
-        >
-      ).map((key) => ({
-        value: LegalBasisForProcessingEnum[key],
-        label: LegalBasisForProcessingEnum[key],
-      })),
-    []
-  );
+  const { legalBasisOptions } = useLegalBasisOptions();
+  const { specialCategoryLegalBasisOptions } =
+    useSpecialCategoryLegalBasisOptions();
 
-  const legalBasisForSpecialCategoryOptions = useMemo(
-    () =>
-      (
-        Object.keys(SpecialCategoryLegalBasisEnum) as Array<
-          keyof typeof SpecialCategoryLegalBasisEnum
-        >
-      ).map((key) => ({
-        value: SpecialCategoryLegalBasisEnum[key],
-        label: SpecialCategoryLegalBasisEnum[key],
-      })),
-    []
-  );
-
-  const datasetSelectOptions = useMemo(
-    () =>
-      allDatasets
-        ? allDatasets.map((ds) => ({
-            value: ds.fides_key,
-            label: ds.name ? ds.name : ds.fides_key,
-          }))
-        : [],
-    [allDatasets]
-  );
-
-  return (
-    <Stack spacing={4}>
-      <SystemFormInputGroup heading="Data use declaration">
-        <CustomTextInput
-          id="name"
-          label="Declaration name (optional)"
-          name="name"
-          tooltip="Would you like to append anything to the system name?"
-          disabled={isEditing || lockedForGVL}
-          variant="stacked"
-        />
-        <CustomSelect
-          id="data_use"
-          label="Data use"
-          name="data_use"
-          options={allDataUses.map((data) => ({
-            value: data.fides_key,
-            label: data.fides_key,
-          }))}
-          tooltip="For which business purposes is this data processed?"
-          variant="stacked"
-          isRequired
-          isDisabled={isEditing || lockedForGVL}
-        />
-        <CustomSelect
-          name="data_categories"
-          label="Data categories"
-          options={allDataCategories.map((data) => ({
-            value: data.fides_key,
-            label: data.fides_key,
-          }))}
-          tooltip="Which categories of personal data are collected for this purpose?"
-          isMulti
-          isRequired
-          isDisabled={lockedForGVL}
-          variant="stacked"
-        />
-        <CustomSelect
-          name="data_subjects"
-          label="Data subjects"
-          options={allDataSubjects.map((data) => ({
-            value: data.fides_key,
-            label: data.fides_key,
-          }))}
-          tooltip="Who are the subjects for this personal data?"
-          isMulti
-          isDisabled={lockedForGVL}
-          variant="stacked"
-        />
-        {/* <CustomSelect
-          name="data_sources"
-          label="Data sources"
-          options={[]}
-          tooltip="Where do these categories of data come from?"
-          isMulti
-          variant="stacked"
-        /> */}
-        <Stack spacing={0}>
-          <CustomSelect
-            name="legal_basis_for_processing"
-            label="Legal basis for processing"
-            options={legalBasisForProcessingOptions}
-            tooltip="What is the legal basis under which personal data is processed for this purpose?"
-            variant="stacked"
-            isDisabled={lockedForGVL}
-          />
-          <Collapse
-            in={values.legal_basis_for_processing === "Legitimate interests"}
-            animateOpacity
-            style={{ overflow: "visible" }}
-          >
-            <Box mt={4}>
-              <CustomTextInput
-                name="impact_assessment_location"
-                label="Impact assessment location"
-                tooltip="Where is the legitimate interest impact assessment stored?"
-                variant="stacked"
-                disabled={lockedForGVL}
-              />
-            </Box>
-          </Collapse>
-        </Stack>
-        <Box mt={5} pl={4}>
-          <CustomSwitch
-            name="flexible_legal_basis_for_processing"
-            label="This legal basis is flexible"
-            tooltip="Has the vendor declared that the legal basis may be overridden?"
-            variant="stacked"
-            isDisabled={lockedForGVL}
-          />
-        </Box>
-        <CustomTextInput
-          name="retention_period"
-          label="Retention period (days)"
-          tooltip="How long is personal data retained for this purpose?"
-          variant="stacked"
-          disabled={lockedForGVL}
-        />
-      </SystemFormInputGroup>
-      <SystemFormInputGroup heading="Features">
-        <CustomCreatableSelect
-          name="features"
-          label="Features"
-          placeholder="Describe features..."
-          tooltip="What are some features of how data is processed?"
-          variant="stacked"
-          options={[]}
-          disableMenu
-          isDisabled={lockedForGVL}
-          isMulti
-        />
-      </SystemFormInputGroup>
-      <SystemFormInputGroup heading="Dataset reference">
-        <CustomSelect
-          name="dataset_references"
-          label="Dataset references"
-          options={datasetSelectOptions}
-          tooltip="Is there a dataset configured for this system?"
-          isMulti
-          variant="stacked"
-          isDisabled={lockedForGVL}
-        />
-      </SystemFormInputGroup>
-      <SystemFormInputGroup heading="Special category data">
-        <Stack spacing={0}>
-          <CustomSwitch
-            name="processes_special_category_data"
-            label="This system processes special category data"
-            tooltip="Is this system processing special category data as defined by GDPR Article 9?"
-            variant="stacked"
-            isDisabled={lockedForGVL}
-          />
-          <Collapse
-            in={values.processes_special_category_data}
-            animateOpacity
-            style={{ overflow: "visible" }}
-          >
-            <Box mt={4}>
-              <CustomSelect
-                name="special_category_legal_basis"
-                label="Legal basis for processing"
-                options={legalBasisForSpecialCategoryOptions}
-                isRequired={values.processes_special_category_data}
-                tooltip="What is the legal basis under which the special category data is processed?"
-                variant="stacked"
-                isDisabled={lockedForGVL}
-              />
-            </Box>
-          </Collapse>
-        </Stack>
-      </SystemFormInputGroup>
-      <SystemFormInputGroup heading="Third parties">
-        <Stack spacing={0}>
-          <CustomSwitch
-            name="data_shared_with_third_parties"
-            label="This system shares data with 3rd parties for this purpose"
-            tooltip="Does this system disclose, sell, or share personal data collected for this business use with 3rd parties?"
-            variant="stacked"
-            isDisabled={lockedForGVL}
-          />
-          <Collapse
-            in={values.data_shared_with_third_parties}
-            animateOpacity
-            style={{ overflow: "visible" }}
-          >
-            <Stack mt={4} spacing={4}>
-              <CustomTextInput
-                name="third_parties"
-                label="Third parties"
-                tooltip="Which type of third parties is the data shared with?"
-                variant="stacked"
-                disabled={lockedForGVL}
-              />
-              <CustomSelect
-                name="shared_categories"
-                label="Shared categories"
-                options={allDataCategories.map((c) => ({
-                  value: c.fides_key,
-                  label: c.fides_key,
-                }))}
-                tooltip="Which categories of personal data does this system share with third parties?"
-                variant="stacked"
-                isMulti
-                disabled={lockedForGVL}
-              />
-            </Stack>
-          </Collapse>
-        </Stack>
-      </SystemFormInputGroup>
-      <SystemFormInputGroup heading="Cookies">
-        <CustomCreatableSelect
-          name="cookies"
-          label="Cookies"
-          options={
-            cookies && cookies.length
-              ? cookies.map((c) => ({ label: c.name, value: c.name }))
-              : []
-          }
-          isMulti
-          tooltip="Which cookies are placed on consumer domains for this purpose?"
-          variant="stacked"
-          isDisabled={lockedForGVL}
-        />
-      </SystemFormInputGroup>
-      {includeCustomFields ? (
-        <CustomFieldsList
-          resourceType={ResourceTypes.PRIVACY_DECLARATION}
-          resourceFidesKey={privacyDeclarationId}
-        />
-      ) : null}
-    </Stack>
-  );
-};
-
-export const transformPrivacyDeclarationToFormValues = (
-  privacyDeclaration?: PrivacyDeclarationResponse,
-  customFieldValues?: CustomFieldValues
-): FormValues => {
-  if (privacyDeclaration) {
-    const formCookies =
-      privacyDeclaration.cookies && privacyDeclaration.cookies.length > 0
-        ? privacyDeclaration.cookies.map((c) => c.name)
-        : undefined;
-    return {
-      ...privacyDeclaration,
-      customFieldValues: customFieldValues || {},
-      cookies: formCookies,
-    };
-  }
-  return defaultInitialValues;
-};
-
-/**
- * Hook to supply all data needed for the privacy declaration form
- * Purposefully excludes redux queries so that this can be used across apps
- */
-export const usePrivacyDeclarationForm = ({
-  onSubmit,
-  initialValues: passedInInitialValues,
-  privacyDeclarationId,
-}: Omit<Props, "onDelete"> & Pick<DataProps, "allDataUses">) => {
-  const { customFieldValues, upsertCustomFields } = useCustomFields({
-    resourceType: ResourceTypes.PRIVACY_DECLARATION,
+  const { customFieldValues, upsertCustomFields, isLoading } = useCustomFields({
+    resourceType: LegacyResourceTypes.PRIVACY_DECLARATION,
     resourceFidesKey: privacyDeclarationId,
   });
 
@@ -405,112 +140,285 @@ export const usePrivacyDeclarationForm = ({
     () =>
       transformPrivacyDeclarationToFormValues(
         passedInInitialValues,
-        customFieldValues
+        customFieldValues,
       ),
-    [passedInInitialValues, customFieldValues]
+    [passedInInitialValues, customFieldValues],
   );
 
-  const handleSubmit = async (
-    values: FormValues,
-    formikHelpers: FormikHelpers<FormValues>
-  ) => {
-    const { customFieldValues: formCustomFieldValues } = values;
-    const declarationToSubmit = transformFormValueToDeclaration(values);
+  const [form] = Form.useForm<FormValues>();
 
-    const success = await onSubmit(declarationToSubmit, formikHelpers);
+  const handleFinish = async (values: FormValues) => {
+    // antd Form only tracks fields with a Form.Item; untracked fields
+    // (`id`, `egress`, `ingress`) are silently dropped from `values`. Merge
+    // them back in from initialValues so updates aren't mistaken for creates.
+    const declaration = transformFormValueToDeclaration({
+      ...initialValues,
+      ...values,
+    });
+    const success = await onSubmit(declaration);
     if (success) {
-      // find the matching resource based on data use and name
-      const customFieldResource = success.filter(
+      const matched = success.find(
         (pd) =>
           pd.data_use === values.data_use &&
-          // name can be undefined, so avoid comparing undefined == ""
-          // (which we want to be true) - they both mean the PD has no name
-          (pd.name ? pd.name === values.name : true)
+          (pd.name ? pd.name === values.name : true),
       );
-      if (customFieldResource.length > 0) {
+      if (matched?.id) {
         await upsertCustomFields({
-          customFieldValues: formCustomFieldValues,
-          fides_key: customFieldResource[0].id,
+          customFieldValues: values.customFieldValues,
+          fides_key: matched.id,
         });
       }
     }
   };
 
-  return { handleSubmit, initialValues };
-};
-
-interface Props {
-  onSubmit: (
-    values: PrivacyDeclarationResponse,
-    formikHelpers: FormikHelpers<FormValues>
-  ) => Promise<PrivacyDeclarationResponse[] | undefined>;
-  onCancel: () => void;
-  initialValues?: PrivacyDeclarationResponse;
-  privacyDeclarationId?: string;
-}
-
-export const PrivacyDeclarationForm = ({
-  onSubmit,
-  onCancel,
-  initialValues: passedInInitialValues,
-  ...dataProps
-}: Props & DataProps) => {
-  const privacyDeclarationId = passedInInitialValues?.id;
-
-  const { handleSubmit, initialValues } = usePrivacyDeclarationForm({
-    onSubmit,
-    onCancel,
-    initialValues: passedInInitialValues,
-    allDataUses: dataProps.allDataUses,
-    privacyDeclarationId,
-  });
-
-  const lockedForGVL = useAppSelector(selectLockedForGVL);
+  if (isEditing && isLoading) {
+    return (
+      <Flex justify="center" align="center" className="py-8">
+        <Spin />
+      </Flex>
+    );
+  }
 
   return (
-    <Formik
-      enableReinitialize
+    <Form
+      form={form}
+      layout="vertical"
+      key={privacyDeclarationId ?? "new"}
       initialValues={initialValues}
-      onSubmit={handleSubmit}
-      validationSchema={ValidationSchema}
+      onFinish={handleFinish}
+      onValuesChange={() => onDirtyChange?.(true)}
+      data-testid="declaration-form"
     >
-      {({ dirty, values }) => (
-        <Form data-testid="declaration-form">
-          <FormGuard id="PrivacyDeclaration" name="New Privacy Declaration" />
-          <Stack spacing={4}>
-            <PrivacyDeclarationFormComponents
-              values={values}
-              lockedForGVL={lockedForGVL}
-              privacyDeclarationId={privacyDeclarationId}
-              {...dataProps}
+      <Flex vertical gap="middle">
+        <Card size="small" title="Data use declaration">
+          <DeclarationNameFormItem
+            disabled={isEditing}
+            label="Declaration name (optional)"
+            tooltip="Would you like to append anything to the system name?"
+          />
+          <DataUseFormItem
+            allDataUses={allDataUses}
+            disabled={isEditing}
+            tooltip="For which business purposes is this data processed?"
+          />
+          <DataCategoriesFormItem
+            allDataCategories={allDataCategories}
+            disabled={lockedForGVL}
+            required
+            tooltip="Which categories of personal data are collected for this purpose?"
+          />
+          <DataSubjectsFormItem
+            allDataSubjects={allDataSubjects}
+            tooltip="Who are the subjects for this personal data?"
+          />
+          <Form.Item
+            name="legal_basis_for_processing"
+            label="Legal basis for processing"
+            tooltip="What is the legal basis under which personal data is processed for this purpose?"
+          >
+            <Select
+              aria-label="Legal basis for processing"
+              data-testid="input-legal_basis_for_processing"
+              options={legalBasisOptions}
+              disabled={lockedForGVL}
+              allowClear
             />
-            <Flex w="100%">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onCancel}
-                data-testid="cancel-btn"
-              >
-                Cancel
-              </Button>
-              {!lockedForGVL ? (
-                <>
-                  <Spacer />
-                  <Button
-                    colorScheme="primary"
-                    size="sm"
-                    type="submit"
-                    disabled={!dirty}
-                    data-testid="save-btn"
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) =>
+              prev.legal_basis_for_processing !==
+              curr.legal_basis_for_processing
+            }
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("legal_basis_for_processing") ===
+              LEGITIMATE_INTERESTS ? (
+                <Form.Item
+                  name="impact_assessment_location"
+                  label="Impact assessment location"
+                  tooltip="Where is the legitimate interest impact assessment stored?"
+                >
+                  <Input
+                    aria-label="Impact assessment location"
+                    data-testid="input-impact_assessment_location"
+                  />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
+          <Form.Item
+            name="flexible_legal_basis_for_processing"
+            label="This legal basis is flexible"
+            tooltip="Has the vendor declared that the legal basis may be overridden?"
+            valuePropName="checked"
+          >
+            <Switch
+              disabled={lockedForGVL}
+              data-testid="input-flexible_legal_basis_for_processing"
+            />
+          </Form.Item>
+          <Form.Item
+            name="retention_period"
+            label="Retention period (days)"
+            tooltip="How long is personal data retained for this purpose?"
+            className="mb-0"
+          >
+            <Input
+              aria-label="Retention period"
+              data-testid="input-retention_period"
+              disabled={lockedForGVL}
+            />
+          </Form.Item>
+        </Card>
+
+        <Card size="small" title="Features">
+          <Form.Item
+            name="features"
+            label="Features"
+            tooltip="What are some features of how data is processed?"
+            className="mb-0"
+          >
+            <Select
+              aria-label="Features"
+              data-testid="input-features"
+              mode="tags"
+              placeholder="Describe features..."
+              disabled={lockedForGVL}
+            />
+          </Form.Item>
+        </Card>
+
+        <Card size="small" title="Dataset reference">
+          <DatasetReferencesFormItem
+            allDatasets={allDatasets ?? []}
+            tooltip="Is there a dataset configured for this system?"
+          />
+        </Card>
+
+        <Card size="small" title="Special category data">
+          <Form.Item
+            name="processes_special_category_data"
+            label="This system processes special category data"
+            tooltip="Is this system processing special category data as defined by GDPR Article 9?"
+            valuePropName="checked"
+            className="mb-0"
+          >
+            <Switch data-testid="input-processes_special_category_data" />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) =>
+              prev.processes_special_category_data !==
+              curr.processes_special_category_data
+            }
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("processes_special_category_data") ? (
+                <Form.Item
+                  name="special_category_legal_basis"
+                  label="Legal basis for processing"
+                  tooltip="What is the legal basis under which the special category data is processed?"
+                  className="mb-0 mt-4"
+                  rules={[
+                    {
+                      required: true,
+                      message: "Legal basis for processing is required",
+                    },
+                  ]}
+                >
+                  <Select
+                    aria-label="Special category legal basis"
+                    data-testid="input-special_category_legal_basis"
+                    options={specialCategoryLegalBasisOptions}
+                    allowClear
+                  />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
+        </Card>
+
+        <Card size="small" title="Third parties">
+          <Form.Item
+            name="data_shared_with_third_parties"
+            label="This system shares data with 3rd parties for this purpose"
+            tooltip="Does this system disclose, sell, or share personal data collected for this business use with 3rd parties?"
+            valuePropName="checked"
+            className="mb-0"
+          >
+            <Switch data-testid="input-data_shared_with_third_parties" />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) =>
+              prev.data_shared_with_third_parties !==
+              curr.data_shared_with_third_parties
+            }
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("data_shared_with_third_parties") ? (
+                <Flex vertical gap="middle" className="mt-4">
+                  <Form.Item
+                    name="third_parties"
+                    label="Third parties"
+                    tooltip="Which type of third parties is the data shared with?"
+                    className="mb-0"
                   >
-                    Save
-                  </Button>
-                </>
-              ) : null}
-            </Flex>
-          </Stack>
-        </Form>
-      )}
-    </Formik>
+                    <Input
+                      aria-label="Third parties"
+                      data-testid="input-third_parties"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="shared_categories"
+                    label="Shared categories"
+                    tooltip="Which categories of personal data does this system share with third parties?"
+                    className="mb-0"
+                  >
+                    <Select
+                      aria-label="Shared categories"
+                      data-testid="input-shared_categories"
+                      mode="multiple"
+                      options={allDataCategories.map((c) => ({
+                        value: c.fides_key,
+                        label: c.fides_key,
+                      }))}
+                    />
+                  </Form.Item>
+                </Flex>
+              ) : null
+            }
+          </Form.Item>
+        </Card>
+
+        {includeCustomFields ? (
+          <PrivacyDeclarationCustomFields
+            privacyDeclarationId={privacyDeclarationId}
+          />
+        ) : null}
+
+        <Flex justify="end" align="center" gap="small">
+          <Button onClick={onCancel} data-testid="cancel-btn">
+            Cancel
+          </Button>
+          <Form.Item shouldUpdate noStyle>
+            {() => (
+              <Button
+                type="primary"
+                htmlType="submit"
+                data-testid="save-btn"
+                disabled={
+                  !form.isFieldsTouched() ||
+                  form.getFieldsError().some((field) => field.errors.length > 0)
+                }
+              >
+                Save
+              </Button>
+            )}
+          </Form.Item>
+        </Flex>
+      </Flex>
+    </Form>
   );
 };

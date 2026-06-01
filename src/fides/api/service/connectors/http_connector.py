@@ -1,8 +1,11 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import requests
 from loguru import logger
+from oauthlib.oauth2 import BackendApplicationClient
+from requests.auth import HTTPBasicAuth
+from requests_oauthlib import OAuth2Session
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
 from fides.api.common_exceptions import ClientUnsuccessfulException
@@ -12,8 +15,9 @@ from fides.api.models.policy import Policy
 from fides.api.models.privacy_request import PrivacyRequest, RequestTask
 from fides.api.schemas.connection_configuration import HttpsSchema
 from fides.api.service.connectors.base_connector import BaseConnector
-from fides.api.service.connectors.query_config import QueryConfig
+from fides.api.service.connectors.query_configs.query_config import QueryConfig
 from fides.api.util.collection_util import Row
+from fides.api.util.logger import Pii
 
 
 class HTTPSConnector(BaseConnector[None]):
@@ -37,28 +41,77 @@ class HTTPSConnector(BaseConnector[None]):
         self,
         request_body: Dict[str, Any],
         response_expected: bool,
-        additional_headers: Dict[str, Any] = {},
+        additional_headers: Dict[str, str] = {},
     ) -> Optional[Dict[str, Any]]:
         """Calls a client-defined endpoint and returns the data that it responds with"""
         config = HttpsSchema(**self.configuration.secrets or {})
-        headers = self.build_authorization_header()
-        headers.update(additional_headers)
+
+        headers = (config.headers or {}) | additional_headers
+
+        def _request_with_oauth() -> requests.Response:
+            """Helper function to make a request with OAuth2 authentication"""
+            client_id = oauth_config.client_id
+            client_secret = oauth_config.client_secret
+            scopes = oauth_config.scope.split(" ") or []
+            auth = HTTPBasicAuth(client_id, client_secret)
+            client = BackendApplicationClient(client_id=client_id)
+            session_client = OAuth2Session(client=client, scope=scopes)
+            try:
+                # Fetch the access token from the token URL
+                session_client.fetch_token(token_url=oauth_config.token_url, auth=auth)
+            except Exception as e:
+                logger.error(f"Error fetching OAuth2 token: {e}")
+                raise ClientUnsuccessfulException(
+                    status_code=HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            return session_client.post(
+                url=config.url, headers=headers, json=request_body
+            )
+
+        def _request_without_oauth() -> requests.Response:
+            """Helper function to make a request without OAuth2 authentication"""
+            all_headers = self.build_authorization_header()
+            all_headers.update(headers)
+            return requests.post(url=config.url, headers=all_headers, json=request_body)
+
+        oauth_config = self.configuration.oauth_config
 
         try:
-            response = requests.post(url=config.url, headers=headers, json=request_body)
-        except requests.ConnectionError:
-            logger.info("Requests connection error received.")
+            response = (
+                _request_with_oauth()
+                if oauth_config is not None
+                else _request_without_oauth()
+            )
+
+            if not response.ok:
+                response_text: Union[str, Pii]
+                try:
+                    response_text = Pii(response.text)
+                except Exception as exception:
+                    response_text = (
+                        f"Encountered an error getting response: {exception}"
+                    )
+
+                logger.error(
+                    f"HTTP Connector received status code: {response.status_code}. {response_text}"
+                )
+
+                if response_expected:
+                    raise ClientUnsuccessfulException(status_code=response.status_code)
+
+            logger.info(f"HTTP Connector received status code: {response.status_code}")
+
+            if response_expected:
+                return json.loads(response.text)
+
+            return {}
+
+        except requests.ConnectionError as ex:
+            logger.error(f"HTTPS client received a connection error. {Pii(ex)}")
             raise ClientUnsuccessfulException(
                 status_code=HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-        if not response_expected:
-            return {}
-
-        if not response.ok:
-            logger.error("Invalid response received from webhook.")
-            raise ClientUnsuccessfulException(status_code=response.status_code)
-        return json.loads(response.text)
 
     def test_connection(self) -> Optional[ConnectionTestStatus]:
         """
@@ -68,6 +121,7 @@ class HTTPSConnector(BaseConnector[None]):
 
     def query_config(self, node: ExecutionNode) -> QueryConfig[Any]:
         """Return the query config that corresponds to this connector type"""
+        raise NotImplementedError("Query config not implemented for HTTPS")
 
     def retrieve_data(
         self,
@@ -89,6 +143,7 @@ class HTTPSConnector(BaseConnector[None]):
         privacy_request: PrivacyRequest,
         request_task: RequestTask,
         rows: List[Row],
+        input_data: Optional[Dict[str, List[Any]]] = None,
     ) -> int:
         """Currently not supported as webhooks are not called at the collection level"""
         raise NotImplementedError(

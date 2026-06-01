@@ -1,38 +1,41 @@
 import { Row } from "@tanstack/react-table";
-import { Box } from "fidesui";
+import { ChakraBox as Box } from "fidesui";
 import React, { useContext, useMemo } from "react";
 
-import CytoscapeGraph from "~/features/datamap/CytoscapeGraph";
+import DatamapGraph from "~/features/datamap/DatamapGraph";
 
 import { DatamapRow } from "./datamap.slice";
 import DatamapTableContext from "./datamap-table/DatamapTableContext";
-import { Link, SetSelectedSystemId, SystemNode } from "./types";
+import { Link, SystemNode } from "./types";
 
 const useSpatialDatamap = (rows: Row<DatamapRow>[]) => {
   const systemKeysFromFilteredRows = useMemo(
     () => new Set(rows?.map((row) => row.original["system.fides_key"])),
-    [rows]
+    [rows],
   );
   const datamapBySystem = useMemo(
     () =>
-      rows.reduce((draft, obj) => {
-        const key = obj.original["system.fides_key"];
-        if (!draft[key]) {
-          draft[key] = {
-            name: obj.original["system.name"],
-            description: obj.original["system.description"],
-            ingress: obj.original["system.ingress"]
-              ? obj.original["system.ingress"].split(", ")
-              : [],
-            egress: obj.original["system.egress"]
-              ? obj.original["system.egress"].split(", ")
-              : [],
-            id: obj.original["system.fides_key"],
-          };
-        }
-        return draft;
-      }, {} as Record<string, SystemNode>),
-    [rows]
+      rows.reduce(
+        (draft, obj) => {
+          const key = obj.original["system.fides_key"];
+          if (!draft[key]) {
+            draft[key] = {
+              name: obj.original["system.name"],
+              description: obj.original["system.description"],
+              ingress: obj.original["system.ingress"]
+                ? obj.original["system.ingress"].split(", ")
+                : [],
+              egress: obj.original["system.egress"]
+                ? obj.original["system.egress"].split(", ")
+                : [],
+              id: obj.original["system.fides_key"],
+            };
+          }
+          return draft;
+        },
+        {} as Record<string, SystemNode>,
+      ),
+    [rows],
   );
   const data = useMemo(() => {
     let nodes: SystemNode[] = [];
@@ -70,8 +73,20 @@ const useSpatialDatamap = (rows: Row<DatamapRow>[]) => {
   };
 };
 
-type SpatialDatamapProps = {} & SetSelectedSystemId;
-const SpatialDatamap = ({ setSelectedSystemId }: SpatialDatamapProps) => {
+/**
+ * Props for the SpatialDatamap component
+ */
+type SpatialDatamapProps = {
+  /** Function to call when a system node is selected in the graph */
+  setSelectedSystemId: (id: string) => void;
+  /** Currently selected system ID to highlight in the graph */
+  selectedSystemId?: string;
+};
+
+const SpatialDatamap = ({
+  setSelectedSystemId,
+  selectedSystemId,
+}: SpatialDatamapProps) => {
   const { tableInstance } = useContext(DatamapTableContext);
 
   if (!tableInstance) {
@@ -86,7 +101,11 @@ const SpatialDatamap = ({ setSelectedSystemId }: SpatialDatamapProps) => {
 
   return (
     <Box boxSize="100%" minHeight="600px" position="relative">
-      <CytoscapeGraph data={data} setSelectedSystemId={setSelectedSystemId} />
+      <DatamapGraph
+        data={data}
+        setSelectedSystemId={setSelectedSystemId}
+        selectedSystemId={selectedSystemId}
+      />
     </Box>
   );
 };

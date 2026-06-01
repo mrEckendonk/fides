@@ -1,4 +1,4 @@
-import { Badge, Stack, Text } from "fidesui";
+import { Flex, Tag } from "fidesui";
 
 import DocsLink from "~/features/common/DocsLink";
 
@@ -9,35 +9,21 @@ const FrameworkStatus = ({
   name: string;
   enabled: boolean;
 }) => (
-  <Stack
-    spacing={2}
-    fontSize="sm"
-    lineHeight="5"
-    fontWeight="medium"
-    color="gray.700"
-  >
-    <Text>
+  <Flex vertical gap="small" className="text-sm font-medium">
+    <span>
       {name} status{" "}
       {enabled ? (
-        <Badge
-          fontWeight="semibold"
-          color="green.800"
-          backgroundColor="green.100"
-        >
-          Enabled
-        </Badge>
+        <Tag color="success">Enabled</Tag>
       ) : (
-        <Badge fontWeight="semibold" backgroundColor="red.100">
-          Disabled
-        </Badge>
+        <Tag color="error">Disabled</Tag>
       )}
-    </Text>
-    <Text>
+    </span>
+    <span>
       To {enabled ? "disable" : "enable"} {name}, please contact your Fides
       administrator or{" "}
       <DocsLink href="mailto:support@ethyca.com">Ethyca support</DocsLink>.
-    </Text>
-  </Stack>
+    </span>
+  </Flex>
 );
 
 export default FrameworkStatus;

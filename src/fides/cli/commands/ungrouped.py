@@ -1,8 +1,5 @@
 """Contains all of the ungrouped CLI commands for fides."""
 
-from datetime import datetime, timezone
-from typing import Optional
-
 import rich_click as click
 import yaml
 
@@ -17,8 +14,7 @@ from fides.cli.options import (
 from fides.cli.utils import (
     FIDES_ASCII_ART,
     check_server,
-    send_init_analytics,
-    with_analytics,
+    with_server_health_check,
 )
 from fides.common.utils import (
     echo_green,
@@ -32,17 +28,14 @@ from fides.core import api as _api
 from fides.core import audit as _audit
 from fides.core import evaluate as _evaluate
 from fides.core import parse as _parse
-from fides.core import pull as _pull
 from fides.core import push as _push
 from fides.core.api_helpers import get_server_resource, list_server_resources
-from fides.core.utils import git_is_dirty
 
 
 @click.command()  # type: ignore
 @click.pass_context
 @resource_type_argument
 @fides_key_argument
-@with_analytics
 def delete(ctx: click.Context, resource_type: str, fides_key: str) -> None:
     """
     Delete an object from the server.
@@ -66,7 +59,7 @@ def delete(ctx: click.Context, resource_type: str, fides_key: str) -> None:
 @click.pass_context
 @resource_type_argument
 @fides_key_argument
-@with_analytics
+@with_server_health_check
 def get_resource(ctx: click.Context, resource_type: str, fides_key: str) -> None:
     """
     View an object from the server.
@@ -85,7 +78,7 @@ def get_resource(ctx: click.Context, resource_type: str, fides_key: str) -> None
 @click.command(name="ls")  # type: ignore
 @click.pass_context
 @resource_type_argument
-@with_analytics
+@with_server_health_check
 @click.option(
     "--verbose", "-v", is_flag=True, help="Displays the entire object list as YAML."
 )
@@ -119,34 +112,26 @@ def list_resources(ctx: click.Context, verbose: bool, resource_type: str) -> Non
 @click.command()  # type: ignore
 @click.pass_context
 @click.argument("fides_dir", default=".", type=click.Path(exists=True))
-@click.option(
-    "--opt-in", is_flag=True, help="Automatically opt-in to anonymous usage analytics."
-)
-def init(ctx: click.Context, fides_dir: str, opt_in: bool) -> None:
+def init(ctx: click.Context, fides_dir: str) -> None:
     """
     Initializes a Fides instance by creating the default directory and
     configuration file if not present.
     """
 
-    executed_at = datetime.now(timezone.utc)
     config = ctx.obj["CONFIG"]
 
     click.echo(FIDES_ASCII_ART)
     click.echo("Initializing fides...")
 
-    config, config_path = create_and_update_config_file(
-        config, fides_dir, opt_in=opt_in
-    )
+    config, config_path = create_and_update_config_file(config, fides_dir)
 
     print_divider()
 
-    send_init_analytics(config.user.analytics_opt_out, config_path, executed_at)
     echo_green("fides initialization complete.")
 
 
 @click.command()
 @click.pass_context
-@with_analytics
 def status(ctx: click.Context) -> None:
     """
     Check Fides server availability.
@@ -178,15 +163,39 @@ def webserver(ctx: click.Context, port: int = 8080) -> None:
 
 @click.command()
 @click.pass_context
-@with_analytics
-def worker(ctx: click.Context) -> None:
+@click.option("--queues", "-q", type=str, default="")
+@click.option("--exclude-queues", type=str, default="")
+@click.option(
+    "--reload",
+    is_flag=True,
+    default=False,
+    help="Auto-restart the worker when Python or YAML files change (dev only).",
+)
+@click.option(
+    "--reload-dir",
+    multiple=True,
+    type=str,
+    help="Directories to watch for changes (can be specified multiple times). Defaults to 'src' and 'data'.",
+)
+def worker(
+    ctx: click.Context,
+    queues: str = "",
+    exclude_queues: str = "",
+    reload: bool = False,
+    reload_dir: tuple = (),
+) -> None:
     """
     Start a Celery worker for the Fides webserver.
     """
     # This has to be here to avoid a circular dependency
     from fides.api.worker import start_worker
 
-    start_worker()
+    start_worker(
+        queues,
+        exclude_queues,
+        reload=reload,
+        reload_dirs=list(reload_dir) if reload_dir else None,
+    )
 
 
 @click.command()  # type: ignore
@@ -198,12 +207,11 @@ def worker(ctx: click.Context) -> None:
     help="Print any diffs between the local & server objects",
 )
 @manifests_dir_argument
-@with_analytics
+@with_server_health_check
 def push(ctx: click.Context, dry: bool, diff: bool, manifests_dir: str) -> None:
     """
     Parse local manifest files and upload them to the server.
     """
-
     config = ctx.obj["CONFIG"]
     taxonomy = _parse.parse(manifests_dir)
     _push.push(
@@ -240,7 +248,6 @@ def push(ctx: click.Context, dry: bool, diff: bool, manifests_dir: str) -> None:
     is_flag=True,
     help="Do not upload objects or results to the Fides webserver.",
 )
-@with_analytics
 def evaluate(
     ctx: click.Context,
     manifests_dir: str,
@@ -300,43 +307,10 @@ def evaluate(
 @click.pass_context
 @manifests_dir_argument
 @verbose_flag
-@with_analytics
 def parse(ctx: click.Context, manifests_dir: str, verbose: bool = False) -> None:
     """
     Parse all Fides objects located in the supplied directory.
     """
     taxonomy = _parse.parse(manifests_dir=manifests_dir)
     if verbose:
-        pretty_echo(taxonomy.dict(), color="green")
-
-
-@click.command()  # type: ignore
-@click.pass_context
-@manifests_dir_argument
-@click.option(
-    "--all-resources",
-    "-a",
-    default=None,
-    help="Pulls all locally missing resources from the server into this file.",
-)
-@with_analytics
-def pull(ctx: click.Context, manifests_dir: str, all_resources: Optional[str]) -> None:
-    """
-    Update local resource files based on the state of the objects on the server.
-    """
-
-    # Make the resources that are pulled configurable
-    config = ctx.obj["CONFIG"]
-    # Do this to validate the manifests since they won't get parsed during the pull process
-    _parse.parse(manifests_dir)
-    if git_is_dirty(manifests_dir):
-        echo_red(
-            f"There are unstaged changes in your manifest directory: '{manifests_dir}' \nAborting pull!"
-        )
-        raise SystemExit(1)
-    _pull.pull(
-        url=config.cli.server_url,
-        manifests_dir=manifests_dir,
-        headers=config.user.auth_header,
-        all_resources_file=all_resources,
-    )
+        pretty_echo(taxonomy.model_dump(mode="json"), color="green")

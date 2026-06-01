@@ -4,13 +4,15 @@ import React, { useEffect } from "react";
 import UserManagementTabs from "user-management/UserManagementTabs";
 
 import { useAppDispatch } from "~/app/hooks";
-import { USER_MANAGEMENT_ROUTE } from "~/features/common/nav/v2/routes";
+import { isErrorResult } from "~/features/common/helpers";
+import { USER_MANAGEMENT_ROUTE } from "~/features/common/nav/routes";
+import { UserCreateExtended } from "~/types/api";
 
+import PageHeader from "../common/PageHeader";
 import {
   setActiveUserId,
   useCreateUserMutation,
 } from "./user-management.slice";
-import { FormValues } from "./UserForm";
 
 const NewUserForm = () => {
   const router = useRouter();
@@ -21,19 +23,33 @@ const NewUserForm = () => {
     dispatch(setActiveUserId(undefined));
   }, [dispatch]);
 
-  const handleSubmit = async (values: FormValues) => {
-    const b64Password = utf8ToB64(values.password);
+  const handleSubmit = async (values: UserCreateExtended) => {
+    const b64Password = values.password
+      ? utf8ToB64(values.password)
+      : undefined;
     const result = await createUser({
       ...values,
       password: b64Password,
-    }).unwrap();
-    router.push(`${USER_MANAGEMENT_ROUTE}/profile/${result.id}`);
+    });
+    if (!isErrorResult(result)) {
+      router.push(`${USER_MANAGEMENT_ROUTE}/profile/${result.data.id}`);
+    }
+    return result;
   };
+
   return (
     <div>
-      <main>
-        <UserManagementTabs onSubmit={handleSubmit} />
-      </main>
+      <PageHeader
+        heading="Users"
+        breadcrumbItems={[
+          {
+            title: "All users",
+            href: USER_MANAGEMENT_ROUTE,
+          },
+          { title: "New User" },
+        ]}
+      />
+      <UserManagementTabs onSubmit={handleSubmit} />
     </div>
   );
 };

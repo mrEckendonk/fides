@@ -1,13 +1,14 @@
 {
-  "$schema": "https://turbo.build/schema.json",
-  "pipeline": {
+  "$schema": "https://turbo.build/schema.v1.json",
+  "globalEnv": ["IS_TEST"],
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/*", "!.next/cache/*", "dist/*"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "build:windows": {
       "dependsOn": ["^build:windows"],
-      "outputs": [".next/*", "!.next/cache/*", "dist/*"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "clean": {
       "dependsOn": [],
@@ -15,39 +16,58 @@
     },
     "dev": {
       "dependsOn": ["^build"],
-      "outputs": [".next/*", "!.next/cache/*"],
+      "outputs": [".next/**", "!.next/cache/**"],
       "cache": false,
       "persistent": true
     },
     "dev:windows": {
       "dependsOn": ["^build:windows"],
-      "outputs": [".next/*", "!.next/cache/*"],
+      "outputs": [".next/**", "!.next/cache/**"],
       "cache": false,
       "persistent": true
     },
     "start": {
       "dependsOn": ["build"],
-      "outputs": [".next/*", "!.next/cache/*"]
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "check": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "check:ci": {
+      "dependsOn": ["^build"]
     },
     "lint": {
-      "dependsOn": []
+      "dependsOn": [],
+      "cache": false
     },
-    "lint:fix": {
+    "lint:ci": {
       "dependsOn": []
     },
     "format": {
-      "dependsOn": []
+      "dependsOn": [],
+      "cache": false
     },
     "format:ci": {
       "dependsOn": []
     },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^typecheck"],
       "cache": false,
       "persistent": true
     },
     "test:ci": {
-      "dependsOn": ["build"]
+      "dependsOn": [],
+      "cache": false,
+      "persistent": true
+    },
+    "test:watch": {
+      "dependsOn": ["^typecheck"],
+      "cache": false,
+      "persistent": true
     },
     "cy:open": {
       "dependsOn": []
@@ -71,6 +91,9 @@
       "dependsOn": []
     },
     "openapi:generate-dictionary": {
+      "dependsOn": []
+    },
+    "storybook": {
       "dependsOn": []
     }
   }

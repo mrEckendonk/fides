@@ -1,0 +1,193 @@
+import classNames from "classnames";
+import {
+  Avatar,
+  Button,
+  Card,
+  CUSTOM_TAG_COLOR,
+  Divider,
+  Flex,
+  Icons,
+  Paragraph,
+  Progress,
+  Spin,
+  Tag,
+  TagList,
+  Text,
+  Typography,
+} from "fidesui";
+
+import useTaxonomies from "~/features/common/hooks/useTaxonomies";
+import { RouterLink } from "~/features/common/nav/RouterLink";
+import { PRIVACY_ASSESSMENTS_ROUTE } from "~/features/common/nav/routes";
+import { formatDate } from "~/features/common/utils";
+
+import styles from "./AssessmentCard.module.scss";
+import {
+  ASSESSMENT_STATUS_LABELS,
+  RISK_LEVEL_LABELS,
+  RISK_TAG_COLORS,
+} from "./constants";
+import { AssessmentStatus, PrivacyAssessmentResponse } from "./types";
+
+const { Title } = Typography;
+
+type TextType = React.ComponentProps<typeof Typography.Text>["type"];
+
+function getStatusTextType(status: AssessmentStatus): TextType {
+  if (status === AssessmentStatus.COMPLETED) {
+    return "success";
+  }
+  if (status === AssessmentStatus.OUTDATED) {
+    return "danger";
+  }
+  return "secondary";
+}
+
+interface AssessmentCardProps {
+  assessment: PrivacyAssessmentResponse;
+  onClick: () => void;
+}
+
+export const AssessmentCard = ({
+  assessment,
+  onClick,
+}: AssessmentCardProps) => {
+  const { getDataCategoryDisplayName } = useTaxonomies();
+
+  // Do not assume defaults for missing values; show "N/A" when absent
+  const riskLevel = assessment.risk_level ?? null;
+  const status = assessment.status ?? null;
+  const completeness = assessment.completeness ?? 0;
+
+  const riskLabel = riskLevel ? RISK_LEVEL_LABELS[riskLevel] : "N/A";
+  const statusLabel = status ? ASSESSMENT_STATUS_LABELS[status] : "N/A";
+  const isGenerating = status === AssessmentStatus.GENERATING;
+  const isComplete = status === AssessmentStatus.COMPLETED;
+  const completionDate =
+    isComplete && assessment.updated_at
+      ? `Completed on ${formatDate(assessment.updated_at, { showTime: false })}`
+      : statusLabel;
+
+  const titleText = assessment.template_name ?? assessment.name;
+
+  return (
+    <Card
+      className={classNames(styles.cardWrapper, {
+        [styles.cardComplete]: isComplete,
+      })}
+    >
+      <Flex vertical gap="small" justify="space-between" className="flex-1">
+        <div>
+          <Title level={3} className={`!mb-1 ${styles.titleLink}`}>
+            {isGenerating ? (
+              titleText
+            ) : (
+              <RouterLink
+                unstyled
+                href={`${PRIVACY_ASSESSMENTS_ROUTE}/${assessment.id}`}
+              >
+                {titleText}
+              </RouterLink>
+            )}
+          </Title>
+          {assessment.system_name && (
+            <Text type="secondary" size="sm" className="block">
+              {assessment.system_name}
+            </Text>
+          )}
+          <div className={styles.textWithTags}>
+            {(assessment.data_categories ?? []).length > 0 ? (
+              <TagList
+                tags={(assessment.data_categories ?? []).map((key) => ({
+                  value: key,
+                  label: getDataCategoryDisplayName(key),
+                }))}
+                maxTags={1}
+                expandable
+              />
+            ) : (
+              <Tag>0 data categories</Tag>
+            )}
+          </div>
+          {riskLevel && (
+            <div>
+              <Tag
+                color={RISK_TAG_COLORS[riskLevel] ?? CUSTOM_TAG_COLOR.DEFAULT}
+              >
+                {`${riskLabel} risk`}
+              </Tag>
+            </div>
+          )}
+        </div>
+        <div>
+          <Divider className="my-3" />
+          <div>
+            {isGenerating && (
+              <Flex align="center" justify="center" gap="small">
+                <div>
+                  <Spin size="small" />
+                </div>
+                <Text type="secondary" size="sm">
+                  Generating this assessment
+                </Text>
+              </Flex>
+            )}
+            {isComplete && (
+              <Flex
+                justify="space-between"
+                align="center"
+                className={styles.completeContainer}
+              >
+                <Flex align="center" gap="medium">
+                  <Avatar
+                    shape="circle"
+                    size={28}
+                    icon={<Icons.Checkmark size={14} />}
+                    style={{ backgroundColor: "var(--fidesui-color-success)" }}
+                  />
+                  <div>
+                    <Text strong type="success" size="sm">
+                      Completed
+                    </Text>
+                    <Paragraph type="secondary" size="sm">
+                      {completionDate}
+                    </Paragraph>
+                  </div>
+                </Flex>
+                <Button type="link" className="p-0" onClick={onClick}>
+                  View
+                </Button>
+              </Flex>
+            )}
+            {!isGenerating && !isComplete && (
+              <>
+                <div>
+                  <Text strong size="sm">
+                    {Math.round(completeness)}%
+                  </Text>
+                  <Text type="secondary" size="sm">
+                    {" "}
+                    of questions answered
+                  </Text>
+                </div>
+                <Progress
+                  percent={completeness}
+                  showInfo={false}
+                  size="small"
+                />
+                <Flex justify="space-between" align="center" className="mt-1">
+                  <Text type={getStatusTextType(status)} size="sm">
+                    {statusLabel}
+                  </Text>
+                  <Button type="link" className="p-0" onClick={onClick}>
+                    Resume
+                  </Button>
+                </Flex>
+              </>
+            )}
+          </div>
+        </div>
+      </Flex>
+    </Card>
+  );
+};

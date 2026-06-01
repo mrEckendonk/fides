@@ -1,30 +1,19 @@
-import { Select } from "chakra-react-select";
 import {
-  Box,
   Button,
-  DeleteIcon,
+  Card,
   Flex,
-  Heading,
-  HStack,
-  IconButton,
-  SmallAddIcon,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
+  Form,
+  FormInstance,
+  Icons,
+  Input,
+  Select,
   Tabs,
-  VStack,
+  Typography,
 } from "fidesui";
-import { FieldArray, useFormikContext } from "formik";
 import { useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
-import FormSection from "~/features/common/form/FormSection";
-import {
-  CustomTextArea,
-  CustomTextInput,
-  SELECT_STYLES,
-} from "~/features/common/form/inputs";
+import { useGetConfigurationSettingsQuery } from "~/features/config-settings/config-settings.slice";
 import {
   selectAllLanguages,
   selectPage,
@@ -32,7 +21,6 @@ import {
   useGetAllLanguagesQuery,
 } from "~/features/privacy-experience/language.slice";
 import { OOBTranslationNotice } from "~/features/privacy-experience/PrivacyExperienceTranslationForm";
-import { useGetConfigurationSettingsQuery } from "~/features/privacy-requests";
 import {
   NoticeTranslation,
   NoticeTranslationCreate,
@@ -40,21 +28,72 @@ import {
   SupportedLanguage,
 } from "~/types/api";
 
+const { Title } = Typography;
+
 const NoticeFormFields = ({ index }: { index: number }) => (
   <>
-    <CustomTextInput
-      autoFocus={index !== 0}
-      name={`translations.${index}.title`}
+    <Form.Item
+      name={["translations", index, "title"]}
       label="Title of privacy notice as displayed to user"
-      variant="stacked"
-    />
-    <CustomTextArea
-      name={`translations.${index}.description`}
+    >
+      <Input
+        autoFocus={index !== 0}
+        data-testid={`input-translations.${index}.title`}
+      />
+    </Form.Item>
+    <Form.Item
+      name={["translations", index, "description"]}
       label="Privacy notice displayed to the user"
-      variant="stacked"
-    />
+    >
+      <Input.TextArea data-testid={`input-translations.${index}.description`} />
+    </Form.Item>
   </>
 );
+
+const AddTranslationMenu = ({
+  languageOptions,
+  handleCreateLanguage,
+}: {
+  languageOptions: { label: string; value: string }[];
+  handleCreateLanguage: (language: SupportedLanguage) => void;
+}) => {
+  const [isSelectingLanguage, setIsSelectingLanguage] = useState(false);
+
+  const handleSelect = (language: SupportedLanguage) => {
+    handleCreateLanguage(language);
+    setIsSelectingLanguage(false);
+  };
+
+  if (isSelectingLanguage) {
+    return (
+      <Select
+        autoFocus
+        defaultOpen
+        allowClear
+        placeholder="Select a language..."
+        aria-label="Select a language"
+        options={languageOptions}
+        onChange={handleSelect}
+        data-testid="select-language"
+        className="w-full"
+        optionFilterProp="label"
+      />
+    );
+  }
+
+  return (
+    <Button
+      block
+      icon={<Icons.Add />}
+      iconPlacement="end"
+      onClick={() => setIsSelectingLanguage(true)}
+      data-testid="add-language-btn"
+      className="mb-1"
+    >
+      Add
+    </Button>
+  );
+};
 
 const TranslationFormBlock = ({
   index,
@@ -65,58 +104,33 @@ const TranslationFormBlock = ({
   name: string;
   isOOB?: boolean;
 }) => (
-  <Flex direction="column" gap={6}>
-    <Heading size="sm">Edit {name} translation</Heading>
+  <Flex vertical gap="middle">
+    <Title level={5}>Edit {name} translation</Title>
     {isOOB ? <OOBTranslationNotice languageName={name} /> : null}
     <NoticeFormFields index={index} />
   </Flex>
 );
 
-const TranslationTabButton = ({
-  translation,
-  name,
-  onLanguageDeleted,
-}: {
-  translation: NoticeTranslationCreate;
-  name: string;
-  onLanguageDeleted?: (language: string) => void;
-}) => (
-  <Flex gap={2} direction="row" w="100%">
-    <Tab
-      as={Button}
-      variant="outline"
-      size="sm"
-      fontWeight="normal"
-      w="100%"
-      key={translation.language}
-      _selected={{ color: "white", bg: "gray.500" }}
-    >
-      {name}
-    </Tab>
-    {onLanguageDeleted ? (
-      <IconButton
-        aria-label="Delete translation"
-        variant="outline"
-        size="sm"
-        onClick={() => onLanguageDeleted(translation.language)}
-      >
-        <DeleteIcon boxSize={4} />
-      </IconButton>
-    ) : null}
-  </Flex>
-);
-
 const PrivacyNoticeTranslationForm = ({
   availableTranslations,
+  initialTranslations,
+  form,
 }: {
   availableTranslations?: NoticeTranslation[];
+  initialTranslations: NoticeTranslationCreate[];
+  form: FormInstance<PrivacyNoticeCreation>;
 }) => {
-  const { values, setFieldValue } = useFormikContext<PrivacyNoticeCreation>();
+  // Read translations reactively from the form store. The parent registers
+  // `translations` via a hidden Form.Item so useWatch tracks changes even
+  // when they're applied via setFieldValue (no direct Form.Item for the array).
+  const translations =
+    (Form.useWatch("translations", form) as
+      | NoticeTranslationCreate[]
+      | undefined) ?? [];
 
-  const [isSelectingLanguage, setIsSelectingLanguage] =
-    useState<boolean>(false);
-  const [translationIsOOB, setTranslationIsOOB] = useState<boolean>(false);
-  const [tabIndex, setTabIndex] = useState<number>(0);
+  const [activeLanguage, setActiveLanguage] = useState<string>(
+    initialTranslations[0]?.language ?? "",
+  );
 
   const { data: appConfig } = useGetConfigurationSettingsQuery({
     api_set: false,
@@ -133,42 +147,44 @@ const PrivacyNoticeTranslationForm = ({
 
   const languageOptions = allLanguages
     .filter((lang) =>
-      values.translations?.every(
-        (translation) => translation.language !== lang.id
-      )
+      translations.every((translation) => translation.language !== lang.id),
     )
     .map((lang) => ({ label: lang.name, value: lang.id as SupportedLanguage }));
 
-  const handleTabSelected = (index: number) => {
-    setTabIndex(index);
-    setTranslationIsOOB(false);
+  const isActiveTabOOB = !!availableTranslations?.some(
+    (t) => t.language === activeLanguage,
+  );
+
+  const handleTabSelected = (language: string) => {
+    setActiveLanguage(language);
   };
 
   const handleCreateLanguage = (language: SupportedLanguage) => {
     const availableTranslation = availableTranslations?.find(
-      (translation) => translation.language === language
+      (translation) => translation.language === language,
     );
-    setTranslationIsOOB(!!availableTranslation);
-    const newTranslation = availableTranslation ?? {
-      language: language as SupportedLanguage,
-      title: "",
-      description: "",
-    };
-    setTabIndex(values.translations!.length);
-    setFieldValue("translations", [...values.translations!, newTranslation]);
-    setIsSelectingLanguage(false);
+    const newTranslation: NoticeTranslationCreate = availableTranslation
+      ? {
+          ...availableTranslation,
+          title: availableTranslation.title ?? "",
+        }
+      : {
+          language,
+          title: "",
+          description: "",
+        };
+    setActiveLanguage(language);
+    form.setFieldValue("translations", [...translations, newTranslation]);
   };
 
-  const handleLanguageDeleted = (tag: string) => {
-    const newTranslations = values.translations
-      ? values.translations.slice().filter((lang) => lang.language !== tag)
-      : [];
-    const newTabIndex =
-      tabIndex === newTranslations.length
-        ? newTranslations.length - 1
-        : tabIndex;
-    setFieldValue("translations", newTranslations);
-    setTabIndex(newTabIndex);
+  const handleLanguageDeleted = (language: string) => {
+    const updated = translations.filter((lang) => lang.language !== language);
+    const newActiveLanguage =
+      activeLanguage === language
+        ? (updated[updated.length - 1]?.language ?? "")
+        : activeLanguage;
+    form.setFieldValue("translations", updated);
+    setActiveLanguage(newActiveLanguage);
   };
 
   const getLanguageDisplayName = (lang: SupportedLanguage) =>
@@ -176,94 +192,49 @@ const PrivacyNoticeTranslationForm = ({
 
   if (!translationsEnabled) {
     return (
-      <FormSection title="Notice text">
+      <Card title="Notice text">
         <NoticeFormFields index={0} />
-      </FormSection>
+      </Card>
     );
   }
 
   return (
-    <FormSection title="Localizations">
+    <Card title="Localizations">
       <Tabs
-        index={tabIndex}
+        activeKey={activeLanguage}
         onChange={handleTabSelected}
-        as={HStack}
-        spacing={8}
-        align="start"
-        grow={1}
-        w="100%"
-        orientation="vertical"
-        variant="unstyled"
-      >
-        <VStack spacing={4} minW="30%" p={2}>
-          <TabList w="100%">
-            <VStack
-              spacing={2}
-              w="100%"
-              p={4}
-              maxH={60}
-              overflow="scroll"
-              outline="1px solid"
-              outlineColor="gray.200"
-              borderRadius="md"
-            >
-              {values.translations!.map((translation) => (
-                <TranslationTabButton
-                  translation={translation}
-                  key={translation.language}
-                  name={getLanguageDisplayName(translation.language)}
-                  onLanguageDeleted={handleLanguageDeleted}
-                />
-              ))}
-            </VStack>
-          </TabList>
-          {isSelectingLanguage ? (
-            <Box w="full" data-testid="select-language">
-              <Select
-                chakraStyles={SELECT_STYLES}
-                size="sm"
-                options={languageOptions}
-                onChange={(e: any) => handleCreateLanguage(e.value)}
-                autoFocus
-                classNamePrefix="select-language"
-                menuPlacement="auto"
-              />
-            </Box>
-          ) : null}
-          {!isSelectingLanguage && languageOptions.length ? (
-            <Button
-              leftIcon={<SmallAddIcon boxSize={6} />}
-              w="full"
-              variant="outline"
-              size="sm"
-              onClick={() => setIsSelectingLanguage(true)}
-              data-testid="add-language-btn"
-            >
-              Add a language
-            </Button>
-          ) : null}
-        </VStack>
-        <Box w="100%">
-          <FieldArray
-            name="translations"
-            render={() => (
-              <TabPanels w="100%">
-                {values.translations!.map((translation, idx) => (
-                  <TabPanel key={translation.language}>
-                    <TranslationFormBlock
-                      index={idx}
-                      name={getLanguageDisplayName(translation.language)}
-                      isOOB={translationIsOOB}
-                    />
-                  </TabPanel>
-                ))}
-              </TabPanels>
-            )}
-          />
-        </Box>
-      </Tabs>
-    </FormSection>
+        type="editable-card"
+        tabBarExtraContent={
+          !!languageOptions.length && (
+            <AddTranslationMenu
+              languageOptions={languageOptions}
+              handleCreateLanguage={handleCreateLanguage}
+            />
+          )
+        }
+        hideAdd
+        onEdit={(e, action) => {
+          if (action === "remove") {
+            handleLanguageDeleted(e as SupportedLanguage);
+          }
+        }}
+        items={translations.map((translation) => ({
+          key: translation.language,
+          label: getLanguageDisplayName(translation.language),
+          children: (
+            <TranslationFormBlock
+              index={translations.findIndex(
+                (t) => t.language === translation.language,
+              )}
+              name={getLanguageDisplayName(translation.language)}
+              isOOB={isActiveTabOOB}
+            />
+          ),
+          closable: translations.length > 1,
+        }))}
+      />
+    </Card>
   );
 };
 
-export default PrivacyNoticeTranslationForm;
+export { PrivacyNoticeTranslationForm };

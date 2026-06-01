@@ -1,5 +1,6 @@
+import inspect
 from abc import abstractmethod
-from enum import Enum
+from enum import Enum, StrEnum
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
@@ -13,10 +14,11 @@ from requests.exceptions import (  # pylint: disable=redefined-builtin
     TooManyRedirects,
 )
 
+from fides.api.common_exceptions import DomainValidationError
 from fides.config import CONFIG
 
 
-class LoggerContextKeys(Enum):
+class LoggerContextKeys(StrEnum):
     action_type = "action_type"
     status_code = "status_code"
     body = "body"
@@ -29,15 +31,18 @@ class LoggerContextKeys(Enum):
     response = "response"
     system_key = "system_key"
     url = "url"
+    task_id = "task_id"
+    privacy_request_source = "privacy_request_source"
 
 
-class ErrorGroup(Enum):
+class ErrorGroup(StrEnum):
     """A collection of user-friendly error labels to be used in contextualized logs."""
 
     network_error = "NetworkError"
     authentication_error = "AuthenticationError"
     client_error = "ClientSideError"
     server_error = "ServerSideError"
+    domain_blocked = "DomainBlocked"
 
 
 class Contextualizable:
@@ -57,18 +62,68 @@ class Contextualizable:
 
 
 def log_context(
-    _func: Optional[Callable] = None, **additional_context: Any
+    _func: Optional[Callable] = None,
+    capture_args: Optional[dict[str, LoggerContextKeys]] = None,
+    **additional_context: Any,
 ) -> Callable:
     """
-    A decorator that adds context information to log messages. It extracts context from
-    the arguments of the decorated function and from any specified additional context.
-    Optional additional context is provided through keyword arguments.
+    A decorator that adds context information to log messages. It extracts:
+    1. Values from function arguments, mapping them to standardized context names via capture_args dict
+    2. Context from any Contextualizable arguments
+    3. Additional context provided as decorator kwargs
+
+    Example:
+       @log_context(capture_args={"user_id": "standard_user_id"}, tenant="example")
+       def process_user(user_id: str) -> None:
+
+    Logs will include standard_user_id=<user_id> and tenant="example"
     """
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             context = dict(additional_context)
+
+            # extract specified param values from kwargs and args
+            if capture_args:
+                # First, process kwargs as they're explicitly named
+                for arg_name, context_name in capture_args.items():
+                    if arg_name in kwargs:
+                        context[context_name.value] = kwargs[arg_name]
+
+                # Process args using signature binding for more robust parameter mapping
+                if args:
+                    try:
+                        # Get the signature and bind the arguments
+                        sig = inspect.signature(func)
+                        # This will map positional args to their parameter names correctly
+                        bound_args = sig.bind_partial(*args, **kwargs)
+
+                        # Now we can iterate through the bound arguments
+                        for param_name, arg_value in bound_args.arguments.items():
+                            # Only process if this parameter is in capture_args and wasn't already found in kwargs
+                            if param_name in capture_args and param_name not in kwargs:
+                                context_name = capture_args[param_name]
+                                context[context_name.value] = arg_value
+                    except TypeError:
+                        # Handle the case where the arguments don't match the signature
+                        pass
+
+                # Handle default parameters that weren't provided in args or kwargs
+                if capture_args:
+                    sig = inspect.signature(func)
+                    for param_name, param in sig.parameters.items():
+                        # Check if parameter has a default value and is in capture_args
+                        # and hasn't been processed yet (not in context)
+                        if (
+                            param.default is not param.empty
+                            and param_name in capture_args
+                            and capture_args[param_name].value not in context
+                        ):
+                            context_name = capture_args[param_name]
+                            context[context_name.value] = param.default
+
+            # Process Contextualizable args
             for arg in args:
                 if isinstance(arg, Contextualizable):
                     arg_context = arg.get_log_context()
@@ -103,11 +158,18 @@ def request_details(
         LoggerContextKeys.url.value: prepared_request.url,
     }
     if CONFIG.dev_mode and prepared_request.body is not None:
-        details[LoggerContextKeys.body.value] = prepared_request.body
+        if isinstance(prepared_request.body, bytes):
+            details[LoggerContextKeys.body.value] = prepared_request.body.decode(
+                "utf-8"
+            )
+        elif isinstance(prepared_request.body, str):
+            details[LoggerContextKeys.body.value] = prepared_request.body
 
     if response is not None:
         if CONFIG.dev_mode and response.content:
-            details[LoggerContextKeys.response.value] = response.content.decode("utf-8")
+            details[LoggerContextKeys.response.value] = response.content.decode(
+                "utf-8", errors="replace"
+            )
 
         details[LoggerContextKeys.status_code.value] = response.status_code
 
@@ -136,7 +198,10 @@ def connection_exception_details(exception: Exception, url: str) -> Dict[str, An
         LoggerContextKeys.error_details.value: f"Unknown exception connecting to {url}.",
         LoggerContextKeys.status_code.value: None,
     }
-    if isinstance(exception, ConnectTimeout):
+    if isinstance(exception, DomainValidationError):
+        details[LoggerContextKeys.error_group.value] = ErrorGroup.domain_blocked.value
+        details[LoggerContextKeys.error_details.value] = str(exception)
+    elif isinstance(exception, ConnectTimeout):
         details[LoggerContextKeys.error_details.value] = (
             f"Timeout occurred connecting to {url}."
         )

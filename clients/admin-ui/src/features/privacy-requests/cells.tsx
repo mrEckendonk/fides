@@ -1,4 +1,4 @@
-import { BadgeProps } from "fidesui";
+import { CUSTOM_TAG_COLOR } from "fidesui";
 
 import { BadgeCell, GroupCountBadgeCell } from "~/features/common/table/v2";
 import { SubjectRequestActionTypeMap } from "~/features/privacy-requests/constants";
@@ -6,47 +6,80 @@ import { ActionType, PrivacyRequestStatus } from "~/types/api";
 
 import { Rule } from "./types";
 
-export const statusPropMap: {
-  [key in PrivacyRequestStatus]: BadgeProps & { label: string };
-} = {
+export const statusPropMap: Record<
+  PrivacyRequestStatus,
+  {
+    label: string;
+    colorScheme: CUSTOM_TAG_COLOR;
+  }
+> = {
   approved: {
-    colorScheme: "green",
+    colorScheme: CUSTOM_TAG_COLOR.SUCCESS,
     label: "Approved",
   },
   complete: {
     label: "Completed",
+    colorScheme: CUSTOM_TAG_COLOR.SUCCESS,
   },
   awaiting_email_send: {
     label: "Awaiting Email Send",
+    colorScheme: CUSTOM_TAG_COLOR.MARBLE,
   },
   denied: {
     label: "Denied",
+    colorScheme: CUSTOM_TAG_COLOR.WARNING,
   },
   canceled: {
     label: "Canceled",
+    colorScheme: CUSTOM_TAG_COLOR.MARBLE,
   },
   error: {
-    colorScheme: "red",
     label: "Error",
+    colorScheme: CUSTOM_TAG_COLOR.ERROR,
   },
   in_processing: {
-    colorScheme: "yellow",
     label: "In Progress",
+    colorScheme: CUSTOM_TAG_COLOR.CAUTION,
   },
   paused: {
     label: "Paused",
+    colorScheme: CUSTOM_TAG_COLOR.MARBLE,
   },
   pending: {
-    colorScheme: "blue",
     label: "New",
+    colorScheme: CUSTOM_TAG_COLOR.INFO,
   },
   identity_unverified: {
-    colorScheme: "red",
     label: "Unverified",
+    colorScheme: CUSTOM_TAG_COLOR.MARBLE,
   },
   requires_input: {
-    colorScheme: "orange",
+    colorScheme: CUSTOM_TAG_COLOR.MINOS,
     label: "Requires Input",
+  },
+  requires_manual_finalization: {
+    colorScheme: CUSTOM_TAG_COLOR.MINOS,
+    label: "Requires Finalization",
+  },
+  duplicate: {
+    colorScheme: CUSTOM_TAG_COLOR.DEFAULT,
+    label: "Duplicate",
+  },
+  pending_external: {
+    colorScheme: CUSTOM_TAG_COLOR.MARBLE,
+    label: "Pending External",
+  },
+  awaiting_pre_approval: {
+    colorScheme: CUSTOM_TAG_COLOR.CAUTION,
+    label: "Awaiting External Review",
+  },
+  pre_approval_not_eligible: {
+    colorScheme: CUSTOM_TAG_COLOR.WARNING,
+    label: "Manual Review Required",
+  },
+  awaiting_access_review: {
+    colorScheme: CUSTOM_TAG_COLOR.CAUTION,
+    label: "Awaiting Access Review",
   },
 };
 
@@ -56,7 +89,7 @@ export const RequestStatusBadgeCell = ({
   value: keyof typeof statusPropMap;
 }) => (
   <BadgeCell
-    colorScheme={statusPropMap[value].colorScheme}
+    color={statusPropMap[value].colorScheme}
     value={statusPropMap[value].label}
     data-testid="request-status-badge"
   />
@@ -75,6 +108,7 @@ export const RequestDaysLeftCell = ({
 }) => {
   if (
     daysLeft === undefined ||
+    daysLeft === null ||
     status === PrivacyRequestStatus.COMPLETE ||
     status === PrivacyRequestStatus.CANCELED ||
     status === PrivacyRequestStatus.DENIED ||
@@ -85,19 +119,23 @@ export const RequestDaysLeftCell = ({
 
   const percentage = (100 * daysLeft) / timeframe;
 
-  let colorScheme: string | undefined;
+  let colorScheme: CUSTOM_TAG_COLOR | undefined;
   if (percentage < 25) {
-    colorScheme = "red";
+    colorScheme = CUSTOM_TAG_COLOR.ERROR;
   } else if (percentage >= 75) {
-    colorScheme = "green";
+    colorScheme = CUSTOM_TAG_COLOR.SUCCESS;
   } else if (percentage >= 25) {
-    colorScheme = "orange";
+    colorScheme = CUSTOM_TAG_COLOR.WARNING;
   }
 
   return (
     <BadgeCell
-      value={includeText ? `${daysLeft} days left` : daysLeft.toString()}
-      colorScheme={colorScheme}
+      value={
+        includeText
+          ? `${Math.abs(daysLeft)} days ${daysLeft < 0 ? "overdue" : "left"}`
+          : daysLeft.toString()
+      }
+      color={colorScheme}
     />
   );
 };
@@ -111,13 +149,15 @@ const getActionTypesFromRules = (rules: Rule[]): ActionType[] =>
     new Set(
       rules
         .filter((rule) => Object.values(ActionType).includes(rule.action_type))
-        .map((rule) => rule.action_type)
-    )
+        .map((rule) => rule.action_type),
+    ),
   );
 
 export const RequestActionTypeCell = ({ value }: { value: Rule[] }) => {
   const actionTypes = getActionTypesFromRules(value).map((actionType) =>
-    SubjectRequestActionTypeMap.get(actionType)
+    SubjectRequestActionTypeMap.get(actionType),
   );
-  return <GroupCountBadgeCell value={actionTypes} isDisplayAll />;
+  return (
+    <GroupCountBadgeCell value={actionTypes} cellState={{ isExpanded: true }} />
+  );
 };

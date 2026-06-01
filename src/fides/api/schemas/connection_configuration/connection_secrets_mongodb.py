@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List, Optional
 
 from pydantic import Field
 
@@ -18,7 +18,7 @@ class MongoDBSchema(ConnectionConfigSecretsSchema):
     port: int = Field(
         27017,
         title="Port",
-        description="The network port number on which the server is listening for incoming connections (default: 27017).",
+        description="The network port number on which the server is listening for incoming connections (default: 27017). Port will be ignored if using SRV.",
     )
     username: str = Field(
         title="Username",
@@ -27,14 +27,26 @@ class MongoDBSchema(ConnectionConfigSecretsSchema):
     password: str = Field(
         title="Password",
         description="The password used to authenticate and access the database.",
-        sensitive=True,
+        json_schema_extra={"sensitive": True},
     )
     defaultauthdb: str = Field(
-        title="Default Auth DB",
+        title="Default auth DB",
         description="Used to specify the default authentication database.",
     )
 
-    _required_components: List[str] = [
+    use_srv: Optional[bool] = Field(
+        False,
+        title="Use SRV",
+        description="Enable SRV record lookup for service discovery (mongodb+srv://). Required for MongoDB Atlas. Enables SSL by default.",
+    )
+
+    ssl_enabled: Optional[bool] = Field(
+        None,
+        title="SSL enabled",
+        description="Enable SSL/TLS encryption. With SRV: defaults to enabled (can override). Without SRV: defaults to disabled.",
+    )
+
+    _required_components: ClassVar[List[str]] = [
         "host",
         "username",
         "password",

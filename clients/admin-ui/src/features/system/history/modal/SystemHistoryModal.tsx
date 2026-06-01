@@ -1,16 +1,6 @@
-import {
-  Badge,
-  Flex,
-  Heading,
-  Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalHeader,
-  ModalOverlay,
-  Spacer,
-} from "fidesui";
+import { ChakraFlex as Flex, Modal, Tag } from "fidesui";
 
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
 import { SystemHistoryResponse } from "~/types/api";
 
 import SelectedHistoryProvider from "./SelectedHistoryContext";
@@ -38,7 +28,7 @@ const getBadges = (before: Record<string, any>, after: Record<string, any>) => {
   }
 
   const hasOtherFields = [...Object.keys(before), ...Object.keys(after)].some(
-    (key) => !specialFields.has(key)
+    (key) => !specialFields.has(key),
   );
 
   if (!hasPrivacyDeclarations && hasOtherFields) {
@@ -55,66 +45,50 @@ interface Props {
 }
 
 const SystemHistoryModal = ({ selectedHistory, isOpen, onClose }: Props) => (
-  <Modal isOpen={isOpen} onClose={onClose} size="4xl">
-    <ModalOverlay />
-    <ModalContent>
-      <ModalHeader
-        backgroundColor="#F7FAFC"
-        borderTopLeftRadius="8px"
-        borderTopRightRadius="8px"
-        borderBottom="1px solid #E2E8F0"
-      >
-        <Heading size="xs">
-          <span style={{ verticalAlign: "middle" }}>Change detail</span>
-          {selectedHistory && (
-            <>
-              {getBadges(selectedHistory.before, selectedHistory.after).map(
-                (badge, index) => (
-                  <Badge
-                    // eslint-disable-next-line react/no-array-index-key
-                    key={index}
-                    marginLeft="8px"
-                    fontSize="10px"
-                    padding="0px 4px"
-                    variant="solid"
-                    lineHeight="18px"
-                    height="18px"
-                    backgroundColor="#718096"
-                    borderRadius="2px"
-                  >
-                    {badge}
-                  </Badge>
-                )
-              )}
-            </>
+  <Modal
+    open={isOpen}
+    onCancel={onClose}
+    centered
+    destroyOnHidden
+    width={MODAL_SIZE.xl}
+    title={
+      <span className="pr-6">
+        Change detail
+        {selectedHistory &&
+          getBadges(selectedHistory.before, selectedHistory.after).map(
+            (badge, index) => (
+              <Tag
+                // eslint-disable-next-line react/no-array-index-key
+                key={index}
+                color="minos"
+                className="ml-2"
+              >
+                {badge}
+              </Tag>
+            ),
           )}
-        </Heading>
-        <>
-          <Spacer />
-          <ModalCloseButton />
-        </>
-      </ModalHeader>
-      <ModalBody paddingTop={0} paddingBottom={6}>
-        <Flex justifyContent="space-between">
-          <div style={{ flex: "0 50%", marginRight: "12px" }}>
-            <SelectedHistoryProvider
-              selectedHistory={selectedHistory}
-              formType="before"
-            >
-              <SystemDataForm initialValues={selectedHistory?.before} />
-            </SelectedHistoryProvider>
-          </div>
-          <div style={{ flex: "0 50%", marginLeft: "12px" }}>
-            <SelectedHistoryProvider
-              selectedHistory={selectedHistory}
-              formType="after"
-            >
-              <SystemDataForm initialValues={selectedHistory?.after} />
-            </SelectedHistoryProvider>
-          </div>
-        </Flex>
-      </ModalBody>
-    </ModalContent>
+      </span>
+    }
+    footer={null}
+  >
+    <Flex justifyContent="space-between">
+      <div style={{ flex: "0 50%", marginRight: "12px" }}>
+        <SelectedHistoryProvider
+          selectedHistory={selectedHistory}
+          formType="before"
+        >
+          <SystemDataForm initialValues={selectedHistory?.before} />
+        </SelectedHistoryProvider>
+      </div>
+      <div style={{ flex: "0 50%", marginLeft: "12px" }}>
+        <SelectedHistoryProvider
+          selectedHistory={selectedHistory}
+          formType="after"
+        >
+          <SystemDataForm initialValues={selectedHistory?.after} />
+        </SelectedHistoryProvider>
+      </div>
+    </Flex>
   </Modal>
 );
 

@@ -5,6 +5,7 @@ import {
   BulkPutDataset,
   ConnectionConfigurationResponse,
   CreateConnectionConfigurationWithSecrets,
+  Dataset,
   Page_DatasetConfigSchema_,
   SystemType,
 } from "~/types/api";
@@ -109,7 +110,7 @@ export const datastoreConnectionSlice = createSlice({
     }),
     setTestingStatus: (
       state,
-      action: PayloadAction<TestingStatus | string>
+      action: PayloadAction<TestingStatus | string>,
     ) => ({
       ...state,
       page: initialState.page,
@@ -122,7 +123,7 @@ export const datastoreConnectionSlice = createSlice({
     }),
     setDisabledStatus: (
       state,
-      action: PayloadAction<DisabledStatus | string>
+      action: PayloadAction<DisabledStatus | string>,
     ) => ({
       ...state,
       page: initialState.page,
@@ -145,30 +146,8 @@ export const datastoreConnectionSlice = createSlice({
   },
 });
 
-export const {
-  setSearch,
-  setSize,
-  setPage,
-  setConnectionType,
-  setSystemType,
-  setTestingStatus,
-  setDisabledStatus,
-  setOrphanedFromSystem,
-} = datastoreConnectionSlice.actions;
-export const selectDatastoreConnectionFilters = (
-  state: RootState
-): DatastoreConnectionParams => ({
-  search: state.datastoreConnections.search,
-  page: state.datastoreConnections.page,
-  size: state.datastoreConnections.size,
-  connection_type: state.datastoreConnections.connection_type,
-  system_type: state.datastoreConnections.system_type,
-  test_status: state.datastoreConnections.test_status,
-  disabled_status: state.datastoreConnections.disabled_status,
-  orphaned_from_system: state.datastoreConnections.orphaned_from_system,
-});
-
-export const { reducer } = datastoreConnectionSlice;
+export const selectDatastoreConnectionFilters = (state: RootState) =>
+  state.datastoreConnections;
 
 export const datastoreConnectionApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
@@ -272,6 +251,9 @@ export const datastoreConnectionApi = baseApi.injectEndpoints({
     >({
       query: (key) => ({
         url: `${CONNECTION_ROUTE}/${key}/datasetconfig`,
+        params: {
+          size: 1000, // TODO: remove this once we have a better way to handle large datasets
+        },
       }),
       providesTags: () => ["Datastore Connection"],
     }),
@@ -284,39 +266,35 @@ export const datastoreConnectionApi = baseApi.injectEndpoints({
       }),
       providesTags: () => ["Datastore Connection"],
       async onQueryStarted(key, { dispatch, queryFulfilled, getState }) {
-        try {
-          await queryFulfilled;
+        await queryFulfilled;
 
-          const request = dispatch(
-            datastoreConnectionApi.endpoints.getDatastoreConnectionByKey.initiate(
-              key
-            )
-          );
-          const result = await request.unwrap();
-          request.unsubscribe();
+        const request = dispatch(
+          datastoreConnectionApi.endpoints.getDatastoreConnectionByKey.initiate(
+            key,
+          ),
+        );
+        const result = await request.unwrap();
+        request.unsubscribe();
 
-          const state = getState() as RootState;
-          const filters = selectDatastoreConnectionFilters(state);
+        const state = getState() as RootState;
+        const filters = selectDatastoreConnectionFilters(state);
 
-          dispatch(
-            datastoreConnectionApi.util.updateQueryData(
-              "getAllDatastoreConnections",
-              filters,
-              (draft) => {
-                const newList = draft.items.map((d) => {
-                  if (d.key === key) {
-                    return { ...result };
-                  }
-                  return { ...d };
-                });
-                // eslint-disable-next-line no-param-reassign
-                draft.items = newList;
-              }
-            )
-          );
-        } catch {
-          throw new Error("Error while testing connection");
-        }
+        dispatch(
+          datastoreConnectionApi.util.updateQueryData(
+            "getAllDatastoreConnections",
+            filters,
+            (draft) => {
+              const newList = draft.items.map((d) => {
+                if (d.key === key) {
+                  return { ...result };
+                }
+                return { ...d };
+              });
+              // eslint-disable-next-line no-param-reassign
+              draft.items = newList;
+            },
+          ),
+        );
       },
     }),
     patchAccessManualWebhook: build.mutation<
@@ -337,6 +315,17 @@ export const datastoreConnectionApi = baseApi.injectEndpoints({
       query: (params) => ({
         url: `${CONNECTION_ROUTE}/${params.connection_key}/datasetconfig`,
         method: "PATCH",
+        body: params.dataset_pairs,
+      }),
+      invalidatesTags: () => ["Datastore Connection", "Datasets"],
+    }),
+    putDatasetConfigs: build.mutation<
+      BulkPutDataset,
+      PatchDatasetsConfigRequest
+    >({
+      query: (params) => ({
+        url: `${CONNECTION_ROUTE}/${params.connection_key}/datasetconfig`,
+        method: "PUT",
         body: params.dataset_pairs,
       }),
       invalidatesTags: () => ["Datastore Connection", "Datasets"],
@@ -371,6 +360,82 @@ export const datastoreConnectionApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: () => ["Datastore Connection"],
     }),
+    patchDatastoreConnectionSecrets: build.mutation<
+      DatastoreConnectionSecretsResponse,
+      DatastoreConnectionSecretsRequest
+    >({
+      query: (params) => ({
+        url: `${CONNECTION_ROUTE}/${params.connection_key}/secret?verify=false`,
+        method: "PATCH",
+        body: params.secrets,
+      }),
+      invalidatesTags: () => ["Datastore Connection"],
+    }),
+    testDatastoreConnectionDatasets: build.mutation<
+      { privacy_request_id: string },
+      {
+        connection_key: string;
+        dataset_key: string;
+        identities: Record<string, any>;
+        policy_key: string;
+      }
+    >({
+      query: (params) => ({
+        url: `${CONNECTION_ROUTE}/${params.connection_key}/dataset/${params.dataset_key}/test`,
+        method: "POST",
+        body: { identities: params.identities, policy_key: params.policy_key },
+      }),
+    }),
+    getDatasetInputs: build.query<
+      any,
+      { connectionKey: string; datasetKey: string }
+    >({
+      query: ({ connectionKey, datasetKey }) => ({
+        url: `${CONNECTION_ROUTE}/${connectionKey}/dataset/${datasetKey}/inputs`,
+        method: "GET",
+      }),
+      providesTags: () => ["Datastore Connection"],
+    }),
+    patchConnectionDatasets: build.mutation<
+      BulkPutDataset,
+      { connectionKey: string; datasets: Dataset[] }
+    >({
+      query: ({ connectionKey, datasets }) => ({
+        url: `${CONNECTION_ROUTE}/${connectionKey}/dataset`,
+        method: "PATCH",
+        body: datasets,
+      }),
+      invalidatesTags: () => ["Datastore Connection", "Datasets"],
+    }),
+    getDatasetProtectedFields: build.query<
+      {
+        immutable_fields: string[];
+        protected_collection_fields: { collection: string; field: string }[];
+      },
+      { connectionKey: string }
+    >({
+      query: ({ connectionKey }) => ({
+        url: `${CONNECTION_ROUTE}/${connectionKey}/protected-fields`,
+        method: "GET",
+      }),
+      providesTags: () => ["Datastore Connection"],
+    }),
+    getDatasetReachability: build.query<
+      { reachable: boolean; details: string },
+      { connectionKey: string; datasetKey: string; policyKey?: string }
+    >({
+      query: ({ connectionKey, datasetKey, policyKey }) => {
+        const baseUrl = `${CONNECTION_ROUTE}/${connectionKey}/dataset/${datasetKey}/reachability`;
+        const queryString = policyKey ? `?policy_key=${policyKey}` : "";
+        const url = baseUrl + queryString;
+
+        return {
+          url,
+          method: "GET",
+        };
+      },
+      providesTags: () => ["Datastore Connection"],
+    }),
   }),
 });
 
@@ -388,9 +453,16 @@ export const {
   useLazyGetDatastoreConnectionStatusQuery,
   usePatchAccessManualWebhookMutation,
   usePatchDatasetConfigsMutation,
+  usePutDatasetConfigsMutation,
   usePatchDatastoreConnectionMutation,
   usePatchDatastoreConnectionsMutation,
   useUpdateDatastoreConnectionSecretsMutation,
+  usePatchDatastoreConnectionSecretsMutation,
+  useTestDatastoreConnectionDatasetsMutation,
+  useGetDatasetInputsQuery,
+  usePatchConnectionDatasetsMutation,
+  useGetDatasetProtectedFieldsQuery,
+  useGetDatasetReachabilityQuery,
 } = datastoreConnectionApi;
 
 /**
@@ -410,8 +482,8 @@ export const selectInitialConnections = createSelector(
   [
     (RootState) => RootState,
     datastoreConnectionApi.endpoints.getAllDatastoreConnections.select(
-      INITIAL_CONNECTIONS_FILTERS
+      INITIAL_CONNECTIONS_FILTERS,
     ),
   ],
-  (RootState, { data }) => data
+  (RootState, { data }) => data,
 );

@@ -2,30 +2,64 @@ import itertools
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Union
 
-from fideslang.validation import FidesKey
 from loguru import logger
 
 from fides.api.graph.config import CollectionAddress, FieldPath
+from fides.api.graph.graph import DatasetGraph
+from fides.api.service.storage.util import is_attachment_field
+from fides.api.task.manual.manual_task_address import ManualTaskAddress
 from fides.api.util.collection_util import Row
+
+
+def should_skip_data_category_filtering(
+    node_address: str, results: List[Dict[str, Optional[Any]]]
+) -> bool:
+    """
+    Determine if results should skip data category filtering.
+
+    This includes:
+    1. Manual task data - controlled by field definitions, not data categories
+    2. Attachment data - should be preserved regardless of data categories (from polling or manual tasks)
+
+    :param node_address: The collection address being processed
+    :param results: The results data to check
+    :return: True if filtering should be skipped, False otherwise
+    """
+    # Check if this is a manual task address
+    if ManualTaskAddress.is_manual_task_address(node_address):
+        return True
+
+    # Check if results contain attachment data
+    if not results:
+        return False
+
+    # Verify it looks like actual attachment data
+    for result in results:
+        if isinstance(result, dict) and any(
+            is_attachment_field(value) for value in result.values()
+        ):
+            return True
+
+    return False
 
 
 def filter_data_categories(
     access_request_results: Dict[str, List[Dict[str, Optional[Any]]]],
     target_categories: Set[str],
-    data_category_fields: Dict[CollectionAddress, Dict[FidesKey, List[FieldPath]]],
+    dataset_graph: DatasetGraph,
     rule_key: str = "",
     fides_connector_datasets: Optional[Set[str]] = None,
 ) -> Dict[str, List[Dict[str, Optional[Any]]]]:
     """Filter access request results to only return fields associated with the target data categories
     and subcategories.
 
-    Regarding subcategories,if data category "user.contact" is specified on one of the rule
+    Regarding subcategories, if data category "user.contact" is specified on one of the rule
     targets, for example, all fields on subcategories also apply, so ["user.contact.address.city",
     "user.contact.address.street", ...], etc.
 
     :param access_request_results: Dictionary of access request results for each of your collections
     :param target_categories: A set of data categories that we'd like to extract from access_request_results
-    :param data_category_fields: Data categories mapped to applicable fields for each collection
+    :param dataset_graph: The dataset graph where the data category mappings are accessed from
 
     :return: Filtered access request results that only contain fields matching the desired data categories.
     """
@@ -35,6 +69,11 @@ def filter_data_categories(
     filtered_access_results: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for node_address, results in access_request_results.items():
         if not results:
+            continue
+
+        # Skip data that doesn't need filtering (manual tasks and attachment data)
+        if should_skip_data_category_filtering(node_address, results):
+            filtered_access_results[node_address].extend(results)
             continue
 
         # Results from fides connectors are a special case:
@@ -59,13 +98,28 @@ def filter_data_categories(
             itertools.chain(
                 *[
                     field_paths
-                    for cat, field_paths in data_category_fields[
+                    for cat, field_paths in dataset_graph.data_category_field_mapping[
                         CollectionAddress.from_string(node_address)
                     ].items()
                     if any(cat.startswith(tar) for tar in target_categories)
                 ]
             )
         )
+
+        collection_data_categories = set(
+            dataset_graph.nodes[
+                CollectionAddress.from_string(node_address)
+            ].collection.data_categories
+            or []
+        )
+
+        if collection_data_categories:
+            if any(
+                collection_category.startswith(tuple(target_categories))
+                for collection_category in collection_data_categories
+            ):
+                filtered_access_results[node_address].extend(results)
+                continue
 
         if not target_field_paths:
             continue
@@ -100,6 +154,10 @@ def select_and_save_field(saved: Any, row: Row, target_path: FieldPath) -> Dict:
     def _defaultdict_or_array(resource: Any) -> Any:
         """Helper for building new nested resource - can return an empty dict, empty array or resource itself"""
         return type(resource)() if isinstance(resource, (list, dict)) else resource
+
+    # If we've reached the end of the field path, return the entire current object/array
+    if not target_path.levels:
+        return row
 
     if isinstance(row, list):
         for i, elem in enumerate(row):

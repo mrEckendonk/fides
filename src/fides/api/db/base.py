@@ -3,23 +3,70 @@
 # imported by Alembic
 from fides.api.db.base_class import Base
 from fides.api.models.application_config import ApplicationConfig
+from fides.api.models.asset import Asset
+from fides.api.models.attachment import Attachment, AttachmentReference
 from fides.api.models.audit_log import AuditLog
 from fides.api.models.authentication_request import AuthenticationRequest
+from fides.api.models.chat_config import ChatConfig
 from fides.api.models.client import ClientDetail
+from fides.api.models.comment import Comment, CommentReference
+from fides.api.models.connection_config_saas_history import ConnectionConfigSaaSHistory
+from fides.api.models.connection_oauth_credentials import OAuthConfig
 from fides.api.models.connectionconfig import ConnectionConfig
+from fides.api.models.consent_automation import ConsentAutomation
+from fides.api.models.correspondence_metadata import CorrespondenceMetadata
 from fides.api.models.custom_asset import CustomAsset
 from fides.api.models.custom_connector_template import CustomConnectorTemplate
+from fides.api.models.custom_report import CustomReport
+from fides.api.models.dashboard_snapshot import DashboardSnapshot
 from fides.api.models.datasetconfig import DatasetConfig
-from fides.api.models.detection_discovery import StagedResource
+from fides.api.models.db_cache import DBCache
+from fides.api.models.detection_discovery.core import MonitorConfig, StagedResource
+from fides.api.models.detection_discovery.monitor_steward import MonitorSteward
+from fides.api.models.detection_discovery.monitor_task import (
+    MonitorTask,
+    MonitorTaskExecutionLog,
+)
+from fides.api.models.detection_discovery.web_monitor import WebMonitorGroupJob
+from fides.api.models.digest import DigestCondition, DigestConfig
+from fides.api.models.encryption_key import EncryptionKey
+from fides.api.models.event_audit import EventAudit
 from fides.api.models.experience_notices import ExperienceNotices
 from fides.api.models.fides_cloud import FidesCloud
 from fides.api.models.fides_user import FidesUser
+from fides.api.models.fides_user_invite import FidesUserInvite
+from fides.api.models.fides_user_password_reset import FidesUserPasswordReset
 from fides.api.models.fides_user_permissions import FidesUserPermissions
+from fides.api.models.fides_user_respondent_email_verification import (
+    FidesUserRespondentEmailVerification,
+)
+from fides.api.models.identity_definition import IdentityDefinition
+from fides.api.models.identity_salt import IdentitySalt
+from fides.api.models.jira_ticket_task import JiraTicketTask
 from fides.api.models.location_regulation_selections import LocationRegulationSelections
+from fides.api.models.manual_task import (
+    ManualTask,
+    ManualTaskConditionalDependency,
+    ManualTaskConfig,
+    ManualTaskConfigField,
+    ManualTaskInstance,
+    ManualTaskReference,
+    ManualTaskSubmission,
+)
 from fides.api.models.manual_webhook import AccessManualWebhook
 from fides.api.models.messaging import MessagingConfig
 from fides.api.models.messaging_template import MessagingTemplate
+from fides.api.models.monitor_aggregate_statistics import MonitorAggregateStatistics
+from fides.api.models.openid_provider import OpenIDProvider
 from fides.api.models.policy import Policy, Rule, RuleTarget
+from fides.api.models.privacy_assessment import (
+    AnswerVersion,
+    AssessmentAnswer,
+    AssessmentQuestion,
+    AssessmentTemplate,
+    PrivacyAssessment,
+)
+from fides.api.models.privacy_assessment_config import PrivacyAssessmentConfig
 from fides.api.models.privacy_center_config import PrivacyCenterConfig
 from fides.api.models.privacy_experience import (
     ExperienceConfigTemplate,
@@ -40,14 +87,33 @@ from fides.api.models.privacy_preference import (
     ServedNoticeHistory,
 )
 from fides.api.models.privacy_request import PrivacyRequest
+from fides.api.models.privacy_request_redaction_pattern import (
+    PrivacyRequestRedactionPattern,
+)
 from fides.api.models.property import (
     MessagingTemplateToProperty,
     PrivacyExperienceConfigProperty,
     Property,
 )
-from fides.api.models.registration import UserRegistration
+from fides.api.models.questionnaire import ChatMessage, Questionnaire
+from fides.api.models.saas_config_version import SaaSConfigVersion
+from fides.api.models.saas_template_dataset import SaasTemplateDataset
 from fides.api.models.storage import StorageConfig
 from fides.api.models.system_compass_sync import SystemCompassSync
+from fides.api.models.system_group import SystemGroup, SystemGroupMember
 from fides.api.models.system_history import SystemHistory
 from fides.api.models.system_manager import SystemManager
+from fides.api.models.taxonomy import (
+    Taxonomy,
+    TaxonomyAllowedUsage,
+    TaxonomyElement,
+    TaxonomyUsage,
+)
+from fides.api.models.tcf_publisher_restrictions import (
+    TCFConfiguration,
+    TCFPublisherRestriction,
+)
 from fides.api.models.tcf_purpose_overrides import TCFPurposeOverride
+from fides.api.models.tcf_version_hash_history import TCFVersionHashHistory
+from fides.api.models.v3.privacy_preferences import PrivacyPreferences
+from fides.system_integration_link.models import SystemConnectionConfigLink

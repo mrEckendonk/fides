@@ -1,7 +1,5 @@
-import { IconButton, IconButtonProps, Tooltip, useClipboard } from "fidesui";
+import { Button, ButtonProps, Icons, Tooltip } from "fidesui";
 import React, { useState } from "react";
-
-import { CopyIcon } from "./Icon";
 
 enum TooltipText {
   COPY = "Copy",
@@ -9,81 +7,49 @@ enum TooltipText {
 }
 
 const useClipboardButton = (copyText: string) => {
-  const { onCopy } = useClipboard(copyText);
-
-  const [highlighted, setHighlighted] = useState(false);
   const [tooltipText, setTooltipText] = useState(TooltipText.COPY);
 
-  const handleMouseDown = () => {
-    setTooltipText(TooltipText.COPIED);
-    onCopy();
-  };
-  const handleMouseUp = () => {
-    setHighlighted(false);
-  };
-
-  const handleMouseEnter = () => {
-    setHighlighted(true);
-  };
-  const handleMouseLeave = () => {
-    setHighlighted(false);
+  const handleClick = () => {
+    navigator.clipboard.writeText(copyText).then(
+      () => setTooltipText(TooltipText.COPIED),
+      () => setTooltipText(TooltipText.COPY),
+    );
   };
 
   return {
     tooltipText,
-    highlighted,
-    handleMouseDown,
-    handleMouseUp,
-    handleMouseEnter,
-    handleMouseLeave,
+    handleClick,
     setTooltipText,
   };
 };
 
-interface ClipboardButtonProps
-  extends Omit<
-    IconButtonProps,
-    "aria-label" | "onClick" | "onMouseUp" | "onMouseEnter" | "onMouseLeave"
-  > {
+interface ClipboardButtonProps extends Omit<
+  ButtonProps,
+  "aria-label" | "onClick" | "onMouseUp" | "onMouseEnter" | "onMouseLeave"
+> {
   copyText: string;
 }
 
 const ClipboardButton = ({ copyText, ...props }: ClipboardButtonProps) => {
-  const {
-    tooltipText,
-    highlighted,
-    handleMouseDown,
-    handleMouseUp,
-    handleMouseEnter,
-    handleMouseLeave,
-    setTooltipText,
-  } = useClipboardButton(copyText);
-
-  const iconColor = !highlighted ? "gray.600" : "complimentary.500";
+  const { tooltipText, handleClick, setTooltipText } =
+    useClipboardButton(copyText);
 
   return (
     <Tooltip
-      label={tooltipText}
+      title={tooltipText}
       placement="top"
-      closeDelay={500}
-      onOpen={() => {
-        setTooltipText(TooltipText.COPY);
-      }}
-      onClose={() => {
-        setTooltipText(TooltipText.COPY);
+      mouseLeaveDelay={0.5}
+      onOpenChange={(value) => {
+        setTooltipText(value ? TooltipText.COPY : TooltipText.COPIED);
       }}
     >
-      <IconButton
-        icon={<CopyIcon />}
-        color={iconColor}
+      <Button
+        icon={<Icons.Copy />}
         aria-label="copy"
-        variant="ghost"
+        type="text"
         data-testid="clipboard-btn"
         {...props}
-        onClick={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
+        onClick={handleClick}
       />
     </Tooltip>
   );

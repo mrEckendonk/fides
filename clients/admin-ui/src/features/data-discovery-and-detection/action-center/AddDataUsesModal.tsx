@@ -1,0 +1,75 @@
+import { Button, Flex, Modal, Typography } from "fidesui";
+import { useState } from "react";
+
+import ConsentCategorySelect from "~/features/data-discovery-and-detection/action-center/ConsentCategorySelect";
+
+const { Text } = Typography;
+
+interface AddDataUsesModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (dataUses: string[]) => void;
+  isSaving?: boolean;
+}
+
+const AddDataUsesModal = ({
+  onSave,
+  isSaving,
+  isOpen,
+  onClose,
+}: AddDataUsesModalProps) => {
+  const [selectedDataUses, setSelectedDataUses] = useState<string[]>([]);
+
+  const handleReset = () => {
+    setSelectedDataUses([]);
+    onClose();
+  };
+
+  const handleSave = () => {
+    onSave(selectedDataUses);
+    handleReset();
+  };
+
+  return (
+    <Modal
+      title="Add consent category"
+      open={isOpen}
+      onCancel={handleReset}
+      centered
+      destroyOnHidden
+      footer={null}
+    >
+      <Flex vertical gap={20} className="pb-6 pt-4">
+        <Text>
+          Assign consent categories to selected assets. This configures the
+          system for consent management. Consent categories apply to both
+          individual assets and the system.
+        </Text>
+        <ConsentCategorySelect
+          mode="tags"
+          onSelect={(_, option) =>
+            setSelectedDataUses([...selectedDataUses, option.value])
+          }
+          variant="outlined"
+        />
+      </Flex>
+      <Flex justify="space-between">
+        <Button htmlType="reset" onClick={handleReset} data-testid="cancel-btn">
+          Cancel
+        </Button>
+        <Button
+          htmlType="submit"
+          type="primary"
+          disabled={!selectedDataUses.length}
+          loading={isSaving}
+          onClick={handleSave}
+          data-testid="save-btn"
+        >
+          Save
+        </Button>
+      </Flex>
+    </Modal>
+  );
+};
+
+export default AddDataUsesModal;

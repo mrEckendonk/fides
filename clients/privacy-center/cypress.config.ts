@@ -1,8 +1,10 @@
-/* eslint-disable import/no-extraneous-dependencies */
 import { defineConfig } from "cypress";
 import fs from "fs";
 
 export default defineConfig({
+  viewportWidth: 1200,
+  viewportHeight: 800,
+
   e2e: {
     baseUrl: "http://localhost:3001",
     experimentalRunAllSpecs: true,
@@ -15,22 +17,24 @@ export default defineConfig({
           if (results && results.video) {
             // Do we have failures for any retry attempts?
             const failures = results.tests.some((test) =>
-              test.attempts.some((attempt) => attempt.state === "failed")
+              test.attempts.some((attempt) => attempt.state === "failed"),
             );
             if (!failures) {
-              // delete the video if the spec passed and no tests retried
-              fs.unlinkSync(results.video);
+              // delete the video if the spec passed, the video exists, and no tests retried
+              if (fs.existsSync(results.video)) {
+                fs.unlinkSync(results.video);
+              }
             }
           }
-        }
+        },
       );
     },
   },
 
-  defaultCommandTimeout: 5000,
+  defaultCommandTimeout: 3000,
 
   retries: {
-    runMode: 3,
+    runMode: 2,
     openMode: 0,
   },
 

@@ -2,9 +2,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/**
- * An enumeration.
- */
 export enum SupportedLanguage {
   AR = "ar",
   BG = "bg",
@@ -15,7 +12,10 @@ export enum SupportedLanguage {
   DE = "de",
   EL = "el",
   EN = "en",
+  EN_GB = "en-GB",
   ES = "es",
+  ES_MX = "es-MX",
+  ES_US = "es-US",
   ET = "et",
   EU = "eu",
   FI = "fi",
@@ -27,6 +27,7 @@ export enum SupportedLanguage {
   HU = "hu",
   IT = "it",
   JA = "ja",
+  KO = "ko",
   LT = "lt",
   LV = "lv",
   MT = "mt",
@@ -45,4 +46,5 @@ export enum SupportedLanguage {
   TR = "tr",
   UK = "uk",
   ZH = "zh",
+  ZH_HANT = "zh-Hant",
 }

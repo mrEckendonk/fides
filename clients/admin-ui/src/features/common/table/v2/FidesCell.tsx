@@ -1,18 +1,24 @@
 import { Cell, flexRender } from "@tanstack/react-table";
-import { Td } from "fidesui";
+import { ChakraTd as Td } from "fidesui";
 
 import { getTableTHandTDStyles } from "~/features/common/table/v2/util";
 
-type FidesCellProps<T> = {
+export interface FidesCellState {
+  isExpanded?: boolean;
+  isWrapped?: boolean;
+  version?: number;
+}
+
+export interface FidesCellProps<T> {
   cell: Cell<T, unknown>;
   onRowClick?: (row: T, e: React.MouseEvent<HTMLTableCellElement>) => void;
-  isDisplayAll: boolean;
-};
+  cellState?: FidesCellState;
+}
 
 export const FidesCell = <T,>({
   cell,
   onRowClick,
-  isDisplayAll,
+  cellState,
 }: FidesCellProps<T>) => {
   const isTableGrouped = cell.getContext().table.getState().grouping.length > 0;
   const groupedColumnId = isTableGrouped
@@ -22,10 +28,7 @@ export const FidesCell = <T,>({
   let isFirstRowOfGroupedRows = false;
   let isLastRowOfGroupedRows = false;
   let hasOneSubRow = false;
-  const rows = cell
-    .getContext()
-    .table.getRowModel()
-    .rows.filter((r) => !r.id.includes(":"));
+  const { rows } = cell.getContext().table.getRowModel();
   const isFirstRowOfPage = rows[0].id === cell.row.id;
   const isLastRowOfPage = rows[rows.length - 1].id === cell.row.id;
   if (cell.getValue() && isGroupedColumn) {
@@ -58,7 +61,7 @@ export const FidesCell = <T,>({
           ? cell.column.columnDef.meta.width
           : "unset"
       }
-      overflowX={
+      overflow={
         cell.column.columnDef.meta?.overflow
           ? cell.column.columnDef.meta?.overflow
           : "auto"
@@ -72,10 +75,12 @@ export const FidesCell = <T,>({
           borderTopWidth: "2x",
           borderTopColor: "red",
         },
-        ...getTableTHandTDStyles(cell.column.id),
+        ...getTableTHandTDStyles(
+          cell.column.id === "select" || cell.column.columnDef.meta?.noPadding,
+        ),
         // Fancy CSS memoization magic https://tanstack.com/table/v8/docs/framework/react/examples/column-resizing-performant
-        maxWidth: `calc(var(--header-${cell.column.id}-size) * 1px)`,
-        minWidth: `calc(var(--header-${cell.column.id}-size) * 1px)`,
+        maxWidth: `calc(var(--col-${cell.column.id}-size) * 1px)`,
+        minWidth: `calc(var(--col-${cell.column.id}-size) * 1px)`,
         "&:hover": {
           backgroundColor: hasCellClickEnabled ? "gray.50" : undefined,
           cursor: hasCellClickEnabled ? "pointer" : undefined,
@@ -89,8 +94,8 @@ export const FidesCell = <T,>({
       _first={{
         borderBottomWidth:
           (!isTableGrouped && !isLastRowOfPage) ||
-          (isLastRowOfGroupedRows && !isFirstRowOfPage) ||
-          (isFirstRowOfGroupedRows && hasOneSubRow)
+          (isLastRowOfGroupedRows && !isFirstRowOfPage && !isLastRowOfPage) ||
+          (isFirstRowOfGroupedRows && hasOneSubRow && !isLastRowOfPage)
             ? "1px"
             : "0px",
       }}
@@ -100,11 +105,12 @@ export const FidesCell = <T,>({
       height="inherit"
       onClick={handleCellClick}
       data-testid={`row-${cell.row.id}-col-${cell.column.id}`}
+      {...cell.column.columnDef.meta?.cellProps}
     >
       {!cell.getIsPlaceholder() || isFirstRowOfGroupedRows
         ? flexRender(cell.column.columnDef.cell, {
             ...cell.getContext(),
-            isDisplayAll,
+            cellState,
           })
         : null}
     </Td>

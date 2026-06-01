@@ -1,20 +1,24 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+from sqlalchemy.orm import Query, Session
+from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
 
 from fides.api.models.connectionconfig import ConnectionConfig
-from fides.api.models.privacy_notice import EnforcementLevel, UserConsentPreference
+from fides.api.models.privacy_notice import (
+    EnforcementLevel,
+    PrivacyNotice,
+    UserConsentPreference,
+)
 from fides.api.models.privacy_preference import PrivacyPreferenceHistory
 from fides.api.models.privacy_request import (
-    ExecutionLogStatus,
     PrivacyRequest,
     ProvidedIdentity,
     ProvidedIdentityType,
 )
 from fides.api.models.sql_models import System  # type: ignore[attr-defined]
 from fides.api.models.tcf_purpose_overrides import TCFPurposeOverride
+from fides.api.models.worker_task import ExecutionLogStatus
 from fides.api.schemas.redis_cache import Identity
 
 
@@ -54,9 +58,15 @@ def filter_privacy_preferences_for_propagation(
     return filtered_on_use
 
 
-def should_opt_in_to_service(
-    system: Optional[System], privacy_request: PrivacyRequest
-) -> Tuple[Optional[bool], List[PrivacyPreferenceHistory]]:
+def build_user_consent_and_filtered_preferences_for_service(
+    system: Optional[System],
+    privacy_request: PrivacyRequest,
+    session: Session,
+    is_notice_based: bool = False,
+) -> Tuple[
+    Optional[Union[bool, Dict[str, Dict[str, Any]]]],
+    List[PrivacyPreferenceHistory],
+]:
     """
     For SaaS Connectors, examine the Privacy Preferences and collapse this information into a single should we opt in? (True),
     should we opt out? (False) or should we do nothing? (None).
@@ -85,15 +95,48 @@ def should_opt_in_to_service(
             [],  # Don't need to return the filtered preferences, this is just relevant for the new workflow
         )
 
-    # NEW WORKFLOW
-    relevant_preferences = filter_privacy_preferences_for_propagation(
-        system,
-        privacy_request.privacy_preferences,  # type: ignore[attr-defined]
+    # NEW WORKFLOWS: 1.notice-based and 2. global SaaS Consent
+    relevant_preferences: List[PrivacyPreferenceHistory] = (
+        filter_privacy_preferences_for_propagation(
+            system,
+            privacy_request.privacy_preferences,  # type: ignore[attr-defined]
+        )
     )
     if not relevant_preferences:
         return None, []  # We should do nothing here
 
-    # Collapse relevant preferences into whether we should opt-in or opt-out
+    filtered_preferences: List[PrivacyPreferenceHistory] = []
+
+    # 1. NOTICE-BASED WORKFLOW
+    if is_notice_based:
+        notice_preference_map: Dict[str, Dict[str, Any]] = {}
+        # retrieve notices from the DB if they are associated with a relevant preference
+        notices_with_preference: Query = session.query(PrivacyNotice).filter(
+            PrivacyNotice.notice_key.in_(
+                [preference.notice_key for preference in relevant_preferences]
+            ),
+        )
+        # build our notice id -> user preference map, build filtered list of preferences that apply
+        for notice in notices_with_preference:
+            preference = [
+                pref
+                for pref in relevant_preferences
+                if pref.notice_key == notice.notice_key
+            ]
+            # we only expect max 1 preference in this list
+            if preference and preference[0]:
+                notice_preference_map[notice.id] = {
+                    "preference": preference[0].preference,
+                    "notice_key": notice.notice_key,
+                }
+                filtered_preferences.append(preference[0])
+
+        return (
+            notice_preference_map,
+            filtered_preferences,
+        )
+
+    # 2. GLOBAL (OPT-IN/OUT) WORKFLOW
     preference_to_propagate: UserConsentPreference = (
         UserConsentPreference.opt_out
         if any(
@@ -104,14 +147,17 @@ def should_opt_in_to_service(
     )
 
     # Hopefully rare final filtering in case there are conflicting preferences
-    filtered_preferences: List[PrivacyPreferenceHistory] = [
+    filtered_preferences = [
         pref
         for pref in relevant_preferences
         if pref.preference == preference_to_propagate
     ]
 
     # Return whether we should opt in, and the filtered preferences so we can update those for consent reporting
-    return preference_to_propagate == UserConsentPreference.opt_in, filtered_preferences
+    return (
+        preference_to_propagate == UserConsentPreference.opt_in,
+        filtered_preferences,
+    )
 
 
 def cache_initial_status_and_identities_for_consent_reporting(
@@ -133,11 +179,15 @@ def cache_initial_status_and_identities_for_consent_reporting(
         if pref in relevant_preferences:
             pref.update_secondary_user_ids(db, relevant_user_identities)
             pref.cache_system_status(
-                db, connection_config.system_key, ExecutionLogStatus.pending
+                db,
+                connection_config.consent_tracking_key,
+                ExecutionLogStatus.pending,
             )
         else:
             pref.cache_system_status(
-                db, connection_config.system_key, ExecutionLogStatus.skipped
+                db,
+                connection_config.consent_tracking_key,
+                ExecutionLogStatus.skipped,
             )
 
 
@@ -154,12 +204,12 @@ def add_complete_system_status_for_consent_reporting(
     for pref in privacy_request.privacy_preferences:  # type: ignore[attr-defined]
         if (
             pref.affected_system_status
-            and pref.affected_system_status.get(connection_config.system_key)
+            and pref.affected_system_status.get(connection_config.consent_tracking_key)
             == ExecutionLogStatus.pending.value
         ):
             pref.cache_system_status(
                 db,
-                connection_config.system_key,
+                connection_config.consent_tracking_key,
                 ExecutionLogStatus.complete,
             )
 
@@ -174,15 +224,36 @@ def add_errored_system_status_for_consent_reporting(
 
     Deeming them relevant if they already had a "pending" log added to them.
     """
-    for pref in privacy_request.privacy_preferences:  # type: ignore[attr-defined]
+    add_errored_system_status_for_consent_reporting_on_preferences(
+        db,
+        privacy_request.privacy_preferences,  # type: ignore[attr-defined]
+        connection_config,
+    )
+
+
+def add_errored_system_status_for_consent_reporting_on_preferences(
+    db: Session,
+    privacy_preferences: List[PrivacyPreferenceHistory],
+    connection_config: ConnectionConfig,
+) -> None:
+    """
+    Cache an errored system status for consent reporting on just the subset
+    of preferences that were deemed relevant for the connector on failure,
+    from the provided list of preferences.
+
+    Deeming them relevant if they already had a "pending" log added to them.
+    """
+    for preference in privacy_preferences:
         if (
-            pref.affected_system_status
-            and pref.affected_system_status.get(connection_config.system_key)
+            preference.affected_system_status
+            and preference.affected_system_status.get(
+                connection_config.consent_tracking_key
+            )
             == ExecutionLogStatus.pending.value
         ):
-            pref.cache_system_status(
+            preference.cache_system_status(
                 db,
-                connection_config.system_key,
+                connection_config.consent_tracking_key,
                 ExecutionLogStatus.error,
             )
 
@@ -206,8 +277,9 @@ def get_fides_user_device_id_provided_identity(
                 == ProvidedIdentityType.fides_user_device_id.value
             )
             & (
-                ProvidedIdentity.hashed_value
-                == ProvidedIdentity.hash_value(fides_user_device_id)
+                ProvidedIdentity.hashed_value.in_(
+                    ProvidedIdentity.hash_value_for_search(fides_user_device_id)
+                )
             )
             & (ProvidedIdentity.privacy_request_id.is_(None))
         ),
@@ -223,7 +295,7 @@ def get_or_create_fides_user_device_id_provided_identity(
     """
     if not identity_data or not identity_data.fides_user_device_id:
         raise HTTPException(
-            HTTP_422_UNPROCESSABLE_ENTITY,
+            HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Fides user device id not found in identity data",
         )
 

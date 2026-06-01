@@ -1,42 +1,47 @@
 """
-Contains all of the generic CRUD endpoints that can be
-generated programmatically for each resource.
+DEPRECATED: This module uses manual transaction handling which can
+lead to unexpected behavior. Use fides.api.db.safe_crud instead.
 """
 
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Type, TypeVar
 
 from fastapi import HTTPException
 from loguru import logger as log
-from sqlalchemy import and_, column
+from sqlalchemy import and_, column, or_
 from sqlalchemy import delete as _delete
-from sqlalchemy import or_
 from sqlalchemy import update as _update
 from sqlalchemy.dialects.postgresql import Insert as _insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import Select
-from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
+from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
+from typing_extensions import deprecated
 
-from fides.api.db.base import Base  # type: ignore[attr-defined]
 from fides.api.models.sql_models import (  # type: ignore[attr-defined]
     CustomField,
     CustomFieldDefinition,
+    FidesBase,
     ResourceTypes,
 )
 from fides.api.util import errors
 
+# Helps return type be linked to the type of the parameter
+T = TypeVar("T", bound="FidesBase")
+
 
 # CRUD Functions
+@deprecated(
+    "This function uses a manual session.begin() which can lead to unexpected transaction handling. Use create_resource from safe_crud instead."
+)
 async def create_resource(
-    sql_model: Base, resource_dict: Dict, async_session: AsyncSession
-) -> Base:
+    sql_model: Type[T], resource_dict: Dict, async_session: AsyncSession
+) -> T:
     """Create a resource in the database."""
     with log.contextualize(
         sql_model=sql_model.__name__, fides_key=resource_dict["fides_key"]
     ):
-
         existing_resource = await get_resource(
             sql_model, resource_dict["fides_key"], async_session, raise_not_found=False
         )
@@ -53,22 +58,23 @@ async def create_resource(
         async with async_session.begin():
             try:
                 log.debug("Creating resource")
-                query = _insert(sql_model).values(resource_dict)
+                query = _insert(sql_model.__table__).values(resource_dict)
                 await async_session.execute(query)
-            except SQLAlchemyError:
+            except SQLAlchemyError as e:
+                log.exception(f"Failed to create resource with error: '{e}'")
                 sa_error = errors.QueryError()
-                log.bind(error=sa_error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to create resource"
-                )
                 raise sa_error
 
         return await get_resource(sql_model, resource_dict["fides_key"], async_session)
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use get_custom_fields_filtered from safe_crud instead."
+)
 async def get_custom_fields_filtered(
     async_session: AsyncSession,
     resource_types_to_ids: Dict[ResourceTypes, List[str]] = defaultdict(list),
-) -> Base:
+) -> FidesBase:
     """
     Utility function to construct a filtered query for custom field values based on provided mapping of
     resource types to resource IDs.
@@ -104,20 +110,21 @@ async def get_custom_fields_filtered(
                 query = query.where(or_(False, *criteria))
                 result = await async_session.execute(query)
                 return result.mappings().all()
-            except SQLAlchemyError:
+            except SQLAlchemyError as e:
                 sa_error = errors.QueryError()
-                log.bind(error=sa_error.detail["error"]).error(  # type: ignore[index]
-                    "Failed to fetch custom fields"
-                )
+                log.exception(f"Failed to fetch custom fields with error: '{e}'")
                 raise sa_error
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use get_resource from safe_crud instead."
+)
 async def get_resource(
-    sql_model: Base,
+    sql_model: Type[T],
     fides_key: str,
     async_session: AsyncSession,
     raise_not_found: bool = True,
-) -> Base:
+) -> T:
     """
     Get a resource from the database by its FidesKey.
 
@@ -129,30 +136,33 @@ async def get_resource(
                 log.debug("Fetching resource")
                 query = select(sql_model).where(sql_model.fides_key == fides_key)
                 result = await async_session.execute(query)
-            except SQLAlchemyError:
+            except SQLAlchemyError as e:
                 sa_error = errors.QueryError()
-                log.bind(error=sa_error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to fetch resource"
-                )
+                log.exception(f"Failed to fetch resource with error: '{e}'")
                 raise sa_error
 
             sql_resource = result.scalars().first()
             if sql_resource is None and raise_not_found:
                 not_found_error = errors.NotFoundError(sql_model.__name__, fides_key)
-                log.bind(error=not_found_error.detail["error"]).info("Resource not found")  # type: ignore[index]
+                log.bind(error=not_found_error.detail["error"]).info(  # type: ignore[index]
+                    "Resource not found"
+                )
                 raise not_found_error
 
             return sql_resource
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use get_resource_with_custom_fields from safe_crud instead."
+)
 async def get_resource_with_custom_fields(
-    sql_model: Base, fides_key: str, async_session: AsyncSession
+    sql_model: Type[T], fides_key: str, async_session: AsyncSession
 ) -> Dict[str, Any]:
     """Get a resource from the databse by its FidesKey including it's custom fields.
 
     Returns a dictionary of that resource.
     """
-    resource = await get_resource(sql_model, fides_key, async_session)
+    resource: T = await get_resource(sql_model, fides_key, async_session)
     resource_dict = resource.__dict__
     resource_dict.pop("_sa_instance_state", None)
 
@@ -175,11 +185,9 @@ async def get_resource_with_custom_fields(
                     )
                 )
                 result = await async_session.execute(query)
-            except SQLAlchemyError:
+            except SQLAlchemyError as e:
                 sa_error = errors.QueryError()
-                log.bind(error=sa_error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to fetch custom fields"
-                )
+                log.exception(f"Failed to fetch custom fields with error: '{e}'")
                 raise sa_error
 
             custom_fields = result.mappings().all()
@@ -198,7 +206,10 @@ async def get_resource_with_custom_fields(
     return resource_dict
 
 
-async def list_resource(sql_model: Base, async_session: AsyncSession) -> List[Base]:
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use list_resource from safe_crud instead."
+)
+async def list_resource(sql_model: Type[T], async_session: AsyncSession) -> List[T]:
     """
     Get a list of all of the resources of this type from the database.
 
@@ -208,9 +219,12 @@ async def list_resource(sql_model: Base, async_session: AsyncSession) -> List[Ba
     return await list_resource_query(async_session, query, sql_model)
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use list_resource_query from safe_crud instead."
+)
 async def list_resource_query(
-    async_session: AsyncSession, query: Select, sql_model: Base = Base
-) -> List[Base]:
+    async_session: AsyncSession, query: Select, sql_model: Type[T]
+) -> List[T]:
     """
     Utility function to wrap a select query in generic "list_resource" execution handling.
     Wrapping includes execution against the DB session, logging and error handling.
@@ -222,18 +236,19 @@ async def list_resource_query(
                 log.debug("Fetching resources")
                 result = await async_session.execute(query)
                 sql_resources = result.scalars().all()
-            except SQLAlchemyError:
-                error = errors.QueryError()
-                log.bind(error=error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to fetch resources"
-                )
-                raise error
+            except SQLAlchemyError as e:
+                log.exception(f"Failed to fetch resources with error: '{e}'")
+                sa_error = errors.QueryError()
+                raise sa_error
 
             return sql_resources
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use update_resource from safe_crud instead."
+)
 async def update_resource(
-    sql_model: Base, resource_dict: Dict, async_session: AsyncSession
+    sql_model: Type[T], resource_dict: Dict, async_session: AsyncSession
 ) -> Dict:
     """Update a resource in the database by its fides_key."""
 
@@ -246,22 +261,23 @@ async def update_resource(
             try:
                 log.debug("Updating resource")
                 await async_session.execute(
-                    _update(sql_model)
+                    _update(sql_model.__table__)
                     .where(sql_model.fides_key == resource_dict["fides_key"])
                     .values(resource_dict)
                 )
-            except SQLAlchemyError:
-                error = errors.QueryError()
-                log.bind(error=error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to update resource"
-                )
-                raise error
+            except SQLAlchemyError as e:
+                log.exception(f"Failed to update resource with error: '{e}'")
+                sa_error = errors.QueryError()
+                raise sa_error
 
         return await get_resource(sql_model, resource_dict["fides_key"], async_session)
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use upsert_resources from safe_crud instead."
+)
 async def upsert_resources(
-    sql_model: Base, resource_dicts: List[Dict], async_session: AsyncSession
+    sql_model: Type[T], resource_dicts: List[Dict], async_session: AsyncSession
 ) -> Tuple[int, int]:
     """
     Insert new resources into the database. If a resource already exists,
@@ -278,7 +294,7 @@ async def upsert_resources(
             try:
                 log.debug("Upserting resources")
                 insert_stmt = (
-                    _insert(sql_model)
+                    _insert(sql_model.__table__)
                     .values(resource_dicts)
                     .returning(
                         (column("xmax") == 0),  # Row was inserted
@@ -303,17 +319,18 @@ async def upsert_resources(
 
                 return (inserts, updates)
 
-            except SQLAlchemyError:
-                error = errors.QueryError()
-                log.bind(error=error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to upsert resources"
-                )
-                raise error
+            except SQLAlchemyError as e:
+                log.exception(f"Failed to upsert resources with error: '{e}'")
+                sa_error = errors.QueryError()
+                raise sa_error
 
 
+@deprecated(
+    "This function uses manual session.begin() which can lead to unexpected transaction handling. Use delete_resource from safe_crud instead."
+)
 async def delete_resource(
-    sql_model: Base, fides_key: str, async_session: AsyncSession
-) -> Base:
+    sql_model: Type[T], fides_key: str, async_session: AsyncSession
+) -> T:
     """
     Delete a resource by its fides_key.
 
@@ -329,7 +346,7 @@ async def delete_resource(
                 if hasattr(sql_model, "parent_key"):
                     log.debug("Deleting resource and its children")
                     query = (
-                        _delete(sql_model)
+                        _delete(sql_model.__table__)
                         .where(
                             or_(
                                 sql_model.fides_key == fides_key,
@@ -340,7 +357,9 @@ async def delete_resource(
                     )
                 else:
                     log.debug("Deleting resource")
-                    query = _delete(sql_model).where(sql_model.fides_key == fides_key)
+                    query = _delete(sql_model.__table__).where(
+                        sql_model.fides_key == fides_key
+                    )
                 await async_session.execute(query)
             except IntegrityError as err:
                 raw_error_text: str = err.orig.args[0]
@@ -352,14 +371,12 @@ async def delete_resource(
 
                 log.bind(error="SQL Query integrity error!").error(raw_error_text)
                 raise HTTPException(
-                    status_code=HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=error_message,
                 )
-            except SQLAlchemyError:
-                error = errors.QueryError()
-                log.bind(error=error.detail["error"]).info(  # type: ignore[index]
-                    "Failed to delete resource"
-                )
-                raise error
+            except SQLAlchemyError as e:
+                log.exception(f"Failed to delete resource with error: '{e}'")
+                sa_error = errors.QueryError()
+                raise sa_error
 
         return sql_resource

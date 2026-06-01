@@ -6,6 +6,16 @@ import { PrivacyDeclaration } from "~/types/api/models/PrivacyDeclaration";
 import { SystemHistoryResponse } from "~/types/api/models/SystemHistoryResponse";
 import { SystemResponse } from "~/types/api/models/SystemResponse";
 
+/**
+ * The backend stores system history before/after as Dict[str, Any] (JSONB).
+ * The data is serialized from SystemSchema.model_dump(), split into three
+ * history entry types: general fields, privacy_declarations, or data flow
+ * (ingress/egress). This local type captures the known shape for type safety.
+ */
+interface SystemHistoryData {
+  [key: string]: any;
+}
+
 /** Helper function to format date and time based on the user's locale */
 export const formatDateAndTime = (dateString: string) => {
   const date = new Date(dateString);
@@ -44,7 +54,7 @@ export const getUiLabel = (key: string): string => {
 /** Determines if a field was added, modified, or removed as part of modification */
 const categorizeFieldModifications = (
   before: Record<string, any>,
-  after: Record<string, any>
+  after: Record<string, any>,
 ) => {
   const uniqueKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
 
@@ -54,9 +64,7 @@ const categorizeFieldModifications = (
 
   Array.from(uniqueKeys).forEach((originalKey) => {
     const key = getUiLabel(originalKey);
-    // @ts-ignore
     const beforeValue = before[originalKey];
-    // @ts-ignore
     const afterValue = after[originalKey];
 
     // Handle booleans separately
@@ -101,7 +109,9 @@ const categorizeFieldModifications = (
 /** Creates a description of the given system history entry in the style of a commit message */
 export const describeSystemChange = (history: SystemHistoryResponse) => {
   // eslint-disable-next-line @typescript-eslint/naming-convention
-  const { edited_by, before, after, created_at } = history;
+  const { edited_by, created_at } = history;
+  const before = history.before as SystemHistoryData;
+  const after = history.after as SystemHistoryData;
 
   let addedFields: string[] = [];
   let removedFields: string[] = [];
@@ -170,7 +180,7 @@ export const describeSystemChange = (history: SystemHistoryResponse) => {
 /** Replaces system keys with system names (if available) */
 export const assignSystemNames = (
   history: SystemHistoryResponse,
-  systems: SystemResponse[]
+  systems: SystemResponse[],
 ): SystemHistoryResponse => {
   const transformList = (list: any[]): string[] =>
     list.map((item) => {
@@ -178,8 +188,8 @@ export const assignSystemNames = (
       return system && system.name ? system.name : item.fides_key;
     });
 
-  const modifiedBefore = { ...history.before };
-  const modifiedAfter = { ...history.after };
+  const modifiedBefore = { ...history.before } as SystemHistoryData;
+  const modifiedAfter = { ...history.after } as SystemHistoryData;
 
   if (modifiedBefore.ingress) {
     modifiedBefore.ingress = transformList(modifiedBefore.ingress);
@@ -203,7 +213,7 @@ export const assignSystemNames = (
 /** Replaces vendor IDs with vendor names */
 export const assignVendorLabels = (
   history: SystemHistoryResponse,
-  dictionaryOptions: DictOption[]
+  dictionaryOptions: DictOption[],
 ): SystemHistoryResponse => {
   // Return the unmodified history if dictionaryOptions is empty
   if (_.isEmpty(dictionaryOptions)) {
@@ -217,35 +227,45 @@ export const assignVendorLabels = (
     ...history,
     before: {
       ...history.before,
-      vendor_id: lookupVendorLabel(history.before.vendor_id, dictionaryOptions),
+      vendor_id: lookupVendorLabel(
+        (history.before as SystemHistoryData).vendor_id,
+        dictionaryOptions,
+      ),
     },
     after: {
       ...history.after,
-      vendor_id: lookupVendorLabel(history.after.vendor_id, dictionaryOptions),
+      vendor_id: lookupVendorLabel(
+        (history.after as SystemHistoryData).vendor_id,
+        dictionaryOptions,
+      ),
     },
   };
 };
 
 /** Modifies the privacy_declaration lists in the before and after objects to match in length */
 export const alignPrivacyDeclarations = (
-  history: SystemHistoryResponse
+  history: SystemHistoryResponse,
 ): SystemHistoryResponse => {
-  const before = history.before.privacy_declarations || [];
-  const after = history.after.privacy_declarations || [];
+  const historyBefore = history.before as SystemHistoryData;
+  const historyAfter = history.after as SystemHistoryData;
+  const before = historyBefore.privacy_declarations || [];
+  const after = historyAfter.privacy_declarations || [];
 
-  const allNames = new Set([...before, ...after].map((item) => item.data_use));
+  const allNames = new Set(
+    [...before, ...after].map((item: any) => item.data_use),
+  );
   const alignedBefore: PrivacyDeclaration[] = [];
   const alignedAfter: PrivacyDeclaration[] = [];
 
   allNames.forEach((data_use) => {
     const firstItem = before.find(
-      (item: PrivacyDeclaration) => item.data_use === data_use
+      (item: PrivacyDeclaration) => item.data_use === data_use,
     ) || {
       data_use: "",
       data_categories: [],
     };
     const secondItem = after.find(
-      (item: PrivacyDeclaration) => item.data_use === data_use
+      (item: PrivacyDeclaration) => item.data_use === data_use,
     ) || {
       data_use: "",
       data_categories: [],
@@ -270,10 +290,14 @@ export const alignPrivacyDeclarations = (
 /** Makes sure the before and after custom_field objects have the same keys
  * to align the rendering of the fields in the diff modal */
 export const alignSystemCustomFields = (
-  history: SystemHistoryResponse
+  history: SystemHistoryResponse,
 ): SystemHistoryResponse => {
-  const beforeCustomFields = { ...history.before.custom_fields };
-  const afterCustomFields = { ...history.after.custom_fields };
+  const beforeCustomFields = {
+    ...(history.before as SystemHistoryData).custom_fields,
+  };
+  const afterCustomFields = {
+    ...(history.after as SystemHistoryData).custom_fields,
+  };
 
   const allKeys = new Set([
     ...Object.keys(beforeCustomFields),
@@ -304,23 +328,26 @@ export const alignSystemCustomFields = (
 
 /** Makes sure the custom fields object on privacy declarations have the same keys */
 export const alignPrivacyDeclarationCustomFields = (
-  history: SystemHistoryResponse
+  history: SystemHistoryResponse,
 ): SystemHistoryResponse => {
+  const histBefore = history.before as SystemHistoryData;
+  const histAfter = history.after as SystemHistoryData;
+
   // If privacy_declarations[0].custom_fields isn't defined, return the unmodified history object
   if (
-    !history.before.privacy_declarations ||
-    !history.before.privacy_declarations[0] ||
-    !history.before.privacy_declarations[0].custom_fields
+    !histBefore.privacy_declarations ||
+    !histBefore.privacy_declarations[0] ||
+    !histBefore.privacy_declarations[0].custom_fields
   ) {
     return history;
   }
 
   const beforeCustomFields = {
-    ...history.before.privacy_declarations[0].custom_fields,
+    ...histBefore.privacy_declarations[0].custom_fields,
   };
   const afterCustomFields =
-    history.after.privacy_declarations && history.after.privacy_declarations[0]
-      ? { ...history.after.privacy_declarations[0].custom_fields }
+    histAfter.privacy_declarations && histAfter.privacy_declarations[0]
+      ? { ...histAfter.privacy_declarations[0].custom_fields }
       : {};
 
   const allKeys = new Set([
@@ -343,7 +370,7 @@ export const alignPrivacyDeclarationCustomFields = (
       ...history.before,
       privacy_declarations: [
         {
-          ...history.before.privacy_declarations[0],
+          ...histBefore.privacy_declarations[0],
           custom_fields: beforeCustomFields,
         },
       ],
@@ -352,7 +379,7 @@ export const alignPrivacyDeclarationCustomFields = (
       ...history.after,
       privacy_declarations: [
         {
-          ...history.after.privacy_declarations[0],
+          ...histAfter.privacy_declarations[0],
           custom_fields: afterCustomFields,
         },
       ],

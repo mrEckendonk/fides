@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
 
-from sqlalchemy import Boolean, Column, String
+from pydantic import ConfigDict
+from sqlalchemy import Boolean, Column, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.ext.mutable import MutableDict
@@ -18,8 +19,8 @@ DEFAULT_MESSAGING_TEMPLATES: Dict[str, Any] = {
     MessagingActionType.SUBJECT_IDENTITY_VERIFICATION.value: {
         "label": "Subject identity verification",
         "content": {
-            "subject": "Your one-time code is {{code}}",
-            "body": "Your privacy request verification code is {{code}}. Please return to the Privacy Center and enter the code to continue. This code will expire in {{minutes}} minutes.",
+            "subject": "Your one-time code is __CODE__",
+            "body": "Your privacy request verification code is __CODE__. Please return to the Privacy Center and enter the code to continue. This code will expire in __MINUTES__ minutes.",
         },
     },
     MessagingActionType.PRIVACY_REQUEST_RECEIPT.value: {
@@ -40,14 +41,14 @@ DEFAULT_MESSAGING_TEMPLATES: Dict[str, Any] = {
         "label": "Privacy request denied",
         "content": {
             "subject": "Your privacy request has been denied",
-            "body": "Your privacy request has been denied. {{denial_reason}}.",
+            "body": "Your privacy request has been denied. __DENIAL_REASON__.",
         },
     },
     MessagingActionType.PRIVACY_REQUEST_COMPLETE_ACCESS.value: {
         "label": "Access request completed",
         "content": {
             "subject": "Your data is ready to be downloaded",
-            "body": "Your access request has been completed and can be downloaded at {{download_link}}. For security purposes, this secret link will expire in {{days}} days.",
+            "body": "Your access request has been completed and can be downloaded at __DOWNLOAD_LINK__. For security purposes, this secret link will expire in __DAYS__ days.",
         },
     },
     MessagingActionType.PRIVACY_REQUEST_COMPLETE_DELETION.value: {
@@ -55,6 +56,34 @@ DEFAULT_MESSAGING_TEMPLATES: Dict[str, Any] = {
         "content": {
             "subject": "Your data has been deleted",
             "body": "Your erasure request has been completed.",
+        },
+    },
+    MessagingActionType.PRIVACY_REQUEST_COMPLETE_CONSENT.value: {
+        "label": "Consent request completed",
+        "content": {
+            "subject": "Your consent preferences have been saved",
+            "body": "Your consent request has been completed.",
+        },
+    },
+    MessagingActionType.MANUAL_TASK_DIGEST.value: {
+        "label": "Manual task digest",
+        "content": {
+            "subject": "Weekly DSR Summary from __ORGANIZATION_NAME__",
+            "body": "This is your weekly summary of open data subject requests tasks from __ORGANIZATION_NAME__ that require your attention. Please review the tasks in our Privacy Center to ensure timely completion.",
+        },
+    },
+    MessagingActionType.CORRESPONDENCE.value: {
+        "label": "Correspondence message",
+        "content": {
+            "subject": "You have a new message regarding your privacy request",
+            "body": "You have received a message regarding your privacy request. __MESSAGE_BODY__",
+        },
+    },
+    MessagingActionType.EXTERNAL_USER_WELCOME.value: {
+        "label": "External user welcome",
+        "content": {
+            "subject": "Welcome to our Privacy Center",
+            "body": "An account has been created for you by the privacy team at __ORG_NAME__ so that you can assist them in responding to data subject requests, as required by the GDPR and many US state laws, for users that have data in your systems. A portal is available to view and take action on these requests at: __PORTAL_LINK__. Through this portal you can upload or provide user data for users who have requested a copy of their information and attest that users have been removed from your system in the case of an erasure request. The provided link is valid for 30 days and you will be asked to verify your email address each time you access the portal. If you have any questions, please reach out first to your contacts at: __ORG_NAME__",
         },
     },
 }
@@ -85,7 +114,12 @@ class MessagingTemplate(Base):
     def __tablename__(self) -> str:
         return "messaging_template"
 
+    __table_args__ = (
+        UniqueConstraint("type", "label", name="uq_messaging_template_type_label"),
+    )
+
     type = Column(String, index=True, nullable=False)
+    label = Column(String, nullable=False)
     content = Column(MutableDict.as_mutable(JSONB), nullable=False)
     properties: RelationshipProperty[List[Property]] = relationship(
         "Property",
@@ -94,9 +128,7 @@ class MessagingTemplate(Base):
         lazy="selectin",
     )
     is_enabled = Column(Boolean, default=False, nullable=False)
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def create(

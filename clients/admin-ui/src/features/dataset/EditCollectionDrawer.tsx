@@ -1,20 +1,15 @@
-import { errorToastParams, successToastParams } from "common/toast";
-import { ConfirmationModal, Text, useDisclosure, useToast } from "fidesui";
-import { useSelector } from "react-redux";
+import { Text, useMessage, useModal } from "fidesui";
+import { useMemo } from "react";
 
 import EditDrawer, {
   EditDrawerFooter,
   EditDrawerHeader,
 } from "~/features/common/EditDrawer";
-import { DatasetCollection } from "~/types/api";
+import { Dataset, DatasetCollection } from "~/types/api";
 
+import { useUpdateDatasetMutation } from "./dataset.slice";
 import {
-  selectActiveCollectionIndex,
-  selectActiveDataset,
-  setActiveCollectionIndex,
-  useUpdateDatasetMutation,
-} from "./dataset.slice";
-import EditCollectionOrFieldForm, {
+  EditCollectionOrFieldForm,
   FORM_ID,
 } from "./EditCollectionOrFieldForm";
 import {
@@ -24,98 +19,93 @@ import {
 
 const DESCRIPTION =
   "Collections are an array of objects that describe the Dataset's collections. Provide additional context to this collection by filling out the fields below.";
+
 interface Props {
+  dataset: Dataset;
   collection: DatasetCollection;
   isOpen: boolean;
   onClose: () => void;
 }
-const EditCollectionDrawer = ({ collection, isOpen, onClose }: Props) => {
-  const dataset = useSelector(selectActiveDataset);
-  const collectionIndex = useSelector(selectActiveCollectionIndex);
+
+export const EditCollectionDrawer = ({
+  dataset,
+  collection,
+  isOpen,
+  onClose,
+}: Props) => {
+  const collectionIndex = useMemo(
+    () => dataset?.collections.indexOf(collection),
+    [collection, dataset?.collections],
+  );
   const [updateDataset] = useUpdateDatasetMutation();
-  const toast = useToast();
-  const {
-    isOpen: deleteIsOpen,
-    onOpen: onDeleteOpen,
-    onClose: onDeleteClose,
-  } = useDisclosure();
+  const message = useMessage();
+  const confirmModal = useModal();
 
   const handleSubmit = async (
-    values: Pick<DatasetCollection, "description" | "data_categories">
+    values: Pick<DatasetCollection, "description" | "data_categories">,
   ) => {
-    if (dataset && collectionIndex !== undefined) {
-      const updatedCollection = { ...collection, ...values };
-      const updatedDataset = getUpdatedDatasetFromCollection(
-        dataset,
-        updatedCollection,
-        collectionIndex
-      );
-      try {
-        await updateDataset(updatedDataset);
-        toast(successToastParams("Successfully modified collection"));
-      } catch (error) {
-        toast(errorToastParams(error as string));
-      }
-      onClose();
+    const updatedCollection = { ...collection, ...values };
+    const updatedDataset = getUpdatedDatasetFromCollection(
+      dataset!,
+      updatedCollection,
+      collectionIndex!,
+    );
+    try {
+      await updateDataset(updatedDataset);
+      message.success("Successfully modified collection");
+    } catch (error) {
+      message.error(error as string);
     }
+    onClose();
   };
 
   const handleDelete = async () => {
     if (dataset && collectionIndex !== undefined) {
       const updatedDataset = removeCollectionFromDataset(
         dataset,
-        collectionIndex
+        collectionIndex,
       );
       try {
         await updateDataset(updatedDataset);
-        toast(successToastParams("Successfully deleted collection"));
-        const newActiveCollectionIndex =
-          dataset.collections.length > 0 ? 0 : undefined;
-        setActiveCollectionIndex(newActiveCollectionIndex);
+        message.success("Successfully deleted collection");
       } catch (error) {
-        toast(errorToastParams(error as string));
+        message.error(error as string);
       }
       onClose();
     }
   };
 
+  const confirmDelete = () => {
+    confirmModal.confirm({
+      title: "Delete Collection",
+      content: (
+        <>
+          You are about to permanently delete the collection named{" "}
+          <Text strong>{collection?.name}</Text> from this dataset. Are you sure
+          you would like to continue?
+        </>
+      ),
+      okButtonProps: { danger: true },
+      onOk: handleDelete,
+    });
+  };
+
   return (
-    <>
-      <EditDrawer
-        isOpen={isOpen}
-        onClose={onClose}
-        description={DESCRIPTION}
-        header={
-          <EditDrawerHeader
-            title={`Collection Name: ${collection.name}`}
-            onDelete={onDeleteOpen}
-          />
-        }
-        footer={<EditDrawerFooter onClose={onClose} formId={FORM_ID} />}
-      >
-        <EditCollectionOrFieldForm
-          values={collection}
-          onSubmit={handleSubmit}
-          dataType="collection"
-        />
-      </EditDrawer>
-      <ConfirmationModal
-        isOpen={deleteIsOpen}
-        onClose={onDeleteClose}
-        onConfirm={handleDelete}
-        title="Delete Collection"
-        message={
-          <Text>
-            You are about to permanently delete the collection named{" "}
-            <Text color="complimentary.500" as="span" fontWeight="bold">
-              {collection.name}
-            </Text>{" "}
-            from this dataset. Are you sure you would like to continue?
-          </Text>
-        }
+    <EditDrawer
+      isOpen={isOpen}
+      onClose={onClose}
+      description={DESCRIPTION}
+      header={
+        <EditDrawerHeader title={`Collection Name: ${collection?.name}`} />
+      }
+      footer={<EditDrawerFooter onDelete={confirmDelete} formId={FORM_ID} />}
+    >
+      <EditCollectionOrFieldForm
+        values={collection}
+        onSubmit={handleSubmit}
+        dataType="collection"
+        showDataCategories={false}
       />
-    </>
+    </EditDrawer>
   );
 };
-
-export default EditCollectionDrawer;

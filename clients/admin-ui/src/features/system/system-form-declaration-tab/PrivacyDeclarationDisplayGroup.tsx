@@ -1,22 +1,19 @@
 import {
-  Box,
   Button,
-  DeleteIcon,
-  Divider,
-  Heading,
-  HStack,
-  IconButton,
-  LinkBox,
-  LinkOverlay,
-  SmallAddIcon,
-  Spacer,
-  Stack,
-  Text,
-  useDisclosure,
+  ChakraBox as Box,
+  ChakraDivider as Divider,
+  ChakraHeading as Heading,
+  ChakraHStack as HStack,
+  ChakraLinkBox as LinkBox,
+  ChakraLinkOverlay as LinkOverlay,
+  ChakraSpacer as Spacer,
+  ChakraStack as Stack,
+  ChakraText as Text,
+  Icons,
+  useModal,
 } from "fidesui";
 
 import { useAppSelector } from "~/app/hooks";
-import ConfirmationModal from "~/features/common/modals/ConfirmationModal";
 import { selectLockedForGVL } from "~/features/system/dictionary-form/dict-suggestion.slice";
 import { DataUse, PrivacyDeclarationResponse } from "~/types/api";
 
@@ -27,59 +24,63 @@ const PrivacyDeclarationRow = ({
   handleEdit,
 }: {
   declaration: PrivacyDeclarationResponse;
-  title?: string;
+  title?: string | null;
   handleDelete?: (dec: PrivacyDeclarationResponse) => void;
   handleEdit: (dec: PrivacyDeclarationResponse) => void;
 }) => {
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const modal = useModal();
   return (
     <>
-      <Box px={6} py={4} data-testid={`row-${declaration.data_use}`}>
-        <HStack>
-          <LinkBox
-            onClick={() => handleEdit(declaration)}
-            w="100%"
-            h="100%"
-            cursor="pointer"
-          >
-            <LinkOverlay>
+      <LinkBox
+        w="100%"
+        h="100%"
+        cursor="pointer"
+        _hover={{ backgroundColor: "gray.50" }}
+      >
+        <Box px={6} py={4} data-testid={`row-${declaration.data_use}`}>
+          <HStack>
+            <LinkOverlay
+              onClick={() => handleEdit(declaration)}
+              role="button"
+              tabIndex={0}
+            >
               <Text>{title || declaration.data_use}</Text>
             </LinkOverlay>
-          </LinkBox>
-          <Spacer />
-          {handleDelete ? (
-            <>
-              <IconButton
+            <Spacer />
+            {handleDelete ? (
+              <Button
                 aria-label="delete-declaration"
-                variant="outline"
-                zIndex={2}
-                size="sm"
-                onClick={onOpen}
+                className="z-[2]"
+                onClick={() => {
+                  modal.confirm({
+                    title: "Delete data use declaration",
+                    content: (
+                      <Text>
+                        You are about to delete the data use declaration{" "}
+                        <Text
+                          color="complimentary.500"
+                          as="span"
+                          fontWeight="bold"
+                        >
+                          {title || declaration.data_use}
+                        </Text>
+                        , including all its cookies. Are you sure you want to
+                        continue?
+                      </Text>
+                    ),
+                    centered: true,
+                    icon: null,
+                    onOk: () => handleDelete(declaration),
+                  });
+                }}
                 data-testid="delete-btn"
               >
-                <DeleteIcon />
-              </IconButton>
-              <ConfirmationModal
-                isOpen={isOpen}
-                onClose={onClose}
-                onConfirm={() => handleDelete(declaration)}
-                title="Delete data use declaration"
-                message={
-                  <Text>
-                    You are about to delete the data use declaration{" "}
-                    <Text color="complimentary.500" as="span" fontWeight="bold">
-                      {title || declaration.data_use}
-                    </Text>
-                    , including all its cookies. Are you sure you want to
-                    continue?
-                  </Text>
-                }
-                isCentered
-              />
-            </>
-          ) : null}
-        </HStack>
-      </Box>
+                <Icons.TrashCan />
+              </Button>
+            ) : null}
+          </HStack>
+        </Box>
+      </LinkBox>
       <Divider />
     </>
   );
@@ -140,7 +141,7 @@ export const PrivacyDeclarationDisplayGroup = ({
 }: Props) => {
   const declarationTitle = (declaration: PrivacyDeclarationResponse) => {
     const dataUse = allDataUses.filter(
-      (du) => du.fides_key === declaration.data_use
+      (du) => du.fides_key === declaration.data_use,
     )[0];
     if (dataUse) {
       return declaration.name
@@ -151,26 +152,21 @@ export const PrivacyDeclarationDisplayGroup = ({
   };
 
   const lockedForGVL = useAppSelector(selectLockedForGVL);
-
   return (
     <PrivacyDeclarationTabTable
       heading={heading}
       footerButton={
-        !lockedForGVL ? (
+        !lockedForGVL && (
           <Button
             onClick={handleAdd}
-            size="xs"
-            px={2}
-            py={1}
-            backgroundColor="primary.800"
-            color="white"
-            fontWeight="600"
-            rightIcon={<SmallAddIcon boxSize={4} />}
+            size="small"
+            icon={<Icons.Add size={16} />}
+            iconPlacement="end"
             data-testid="add-btn"
           >
             Add data use
           </Button>
-        ) : null
+        )
       }
     >
       {declarations.map((pd) => (

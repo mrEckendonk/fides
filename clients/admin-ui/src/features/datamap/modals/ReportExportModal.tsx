@@ -1,49 +1,69 @@
-import { Flex, FormControl, FormLabel, Select, Text } from "fidesui";
+import { Button, Flex, Form, Modal, Paragraph, Select } from "fidesui";
 import { useState } from "react";
 
-import StandardDialog, {
-  StandardDialogProps,
-} from "~/features/common/modals/StandardDialog";
 import { ExportFormat } from "~/features/datamap/constants";
 
-interface ReportExportModalProps
-  extends Omit<StandardDialogProps, "children" | "onConfirm"> {
+interface ReportExportModalProps {
+  isOpen: boolean;
+  onClose: () => void;
   onConfirm: (downloadType: ExportFormat) => void;
+  isLoading?: boolean;
 }
 
-const ReportExportModal = (props: ReportExportModalProps): JSX.Element => {
+const ReportExportModal = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  isLoading,
+}: ReportExportModalProps): JSX.Element => {
   const [downloadType, setDownloadType] = useState<ExportFormat>(
-    ExportFormat.csv
+    ExportFormat.csv,
   );
-  const { onConfirm } = props;
 
   return (
-    <StandardDialog
-      heading="Export report"
-      continueButtonText="Download"
-      size="xl"
-      {...props}
-      onConfirm={() => onConfirm(downloadType)}
+    <Modal
+      title="Export report"
+      open={isOpen}
+      onCancel={onClose}
+      centered
+      destroyOnHidden
       data-testid="export-modal"
+      footer={
+        <Flex gap="small" justify="flex-end">
+          <Button onClick={onClose} disabled={isLoading}>
+            Cancel
+          </Button>
+          <Button
+            type="primary"
+            onClick={() => onConfirm(downloadType)}
+            loading={isLoading}
+          >
+            Download
+          </Button>
+        </Flex>
+      }
     >
-      <Flex direction="column" gap={3} pb={3}>
-        <Text textAlign="left">
+      <Flex vertical gap="small">
+        <Paragraph>
           Export your data map report using the options below. Depending on the
           number of rows, the file may take a few minutes to process.
-        </Text>
-        <FormControl>
-          <FormLabel>Choose Format</FormLabel>
+        </Paragraph>
+        <Form.Item label="Choose Format">
           <Select
+            aria-label="Choose Format"
+            id="format"
             value={downloadType}
-            onChange={(e) => setDownloadType(e.target.value as ExportFormat)}
+            onChange={setDownloadType}
             data-testid="export-format-select"
-          >
-            <option value={ExportFormat.csv}>CSV</option>
-            <option value={ExportFormat.xlsx}>XLSX</option>
-          </Select>
-        </FormControl>
+            options={[
+              { value: ExportFormat.csv, label: "CSV" },
+              { value: ExportFormat.xlsx, label: "XLSX" },
+            ]}
+            className="w-full"
+          />
+        </Form.Item>
       </Flex>
-    </StandardDialog>
+    </Modal>
   );
 };
 

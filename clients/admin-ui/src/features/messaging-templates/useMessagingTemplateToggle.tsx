@@ -1,40 +1,38 @@
-import { useToast } from "fidesui";
+import { getErrorMessage } from "common/helpers";
+import { useMessage } from "fidesui";
+import { useCallback } from "react";
 
-import { errorToastParams, successToastParams } from "~/features/common/toast";
-import { usePatchMessagingTemplateByIdMutation } from "~/features/messaging-templates/messaging-templates.slice";
+import { usePatchMessagingTemplateByIdMutation } from "~/features/messaging-templates/messaging-templates.slice.plus";
 import { isErrorResult } from "~/types/errors";
 
 const useMessagingTemplateToggle = () => {
-  const toast = useToast();
+  const message = useMessage();
   const [patchMessagingTemplateById] = usePatchMessagingTemplateByIdMutation();
 
-  const toggleIsTemplateEnabled = async ({
-    isEnabled,
-    templateId,
-  }: {
-    isEnabled: boolean;
-    templateId: string;
-  }) => {
-    const result = await patchMessagingTemplateById({
+  const toggleIsTemplateEnabled = useCallback(
+    async ({
+      isEnabled,
       templateId,
-      template: { is_enabled: isEnabled },
-    });
+    }: {
+      isEnabled: boolean;
+      templateId: string;
+    }) => {
+      const result = await patchMessagingTemplateById({
+        templateId,
+        template: { is_enabled: isEnabled },
+      });
 
-    if (isErrorResult(result)) {
-      toast(
-        errorToastParams(
-          `This message cannot be enabled because another message already exists with the same configuration. Change the property to enable this message.`
-        )
+      if (isErrorResult(result)) {
+        message.error(getErrorMessage(result.error));
+        return;
+      }
+
+      message.success(
+        `Messaging template ${isEnabled ? "enabled" : "disabled"}`,
       );
-      return;
-    }
-
-    toast(
-      successToastParams(
-        `Messaging template ${isEnabled ? "enabled" : "disabled"}`
-      )
-    );
-  };
+    },
+    [patchMessagingTemplateById, message],
+  );
 
   return { toggleIsTemplateEnabled };
 };

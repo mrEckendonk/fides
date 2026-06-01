@@ -1,23 +1,17 @@
 /**
- * A component for choosing a role, meant to be embedded in a Formik form
+ * A component for choosing a role, meant to be embedded in an antd Form
  */
-import {
-  Button,
-  Flex,
-  GreenCheckCircleIcon,
-  Stack,
-  Text,
-  useDisclosure,
-} from "fidesui";
-import { useFormikContext } from "formik";
-import React from "react";
+import { Button, Card, Flex, FormInstance, Icons, Typography } from "fidesui";
+import React, { useState } from "react";
 
 import { RoleRegistryEnum, System } from "~/types/api";
 
-import QuestionTooltip from "../common/QuestionTooltip";
+import { InfoTooltip } from "../common/InfoTooltip";
 import AssignSystemsModal from "./AssignSystemsModal";
 import { AssignSystemsDeleteTable } from "./AssignSystemsTable";
 import { type FormValues } from "./PermissionsForm";
+
+const { Text } = Typography;
 
 interface Props {
   label: string;
@@ -26,6 +20,7 @@ interface Props {
   isDisabled: boolean;
   assignedSystems: System[];
   onAssignedSystemChange: (systems: System[]) => void;
+  form: FormInstance<FormValues>;
 }
 
 const RoleOption = ({
@@ -35,12 +30,12 @@ const RoleOption = ({
   isDisabled,
   assignedSystems,
   onAssignedSystemChange,
+  form,
 }: Props) => {
-  const { setFieldValue } = useFormikContext<FormValues>();
-  const assignSystemsModal = useDisclosure();
+  const [assignSystemsModalOpen, setAssignSystemsModalOpen] = useState(false);
 
   const handleRoleChange = () => {
-    setFieldValue("roles", [roleKey]);
+    form.setFieldValue("roles", [roleKey]);
   };
 
   const buttonTitle = isDisabled
@@ -49,69 +44,64 @@ const RoleOption = ({
 
   if (isSelected) {
     return (
-      <Stack
-        borderRadius="md"
-        border="1px solid"
-        borderColor="gray.200"
-        p={4}
-        backgroundColor="gray.50"
-        aria-selected="true"
-        spacing={4}
+      <Card
+        size="small"
+        style={{
+          borderColor: "var(--fidesui-color-border)",
+          backgroundColor: "var(--fidesui-color-bg-layout)",
+        }}
         data-testid="selected"
       >
-        <Flex alignItems="center" justifyContent="space-between">
-          <Text fontSize="md" fontWeight="semibold">
-            {label}
-          </Text>
-          <GreenCheckCircleIcon />
-        </Flex>
-        {/* The approver role cannot be assigned systems */}
-        {roleKey !== RoleRegistryEnum.APPROVER ? (
-          <>
-            <Flex alignItems="center">
-              <Text fontSize="sm" fontWeight="semibold" mr={1}>
-                Assigned systems
-              </Text>
-              <QuestionTooltip label="Assigned systems refer to those systems that have been specifically allocated to a user for management purposes. Users assigned to a system possess full edit permissions and are listed as the Data Steward for the respective system." />
-            </Flex>
-            <Button
-              disabled={isDisabled}
-              title={buttonTitle}
-              colorScheme="primary"
-              size="xs"
-              width="fit-content"
-              onClick={assignSystemsModal.onOpen}
-              data-testid="assign-systems-btn"
-            >
-              Assign systems +
-            </Button>
-            <AssignSystemsDeleteTable
-              assignedSystems={assignedSystems}
-              onAssignedSystemChange={onAssignedSystemChange}
-            />
-            {/* By conditionally rendering the modal, we force it to reset its state
-                whenever it opens */}
-            {assignSystemsModal.isOpen ? (
-              <AssignSystemsModal
-                isOpen={assignSystemsModal.isOpen}
-                onClose={assignSystemsModal.onClose}
+        <Flex vertical gap={16}>
+          <Flex align="center" justify="space-between">
+            <Text className="text-base font-semibold">{label}</Text>
+            <Icons.CheckmarkFilled color="var(--fidesui-color-success)" />
+          </Flex>
+          {/* The approver and respondent roles cannot be assigned systems */}
+          {roleKey !== RoleRegistryEnum.APPROVER &&
+          roleKey !== RoleRegistryEnum.RESPONDENT &&
+          roleKey !== RoleRegistryEnum.EXTERNAL_RESPONDENT ? (
+            <>
+              <Flex align="center">
+                <Text className="mr-1 text-sm font-semibold">
+                  Assigned systems
+                </Text>
+                <InfoTooltip label="Assigned systems refer to those systems that have been specifically allocated to a user for management purposes. Users assigned to a system possess full edit permissions and are listed as the Data Steward for the respective system." />
+              </Flex>
+              <Button
+                disabled={isDisabled}
+                title={buttonTitle}
+                type="primary"
+                size="small"
+                onClick={() => setAssignSystemsModalOpen(true)}
+                data-testid="assign-systems-btn"
+              >
+                Assign systems +
+              </Button>
+              <AssignSystemsDeleteTable
                 assignedSystems={assignedSystems}
                 onAssignedSystemChange={onAssignedSystemChange}
               />
-            ) : null}
-          </>
-        ) : null}
-      </Stack>
+              {/* By conditionally rendering the modal, we force it to reset its state
+                  whenever it opens */}
+              {assignSystemsModalOpen ? (
+                <AssignSystemsModal
+                  isOpen={assignSystemsModalOpen}
+                  onClose={() => setAssignSystemsModalOpen(false)}
+                  assignedSystems={assignedSystems}
+                  onAssignedSystemChange={onAssignedSystemChange}
+                />
+              ) : null}
+            </>
+          ) : null}
+        </Flex>
+      </Card>
     );
   }
 
   return (
     <Button
       onClick={handleRoleChange}
-      justifyContent="start"
-      variant="outline"
-      height="inherit"
-      p={4}
       data-testid={`role-option-${label}`}
       title={buttonTitle}
       disabled={isDisabled}

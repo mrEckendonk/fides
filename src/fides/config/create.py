@@ -8,9 +8,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import toml
 from click import echo
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
-from fides.cli.utils import request_analytics_consent
 from fides.config import FidesConfig, build_config
 from fides.config.utils import replace_config_value
 
@@ -32,8 +31,10 @@ def get_nested_settings(config: FidesConfig) -> Dict[str, BaseSettings]:
     """
     nested_settings = {
         settings_name
-        for settings_name, settings_info in config.schema()["properties"].items()
-        if not settings_info.get("type")
+        for settings_name, settings_info in config.model_json_schema()[
+            "properties"
+        ].items()
+        if not settings_info.get("type") and not settings_info.get("anyOf")
     }
 
     nested_settings_objects = {
@@ -51,18 +52,35 @@ def format_value_for_toml(value: str, value_type: str) -> str:
         return str(value).lower()
     if value_type == "array":
         return "[]"
+    # Quote string values whose schema type wasn't resolved (e.g. enums)
+    if isinstance(value, str):
+        return f'"{value}"'
     return value
 
 
-def build_field_documentation(
-    field_name: str, field_info: Dict[str, str]
-) -> Optional[str]:
-    """Build a docstring for an individual docstring."""
+def build_field_documentation(field_name: str, field_info: Dict) -> Optional[str]:
+    """Build a docstring for an individual docstring.
+
+    This is error prone - this is attempts to pull data out of the Pydantic schema, but
+    not every case is handled.
+    """
     try:
-        field_type = field_info["type"]
-        field_description = "\n".join(
+        # Singular field types under "type"
+        field_type: str = field_info.get("type") or ""
+        if not field_type:
+            # Union field types are under "anyOf"
+            any_of: List[Dict[str, str]] = field_info.get("anyOf") or []
+            for type_annotation in any_of:
+                if "$ref" in type_annotation:
+                    continue
+                if type_annotation.get("type") != "null":
+                    # Getting first non-null
+                    field_type = type_annotation["type"]
+                    break
+
+        field_description: str = "\n".join(
             wrap(
-                text=field_info["description"],
+                text=field_info.get("description") or "",
                 width=71,
                 subsequent_indent="# ",
                 initial_indent="# ",
@@ -114,7 +132,7 @@ def convert_settings_to_toml_docs(settings_name: str, settings: BaseSettings) ->
     The string is expected to be valid TOML.
     """
     settings_schema = settings.schema()
-    included_keys = set(settings.dict().keys())
+    included_keys = set(settings.model_dump(mode="json").keys())
     title_header = build_section_header(settings_name)
 
     # Build the Section docstring
@@ -236,22 +254,9 @@ def create_config_file(config: FidesConfig, fides_directory_location: str = ".")
 def create_and_update_config_file(
     config: FidesConfig,
     fides_directory_location: str = ".",
-    opt_in: bool = False,
 ) -> Tuple[FidesConfig, str]:
-    # request explicit consent for analytics collection
-    config = request_analytics_consent(config=config, opt_in=opt_in)
-
-    # create the config file as needed
     config_path = create_config_file(
         config=config, fides_directory_location=fides_directory_location
     )
 
-    # Update the value in the config file if it differs from the default
-    if not config.user.analytics_opt_out:
-        replace_config_value(
-            fides_directory_location=fides_directory_location,
-            key="analytics_opt_out",
-            old_value="true",
-            new_value="false",
-        )
     return (config, config_path)

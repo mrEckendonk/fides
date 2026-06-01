@@ -15,9 +15,15 @@
 
 // Import commands.js using ES2015 syntax:
 import "./commands";
+
 import { stubIdVerification } from "./stubs";
 
 beforeEach(() => {
+  cy.intercept("/api/v1/**", (req) => {
+    // eslint-disable-next-line no-console
+    console.warn(`⚠️ Unstubbed API request detected: ${req.method} ${req.url}`);
+    req.reply({ statusCode: 404 });
+  }).as("unstubbedRequest"); // default stub for all requests
   // All of these tests assume identity verification is required.
   stubIdVerification();
 });

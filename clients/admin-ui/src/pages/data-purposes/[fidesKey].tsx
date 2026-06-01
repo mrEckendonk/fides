@@ -1,0 +1,90 @@
+import { Button, Flex, Result, Spin } from "fidesui";
+import { NextPage } from "next";
+import Link from "next/link";
+import { useRouter } from "next/router";
+
+import { useFeatures } from "~/features/common/features";
+import FixedLayout from "~/features/common/FixedLayout";
+import { isFetchBaseQueryError } from "~/features/common/helpers";
+import { DATA_PURPOSES_ROUTE } from "~/features/common/nav/routes";
+import PageHeader from "~/features/common/PageHeader";
+import { useGetPurposeOverviewQuery } from "~/features/data-purposes/data-purpose.slice";
+import PurposeDashboard from "~/features/data-purposes/PurposeDashboard";
+
+const PurposeDetailPage: NextPage = () => {
+  const { flags } = useFeatures();
+  const router = useRouter();
+  const rawKey = router.query.fidesKey;
+  const fidesKey = typeof rawKey === "string" ? rawKey : undefined;
+
+  const {
+    data: overview,
+    isLoading,
+    isError,
+    error,
+  } = useGetPurposeOverviewQuery(fidesKey ?? "", {
+    skip: !fidesKey || !flags.alphaPurposeBasedAccessControl,
+  });
+  const purpose = overview?.purpose;
+
+  if (!flags.alphaPurposeBasedAccessControl) {
+    return (
+      <FixedLayout title="Purposes" fullHeight>
+        <Result
+          status="error"
+          title="Purpose management is not enabled"
+          subTitle="Turn on the alpha purpose-based access control flag to preview this feature."
+        />
+      </FixedLayout>
+    );
+  }
+
+  const is404 = isError && isFetchBaseQueryError(error) && error.status === 404;
+
+  let body: React.ReactNode;
+  if (!fidesKey || isLoading) {
+    body = (
+      <Flex justify="center" className="mt-12">
+        <Spin size="large" />
+      </Flex>
+    );
+  } else if (is404 || (!purpose && !isError)) {
+    body = (
+      <Result
+        status="404"
+        title="Purpose not found"
+        subTitle="This purpose doesn't exist or has been deleted."
+        extra={
+          <Link href={DATA_PURPOSES_ROUTE}>
+            <Button type="primary">Back to purposes</Button>
+          </Link>
+        }
+      />
+    );
+  } else if (isError) {
+    body = (
+      <Result
+        status="error"
+        title="Couldn't load purpose"
+        subTitle="Something went wrong. Refresh to try again."
+      />
+    );
+  } else if (purpose) {
+    body = <PurposeDashboard purpose={purpose} />;
+  }
+
+  return (
+    <FixedLayout title="Purposes" fullHeight>
+      <PageHeader
+        heading="Purposes"
+        breadcrumbItems={[
+          { title: "All purposes", href: DATA_PURPOSES_ROUTE },
+          { title: purpose?.name ?? fidesKey ?? "Purpose" },
+        ]}
+      />
+      {body}
+    </FixedLayout>
+  );
+};
+
+export default PurposeDetailPage;

@@ -1,0 +1,34 @@
+import { useGetManualFieldsQuery } from "~/features/datastore-connections/connection-manual-fields.slice";
+import { ConnectionType } from "~/types/api";
+
+import { BaseStepHookParams, Step } from "./types";
+
+export const useAddManualTaskStep = ({
+  connection,
+  connectionOption,
+}: BaseStepHookParams): Step | null => {
+  // Check if manual tasks/fields have been configured
+  const { data: manualFields } = useGetManualFieldsQuery(
+    { connectionKey: connection ? connection.key : "" },
+    {
+      skip:
+        !connection ||
+        connectionOption?.identifier !== ConnectionType.MANUAL_TASK,
+    },
+  );
+
+  // Only show this step for MANUAL_TASK connection types
+  if (connectionOption?.identifier !== ConnectionType.MANUAL_TASK) {
+    return null;
+  }
+
+  const isComplete = manualFields && manualFields.length > 0;
+
+  return {
+    title: "Add a manual task",
+    content: isComplete
+      ? "Manual tasks have been configured"
+      : "Configure a manual task for this integration. ",
+    state: isComplete ? "finish" : "process",
+  };
+};

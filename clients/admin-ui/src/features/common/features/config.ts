@@ -9,15 +9,18 @@ import { Env, FlagConfig, FlagConfigDefaults, FlagEnvs } from "./types";
  * configureFlags({
  *   falseEverywhere: false,
  *   envDependent: {
+ *     label: "Environment dependent feature",
+ *     description: "This feature is enabled in development and test only",
  *     development: true,
  *     test: true,
  *     production: false,
+ *     userCannotModify: false,
  *   }
  * })
  * ```
  */
 export const configureFlags = <Flags>(
-  defaults: FlagConfigDefaults<Flags>
+  defaults: FlagConfigDefaults<Flags>,
 ): FlagConfig<Flags> => {
   const config = {} as FlagConfig<Flags>;
 
@@ -44,7 +47,7 @@ export const configureFlags = <Flags>(
 
 export const flagsForEnv = <Flags>(
   config: FlagConfig<Flags>,
-  env: Env
+  env: Env,
 ): Flags => {
   const flags = {} as Flags;
 

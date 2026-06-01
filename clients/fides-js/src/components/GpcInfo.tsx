@@ -1,4 +1,3 @@
-import { h } from "preact";
 import WarningIcon from "./WarningIcon";
 
 const GpcInfo = ({

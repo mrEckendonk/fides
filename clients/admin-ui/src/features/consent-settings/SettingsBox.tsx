@@ -1,29 +1,14 @@
-import { Box, BoxProps, Text } from "fidesui";
+import { Card, CardProps } from "fidesui";
 import { ReactNode } from "react";
 
 const SettingsBox = ({
   title,
   children,
   ...props
-}: { title: string; children: ReactNode } & BoxProps) => (
-  <Box
-    backgroundColor="gray.50"
-    borderRadius="4px"
-    padding="3"
-    data-testid={`setting-${title}`}
-    {...props}
-  >
-    <Text
-      fontSize="md"
-      fontWeight="bold"
-      lineHeight={5}
-      color="gray.700"
-      mb={3}
-    >
-      {title}
-    </Text>
+}: { title: string; children: ReactNode } & CardProps) => (
+  <Card title={title} data-testid={`setting-${title}`} {...props}>
     {children}
-  </Box>
+  </Card>
 );
 
 export default SettingsBox;

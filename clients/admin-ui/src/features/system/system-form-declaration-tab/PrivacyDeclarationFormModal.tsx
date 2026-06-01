@@ -1,12 +1,5 @@
-import {
-  Box,
-  Heading,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalHeader,
-  ModalOverlay,
-} from "fidesui";
+import ConfirmCloseModal from "~/features/common/modals/ConfirmCloseModal";
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
 
 type DataUseFormModalProps = {
   isOpen: boolean;
@@ -15,40 +8,30 @@ type DataUseFormModalProps = {
   isCentered?: boolean;
   testId?: string;
   children: React.ReactNode;
+  /** Evaluated at event time to guard against accidental close of a dirty form. */
+  getIsDirty: () => boolean;
 };
 
-export const PrivacyDeclarationFormModal: React.FC<DataUseFormModalProps> = ({
+export const PrivacyDeclarationFormModal = ({
   isOpen,
   onClose,
   heading,
   isCentered = false,
   testId = "privacy-declaration-modal",
   children,
-}) => (
-  <Modal
-    isOpen={isOpen}
+  getIsDirty,
+}: DataUseFormModalProps) => (
+  <ConfirmCloseModal
+    open={isOpen}
     onClose={onClose}
-    isCentered={isCentered}
-    scrollBehavior="inside"
-    size="3xl"
+    getIsDirty={getIsDirty}
+    centered={isCentered}
+    destroyOnHidden
+    width={MODAL_SIZE.lg}
+    data-testid={testId}
+    title={heading}
+    footer={null}
   >
-    <ModalOverlay />
-    <ModalContent textAlign="left" p={0} data-testid={testId}>
-      <ModalHeader p={0}>
-        <Box
-          backgroundColor="gray.50"
-          px={6}
-          py={4}
-          border="1px"
-          borderColor="gray.200"
-          borderTopRadius={6}
-        >
-          <Heading as="h3" size="sm">
-            {heading}
-          </Heading>
-        </Box>
-      </ModalHeader>
-      <ModalBody pb={4}>{children}</ModalBody>
-    </ModalContent>
-  </Modal>
+    {children}
+  </ConfirmCloseModal>
 );

@@ -1,6 +1,6 @@
 // Typescript adaptation of https://github.com/InteractiveAdvertisingBureau/iabtcf-es/tree/master/modules/stub
 
-import { TCF_FRAME_NAME, addFrame, locateFrame } from "../cmp-stubs";
+import { addFrame, locateFrame, TCF_FRAME_NAME } from "../cmp-stubs";
 
 /* eslint-disable no-underscore-dangle */
 
@@ -109,7 +109,8 @@ export const makeStub = ({
       window.__tcfapi(
         payload.command,
         payload.version,
-        (retValue: any, success: boolean) => {
+        (...args: unknown[]) => {
+          const [retValue, success] = args;
           const returnMsg = {
             __tcfapiReturn: {
               returnValue: retValue,
@@ -121,12 +122,11 @@ export const makeStub = ({
           if (event && event.source && event.source.postMessage) {
             event.source.postMessage(
               msgIsString ? JSON.stringify(returnMsg) : returnMsg,
-              //   @ts-ignore
-              "*"
+              "*" as never,
             );
           }
         },
-        payload.parameter
+        payload.parameter,
       );
     }
     return null;
@@ -142,7 +142,18 @@ export const makeStub = ({
   if (!cmpFrame) {
     // we have recur'd up the windows and have found no __tcfapiLocator frame
     addFrame(TCF_FRAME_NAME);
-    currentWindow.__tcfapi = tcfAPIHandler;
+    const tcfApi = tcfAPIHandler;
+    if (typeof tcfApi !== "function") {
+      throw new Error("TCF API failed to initialize");
+    }
+    currentWindow.__tcfapi = tcfApi;
     currentWindow.addEventListener("message", postMessageEventHandler, false);
+
+    if (currentWindow.Fides.options.debug) {
+      currentWindow?.__tcfapi?.("addEventListener", 2, (...args: unknown[]) => {
+        const data = args[0] as Record<string, unknown> | undefined;
+        fidesDebugger("TCF API Updated", data, data?.eventStatus);
+      });
+    }
   }
 };

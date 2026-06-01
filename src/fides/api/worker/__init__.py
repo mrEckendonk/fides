@@ -1,31 +1,147 @@
-import json
-from typing import Any
+from typing import Any, List, Optional
 
 from celery import VERSION_BANNER
 from celery.apps.worker import Worker
 from celery.signals import celeryd_after_setup
 from loguru import logger
+from watchfiles import run_process
+from watchfiles.filters import DefaultFilter
 
+from fides.api.db.base import Base  # type: ignore
 from fides.api.service.saas_request.override_implementations import *
 from fides.api.tasks import (
+    BULK_CONSENT_IMPORT_QUEUE_NAME,
+    CONSENT_WEBHOOK_QUEUE_NAME,
+    DISCOVERY_MONITORS_CLASSIFICATION_QUEUE_NAME,
+    DISCOVERY_MONITORS_DETECTION_QUEUE_NAME,
+    DISCOVERY_MONITORS_PROMOTION_QUEUE_NAME,
+    DSR_QUEUE_NAME,
     MESSAGING_QUEUE_NAME,
+    PRIVACY_ASSESSMENTS_QUEUE_NAME,
+    PRIVACY_PREFERENCES_EXPORT_JOB_QUEUE_NAME,
+    PRIVACY_PREFERENCES_INGESTION_JOB_QUEUE_NAME,
     PRIVACY_PREFERENCES_QUEUE_NAME,
+    QUESTIONNAIRES_QUEUE_NAME,
     celery_app,
 )
+from fides.config import CONFIG
 
 
-def start_worker() -> None:
-    logger.info("Running Celery worker...")
-    default_queue_name = celery_app.conf.get("task_default_queue", "celery")
-    celery_app.worker_main(
-        argv=[
-            "--quiet",  # Disable Celery startup banner
-            "worker",
-            "--loglevel=info",
-            "--concurrency=2",
-            f"--queues={default_queue_name},{MESSAGING_QUEUE_NAME},{PRIVACY_PREFERENCES_QUEUE_NAME}",
-        ]
+class _PythonAndYamlFilter(DefaultFilter):
+    """Extends DefaultFilter to only trigger on Python and YAML file changes."""
+
+    allowed_extensions = (".py", ".yml", ".yaml")
+
+    def __call__(self, change: Any, path: str) -> bool:
+        if not super().__call__(change, path):
+            return False
+        return path.endswith(self.allowed_extensions)
+
+
+def _run_celery_worker(worker_queues: str) -> None:
+    """Run the Celery worker process. Extracted so it can be used as a watchfiles target."""
+    argv = [
+        "--quiet",  # Disable Celery startup banner
+        "worker",
+        "--loglevel=info",
+        f"--concurrency={CONFIG.celery.worker_concurrency}",
+        f"--queues={worker_queues}",
+    ]
+    without_flags = []
+    if CONFIG.celery.worker_disable_heartbeat:
+        without_flags.append("--without-heartbeat")
+    if CONFIG.celery.worker_disable_gossip:
+        without_flags.append("--without-gossip")
+    if CONFIG.celery.worker_disable_mingle:
+        without_flags.append("--without-mingle")
+    if without_flags:
+        argv += without_flags
+        logger.info(
+            f"Worker started with {' '.join(without_flags)} "
+            f"(FIDES__CELERY__WORKER_DISABLE_HEARTBEAT={CONFIG.celery.worker_disable_heartbeat}, "
+            f"FIDES__CELERY__WORKER_DISABLE_GOSSIP={CONFIG.celery.worker_disable_gossip}, "
+            f"FIDES__CELERY__WORKER_DISABLE_MINGLE={CONFIG.celery.worker_disable_mingle})"
+        )
+    celery_app.worker_main(argv=argv)
+
+
+def start_worker(
+    queues: Optional[str] = None,
+    exclude_queues: Optional[str] = None,
+    reload: bool = False,
+    reload_dirs: Optional[List[str]] = None,
+) -> None:
+    """
+    Start a Celery worker. Optionally provide a list of queues for the worker to consume,
+    as a comma-separated string, or a list of queues to exclude.
+    If no queues are provided, the worker will consume from all queues: the default queue,
+    the messaging queue, and the privacy preferences queue.
+
+    If reload is True, the worker will automatically restart when Python or YAML files
+    change in the watched directories (similar to uvicorn --reload).
+    """
+
+    assert not queues or not exclude_queues, (
+        "Cannot provide both queues and exclude_queues"
     )
+
+    default_queue_name = celery_app.conf.get("task_default_queue", "celery")
+
+    all_queues = [
+        default_queue_name,
+        MESSAGING_QUEUE_NAME,
+        PRIVACY_PREFERENCES_QUEUE_NAME,
+        PRIVACY_PREFERENCES_EXPORT_JOB_QUEUE_NAME,
+        PRIVACY_PREFERENCES_INGESTION_JOB_QUEUE_NAME,
+        DSR_QUEUE_NAME,
+        CONSENT_WEBHOOK_QUEUE_NAME,
+        DISCOVERY_MONITORS_DETECTION_QUEUE_NAME,
+        DISCOVERY_MONITORS_CLASSIFICATION_QUEUE_NAME,
+        DISCOVERY_MONITORS_PROMOTION_QUEUE_NAME,
+        BULK_CONSENT_IMPORT_QUEUE_NAME,
+        PRIVACY_ASSESSMENTS_QUEUE_NAME,
+        QUESTIONNAIRES_QUEUE_NAME,
+    ]
+
+    # Fall back to all queues if neither queues nor exclude_queues are provided.
+    worker_queues = ",".join(all_queues)
+
+    if queues:
+        validate_queues(queues, all_queues)
+        # If queues are provided, use them.
+        worker_queues = queues
+
+    # If excluded queues are provided, remove them from the list of all queues.
+    if exclude_queues:
+        validate_queues(exclude_queues, all_queues)
+        excluded_queues = exclude_queues.split(",")
+        worker_queues = ",".join(
+            [queue for queue in all_queues if queue not in excluded_queues]
+        )
+
+    logger.info(f"Running Celery worker for queues: {worker_queues}")
+
+    if reload:
+        watch_dirs = reload_dirs or ["src", "data"]
+        logger.info(f"Hot-reload enabled, watching directories: {watch_dirs}")
+        run_process(
+            *watch_dirs,
+            target=_run_celery_worker,
+            args=(worker_queues,),
+            watch_filter=_PythonAndYamlFilter(),
+        )
+    else:
+        _run_celery_worker(worker_queues)
+
+
+def validate_queues(queues_string: str, known_queues: List[str]) -> None:
+    """
+    Validate that the provided queues string is a comma-separated list of known queues.
+    """
+    queues = queues_string.split(",")
+    unknown_queues = [queue for queue in queues if queue not in known_queues]
+    if unknown_queues:
+        raise ValueError(f"Unknown queues: {unknown_queues}")
 
 
 @celeryd_after_setup.connect

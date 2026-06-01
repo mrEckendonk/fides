@@ -1,0 +1,242 @@
+import { formatDistanceStrict } from "date-fns";
+import {
+  Avatar,
+  Button,
+  ExpandCollapse,
+  Flex,
+  List,
+  ListItemProps,
+  OpenCloseArrow,
+  Space,
+  SparkleIcon,
+  Tag,
+  Tooltip,
+  Typography,
+} from "fidesui";
+import { useState } from "react";
+
+import { RouterLink } from "~/features/common/nav/RouterLink";
+import {
+  formatDate,
+  formatUser,
+  nFormatter,
+  pluralize,
+} from "~/features/common/utils";
+import ConnectionTypeLogo, {
+  ConnectionLogoKind,
+} from "~/features/datastore-connections/ConnectionTypeLogo";
+import { APIMonitorType } from "~/types/api/models/APIMonitorType";
+import { DatastoreMonitorUpdates } from "~/types/api/models/DatastoreMonitorUpdates";
+
+import { ConfidenceRow } from "./ConfidenceRow";
+import { DiscoveryStatusIcon } from "./DiscoveryStatusIcon";
+import styles from "./MonitorResult.module.scss";
+import { MonitorResultDescription } from "./MonitorResultDescription";
+import { MonitorAggregatedResults } from "./types";
+
+const { Text } = Typography;
+
+const MONITOR_RESULT_COUNT_TYPES = {
+  [APIMonitorType.WEBSITE]: ["asset", "assets"],
+  [APIMonitorType.DATASTORE]: ["field", "fields"],
+  [APIMonitorType.INFRASTRUCTURE]: ["system", "systems"],
+  [APIMonitorType.CLOUD_INFRASTRUCTURE]: ["resource", "resources"],
+} as const;
+
+interface MonitorResultProps extends ListItemProps {
+  monitorSummary: MonitorAggregatedResults;
+  href: string;
+}
+
+export const MonitorResult = ({
+  monitorSummary,
+  href,
+  ...props
+}: MonitorResultProps) => {
+  const {
+    name,
+    consent_status: consentStatus,
+    total_updates: totalUpdates,
+    updates,
+    last_monitored: lastMonitored,
+    secrets,
+    key,
+    connection_type: connectionType,
+    saas_config: saasConfig,
+    monitorType,
+    isTestMonitor,
+    stewards,
+  } = monitorSummary;
+
+  let confidenceCounts;
+  if (monitorType === APIMonitorType.DATASTORE) {
+    const datastoreUpdates = updates as DatastoreMonitorUpdates | undefined;
+    confidenceCounts = {
+      highConfidenceCount: datastoreUpdates?.classified_high_confidence ?? 0,
+      mediumConfidenceCount:
+        datastoreUpdates?.classified_medium_confidence ?? 0,
+      lowConfidenceCount: datastoreUpdates?.classified_low_confidence ?? 0,
+    };
+  }
+  const [isConfidenceRowExpanded, setIsConfidenceRowExpanded] = useState(false);
+
+  const hasConfidenceCounts =
+    !!confidenceCounts &&
+    (confidenceCounts.highConfidenceCount > 0 ||
+      confidenceCounts.mediumConfidenceCount > 0 ||
+      confidenceCounts.lowConfidenceCount > 0);
+
+  const showConfidenceRow =
+    monitorType === APIMonitorType.DATASTORE && hasConfidenceCounts && !!key;
+
+  const formattedLastMonitored = lastMonitored
+    ? formatDate(new Date(lastMonitored))
+    : undefined;
+
+  const lastMonitoredDistance = lastMonitored
+    ? formatDistanceStrict(new Date(lastMonitored), new Date(), {
+        addSuffix: true,
+      })
+    : undefined;
+
+  const monitorResultCountType = pluralize(
+    totalUpdates ?? 0,
+    MONITOR_RESULT_COUNT_TYPES[monitorType][0],
+    MONITOR_RESULT_COUNT_TYPES[monitorType][1],
+  );
+
+  return (
+    <List.Item
+      data-testid={`monitor-result-${key}`}
+      {...props}
+      className={`flex-wrap gap-x-4 lg:gap-x-8 ${styles["monitor-result"]}`}
+      extra={
+        showConfidenceRow &&
+        confidenceCounts && (
+          <ExpandCollapse
+            isExpanded={isConfidenceRowExpanded}
+            motionKey={`confidence-row-${key}`}
+            className="mt-4 w-full flex-auto"
+          >
+            <ConfidenceRow
+              confidenceCounts={confidenceCounts}
+              reviewHref={href}
+              monitorId={key}
+              monitorType={monitorType}
+              id={`confidence-row-${key}`}
+            />
+          </ExpandCollapse>
+        )
+      }
+      actions={[
+        ...(showConfidenceRow
+          ? [
+              <Button
+                key="findings"
+                type="link"
+                className="p-0"
+                icon={<OpenCloseArrow isOpen={isConfidenceRowExpanded} />}
+                iconPlacement="end"
+                onClick={() =>
+                  setIsConfidenceRowExpanded(!isConfidenceRowExpanded)
+                }
+                aria-haspopup="true"
+                aria-expanded={isConfidenceRowExpanded}
+                aria-controls={`confidence-row-${key}`}
+                aria-label={`${isConfidenceRowExpanded ? "Collapse" : "Expand"} findings`}
+              >
+                <Space>
+                  <SparkleIcon />
+                  Findings
+                </Space>
+              </Button>,
+            ]
+          : []),
+        <RouterLink key="review" href={href}>
+          <Button
+            type="link"
+            className="p-0"
+            data-testid={`review-button-${monitorSummary.key}`}
+          >
+            Review
+          </Button>
+        </RouterLink>,
+      ]}
+    >
+      <List.Item.Meta
+        avatar={
+          <ConnectionTypeLogo
+            data={{
+              kind: ConnectionLogoKind.CONNECTION,
+              connectionType,
+              name,
+              key,
+              saasType: saasConfig?.type,
+              websiteUrl: secrets?.url,
+            }}
+          />
+        }
+        title={
+          <Flex
+            align="center"
+            gap={4}
+            className="flex-wrap overflow-hidden whitespace-nowrap font-normal"
+          >
+            <RouterLink
+              unstyled
+              href={href}
+              data-testid="monitor-link"
+              className="overflow-hidden font-semibold"
+            >
+              <Text ellipsis>{name}</Text>
+            </RouterLink>
+            <Text type="secondary">
+              {nFormatter(totalUpdates ?? 0)} {monitorResultCountType}
+            </Text>
+            {consentStatus && (
+              <DiscoveryStatusIcon consentStatus={consentStatus} />
+            )}
+            {isTestMonitor && <Tag color="nectar">test monitor</Tag>}
+          </Flex>
+        }
+        description={
+          !!updates && (
+            <MonitorResultDescription
+              updates={updates}
+              isAssetList={monitorType === APIMonitorType.WEBSITE}
+            />
+          )
+        }
+      />
+      {!!stewards && stewards.length > 0 && (
+        <Avatar.Group
+          max={{
+            count: 5,
+            style: { background: "var(--fidesui-neutral-700)" },
+          }}
+          className="hidden flex-[6.5rem] grow-0 justify-end lg:flex"
+          size="small"
+        >
+          {stewards.map((steward) => (
+            <Tooltip title={formatUser(steward)} key={steward.id}>
+              <Avatar rootClassName="bg-[--fidesui-color-bg-layout] text-[--fidesui-brand-minos]">
+                {steward.first_name?.charAt(0)}
+                {steward.last_name?.charAt(0)}
+              </Avatar>
+            </Tooltip>
+          ))}
+        </Avatar.Group>
+      )}
+      {!!lastMonitoredDistance && (
+        <Tooltip title={formattedLastMonitored}>
+          <div className="!hidden flex-[6rem] !grow-0 overflow-hidden text-center md:!flex lg:flex-[10rem]">
+            <Text type="secondary" data-testid="monitor-date" ellipsis>
+              <span className="hidden lg:contents">Last scan: </span>
+              {lastMonitoredDistance}
+            </Text>
+          </div>
+        </Tooltip>
+      )}
+    </List.Item>
+  );
+};

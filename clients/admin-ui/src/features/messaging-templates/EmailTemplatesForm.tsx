@@ -1,12 +1,8 @@
 import { SerializedError } from "@reduxjs/toolkit";
-import { FetchBaseQueryError } from "@reduxjs/toolkit/dist/query";
-import { Box, Button, Flex, useToast } from "fidesui";
-import { Form, Formik, FormikHelpers } from "formik";
+import { FetchBaseQueryError } from "@reduxjs/toolkit/query";
+import { Button, Card, Flex, Form, Input, useMessage } from "fidesui";
 
-import FormSection from "~/features/common/form/FormSection";
-import { CustomTextArea, CustomTextInput } from "~/features/common/form/inputs";
 import { getErrorMessage, isErrorResult } from "~/features/common/helpers";
-import { errorToastParams, successToastParams } from "~/features/common/toast";
 
 import {
   MessagingTemplate,
@@ -31,24 +27,37 @@ type EmailTemplatesFormValues = Record<
 const EmailTemplatesForm = ({ emailTemplates }: EmailTemplatesFormProps) => {
   const [updateMessagingTemplates, { isLoading }] =
     useUpdateMessagingTemplatesMutation();
-  const toast = useToast();
+  const message = useMessage();
+  const [form] = Form.useForm<EmailTemplatesFormValues>();
 
-  const handleSubmit = async (
-    values: EmailTemplatesFormValues,
-    formikHelpers: FormikHelpers<EmailTemplatesFormValues>
-  ) => {
+  const initialValues = emailTemplates.reduce(
+    (acc, template) => ({
+      ...acc,
+      [template.type]: { label: template.label, content: template.content },
+    }),
+    {} as EmailTemplatesFormValues,
+  );
+
+  const handleSubmit = async (values: EmailTemplatesFormValues) => {
     const handleResult = (
-      result: { data: {} } | { error: FetchBaseQueryError | SerializedError }
+      result:
+        | { data: object }
+        | { error: FetchBaseQueryError | SerializedError },
     ) => {
       if (isErrorResult(result)) {
         const errorMsg = getErrorMessage(
           result.error,
-          "An unexpected error occurred while editing the email templates. Please try again."
+          "An unexpected error occurred while editing the email templates. Please try again.",
         );
-        toast(errorToastParams(errorMsg));
+        message.error(errorMsg);
       } else {
-        toast(successToastParams("Email templates saved."));
-        formikHelpers.resetForm({ values });
+        message.success("Email templates saved.");
+        // Re-baseline the form: resetFields() clears antd's touched flags (but
+        // reverts to the original initialValues), then setFieldsValue re-applies
+        // the just-saved data on top. Together they make the saved values the
+        // new baseline so Save becomes disabled until the next edit.
+        form.resetFields();
+        form.setFieldsValue(values);
       }
     };
 
@@ -57,64 +66,61 @@ const EmailTemplatesForm = ({ emailTemplates }: EmailTemplatesFormProps) => {
       ([type, { content }]) => ({
         type,
         content,
-      })
+      }),
     ) as MessagingTemplate[];
 
     const result = await updateMessagingTemplates(messagingTemplates);
     handleResult(result);
   };
 
-  const initialValues = emailTemplates.reduce(
-    (acc, template) => ({
-      ...acc,
-      [template.type]: { label: template.label, content: template.content },
-    }),
-    {} as EmailTemplatesFormValues
-  );
-
   return (
-    <Formik
-      enableReinitialize
+    <Form
+      form={form}
+      layout="vertical"
       initialValues={initialValues}
-      onSubmit={handleSubmit}
+      onFinish={handleSubmit}
+      className="py-3"
     >
-      {() => (
-        <Form
-          style={{
-            paddingTop: "12px",
-            paddingBottom: "12px",
-          }}
-        >
-          {Object.entries(initialValues).map(([key, value]) => (
-            <Box key={key} py={3}>
-              <FormSection title={value.label}>
-                <CustomTextInput
-                  label="Message subject"
-                  name={`${key}.content.subject`}
-                  variant="stacked"
-                />
-                <CustomTextArea
-                  label="Message body"
-                  name={`${key}.content.body`}
-                  variant="stacked"
-                  resize
-                />
-              </FormSection>
-            </Box>
-          ))}
-          <Flex justifyContent="right" width="100%" paddingTop={2}>
+      {Object.entries(initialValues).map(([key, value]) => (
+        <Card key={key} title={value.label} className="my-3">
+          <Form.Item
+            name={[key, "content", "subject"]}
+            label="Message subject"
+            rules={[{ required: true, message: "Subject is required" }]}
+          >
+            <Input data-testid={`input-${key}.content.subject`} />
+          </Form.Item>
+          <Form.Item
+            name={[key, "content", "body"]}
+            label="Message body"
+            rules={[{ required: true, message: "Body is required" }]}
+          >
+            <Input.TextArea
+              autoSize={{ minRows: 3 }}
+              data-testid={`input-${key}.content.body`}
+            />
+          </Form.Item>
+        </Card>
+      ))}
+      <Flex justify="flex-end" className="w-full pt-2">
+        <Form.Item shouldUpdate noStyle>
+          {() => (
             <Button
-              size="sm"
-              type="submit"
-              colorScheme="primary"
-              isLoading={isLoading}
+              htmlType="submit"
+              type="primary"
+              disabled={
+                !form.isFieldsTouched() ||
+                form.getFieldsError().some(({ errors }) => errors.length > 0)
+              }
+              loading={isLoading}
+              data-testid="submit-btn"
             >
               Save
             </Button>
-          </Flex>
-        </Form>
-      )}
-    </Formik>
+          )}
+        </Form.Item>
+      </Flex>
+    </Form>
   );
 };
 

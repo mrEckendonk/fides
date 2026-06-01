@@ -1,42 +1,39 @@
+import {
+  FIDES_OVERRIDE_OPTIONS_VALIDATOR_MAP,
+  VALID_ISO_3166_LOCATION_REGEX,
+} from "./consent-constants";
 import { ConsentContext } from "./consent-context";
 import {
   ComponentType,
+  ConsentFlagType,
   ConsentMechanism,
+  ConsentMethod,
+  ConsentNonApplicableFlagMode,
   EmptyExperience,
   FidesCookie,
   FidesInitOptions,
-  FidesOptions,
+  FidesOverrideValidatorMap,
+  FidesWindowOverrides,
   GpcStatus,
   NoticeConsent,
   OverrideType,
   PrivacyExperience,
+  PrivacyExperienceMinimal,
   PrivacyNotice,
+  PrivacyNoticeItem,
   PrivacyNoticeWithPreference,
+  SaveConsentPreference,
   UserConsentPreference,
   UserGeolocation,
 } from "./consent-types";
-import { TcfModelsRecord } from "./tcf/types";
 import {
-  FIDES_OVERRIDE_EXPERIENCE_LANGUAGE_VALIDATOR_MAP,
-  FIDES_OVERRIDE_OPTIONS_VALIDATOR_MAP,
-  VALID_ISO_3166_LOCATION_REGEX,
-} from "./consent-constants";
-import { noticeHasConsentInCookie } from "./shared-consent-utils";
+  noticeHasConsentInCookie,
+  processExternalConsentValue,
+  transformConsentToFidesUserPreference,
+} from "./shared-consent-utils";
+import { TcfModelsRecord } from "./tcf/types";
 
-/**
- * Wrapper around 'console.log' that only logs output when the 'debug' banner
- * option is truthy
- */
-type ConsoleLogParameters = Parameters<typeof console.log>;
-export const debugLog = (
-  enabled: boolean = false,
-  ...args: ConsoleLogParameters
-): void => {
-  if (enabled) {
-    // eslint-disable-next-line no-console
-    console.log(...args);
-  }
-};
+export const DEFAULT_MODAL_LINK_ID = "fides-modal-link";
 
 /**
  * Returns true if the provided input is a valid PrivacyExperience object.
@@ -46,7 +43,11 @@ export const debugLog = (
  * for the given geolocation.
  */
 export const isPrivacyExperience = (
-  obj: PrivacyExperience | undefined | EmptyExperience
+  obj:
+    | PrivacyExperience
+    | PrivacyExperienceMinimal
+    | undefined
+    | EmptyExperience,
 ): obj is PrivacyExperience => {
   // Return false for all non-object types
   if (!obj || typeof obj !== "object") {
@@ -66,46 +67,47 @@ export const isPrivacyExperience = (
 };
 
 export const allNoticesAreDefaultOptIn = (
-  notices: Array<PrivacyNoticeWithPreference> | undefined
+  notices: Array<PrivacyNoticeWithPreference> | undefined,
 ): boolean =>
   Boolean(
     notices &&
-      notices.every(
-        (notice) => notice.default_preference === UserConsentPreference.OPT_IN
-      )
+    notices.every(
+      (notice) => notice.default_preference === UserConsentPreference.OPT_IN,
+    ),
   );
 
 /**
  * Construct user location str to be ingested by Fides API
- * Returns null if geolocation cannot be constructed by provided params, e.g. us_ca
+ * Returns undefined if geolocation cannot be constructed by provided params, e.g. us_ca
  */
 export const constructFidesRegionString = (
-  geoLocation?: UserGeolocation | null,
-  debug: boolean = false
-): string | null => {
-  debugLog(debug, "constructing geolocation...");
+  geoLocation: UserGeolocation | undefined | null,
+): string | undefined => {
+  fidesDebugger("constructing geolocation...");
   if (!geoLocation) {
-    debugLog(
-      debug,
-      "cannot construct user location since geoLocation is undefined or null"
+    fidesDebugger(
+      "cannot construct user location since geoLocation is undefined or null",
     );
-    return null;
+    return undefined;
   }
   if (
     geoLocation.location &&
     VALID_ISO_3166_LOCATION_REGEX.test(geoLocation.location)
   ) {
     // Fides backend requires underscore deliminator
-    return geoLocation.location.replace("-", "_").toLowerCase();
+    const regionString = geoLocation.location.replace("-", "_").toLowerCase();
+    fidesDebugger(`using geolocation: ${regionString}`);
+    return regionString;
   }
   if (geoLocation.country && geoLocation.region) {
-    return `${geoLocation.country.toLowerCase()}_${geoLocation.region.toLowerCase()}`;
+    const regionString = `${geoLocation.country.toLowerCase()}_${geoLocation.region.toLowerCase()}`;
+    fidesDebugger(`using geolocation: ${regionString}`);
+    return regionString;
   }
-  debugLog(
-    debug,
-    "cannot construct user location from provided geoLocation params..."
+  fidesDebugger(
+    "cannot construct user location from provided geoLocation params...",
   );
-  return null;
+  return undefined;
 };
 
 /**
@@ -113,22 +115,18 @@ export const constructFidesRegionString = (
  */
 export const validateOptions = (options: FidesInitOptions): boolean => {
   // Check if options is an invalid type
-  debugLog(
-    options.debug,
-    "Validating Fides consent overlay options...",
-    options
-  );
+  fidesDebugger("Validating Fides config options...", options);
   if (typeof options !== "object") {
     return false;
   }
 
   if (!options.fidesApiUrl) {
-    debugLog(options.debug, "Invalid options: fidesApiUrl is required!");
+    fidesDebugger("Invalid options: fidesApiUrl is required!");
     return false;
   }
 
   if (!options.privacyCenterUrl) {
-    debugLog(options.debug, "Invalid options: privacyCenterUrl is required!");
+    fidesDebugger("Invalid options: privacyCenterUrl is required!");
     return false;
   }
 
@@ -138,10 +136,9 @@ export const validateOptions = (options: FidesInitOptions): boolean => {
     // eslint-disable-next-line no-new
     new URL(options.fidesApiUrl);
   } catch (e) {
-    debugLog(
-      options.debug,
+    fidesDebugger(
       "Invalid options: privacyCenterUrl or fidesApiUrl is an invalid URL!",
-      options.privacyCenterUrl
+      options.privacyCenterUrl,
     );
     return false;
   }
@@ -150,53 +147,46 @@ export const validateOptions = (options: FidesInitOptions): boolean => {
 };
 
 export const getOverrideValidatorMapByType = (
-  overrideType: OverrideType
-):
-  | typeof FIDES_OVERRIDE_OPTIONS_VALIDATOR_MAP
-  | typeof FIDES_OVERRIDE_EXPERIENCE_LANGUAGE_VALIDATOR_MAP
-  | null => {
+  overrideType: OverrideType,
+): FidesOverrideValidatorMap[] | null => {
   // eslint-disable-next-line default-case
   switch (overrideType) {
     case OverrideType.OPTIONS:
       return FIDES_OVERRIDE_OPTIONS_VALIDATOR_MAP;
-    case OverrideType.EXPERIENCE_TRANSLATION:
-      return FIDES_OVERRIDE_EXPERIENCE_LANGUAGE_VALIDATOR_MAP;
+    default:
+      return null;
   }
-  return null;
 };
 
 /**
  * Determines whether experience is valid and relevant notices exist within the experience
  */
 export const experienceIsValid = (
-  effectiveExperience: PrivacyExperience | undefined | EmptyExperience,
-  options: FidesInitOptions
+  effectiveExperience:
+    | PrivacyExperience
+    | PrivacyExperienceMinimal
+    | undefined
+    | EmptyExperience,
 ): boolean => {
   if (!isPrivacyExperience(effectiveExperience)) {
-    debugLog(
-      options.debug,
-      "No relevant experience found. Skipping overlay initialization."
-    );
+    fidesDebugger("No relevant experience found.");
     return false;
   }
   const expConfig = effectiveExperience.experience_config;
   if (!expConfig) {
-    debugLog(
-      options.debug,
-      "No experience config found for experience. Skipping overlay initialization."
-    );
+    fidesDebugger("No config found for experience.");
     return false;
   }
   if (
     !(
       expConfig.component === ComponentType.MODAL ||
       expConfig.component === ComponentType.BANNER_AND_MODAL ||
-      expConfig.component === ComponentType.TCF_OVERLAY
+      expConfig.component === ComponentType.TCF_OVERLAY ||
+      expConfig.component === ComponentType.HEADLESS
     )
   ) {
-    debugLog(
-      options.debug,
-      "No experience found with modal, banner_and_modal, or tcf_overlay component. Skipping overlay initialization."
+    fidesDebugger(
+      "No experience found with modal, banner_and_modal, tcf_overlay, or headless component.",
     );
     return false;
   }
@@ -207,14 +197,18 @@ export const experienceIsValid = (
       effectiveExperience.privacy_notices.length > 0
     )
   ) {
-    debugLog(
-      options.debug,
-      `Privacy experience has no notices. Skipping overlay initialization.`
-    );
+    fidesDebugger(`Privacy experience has no notices.`);
     return false;
   }
 
   return true;
+};
+
+export const isConsentOverride = (options: FidesInitOptions) => {
+  return (
+    options.fidesConsentOverride === ConsentMethod.ACCEPT ||
+    options.fidesConsentOverride === ConsentMethod.REJECT
+  );
 };
 
 /**
@@ -222,43 +216,119 @@ export const experienceIsValid = (
  */
 export const getTcfDefaultPreference = (tcfObject: TcfModelsRecord) =>
   tcfObject.default_preference ?? UserConsentPreference.OPT_OUT;
-
 /**
- * Returns true if there are notices in the experience that require a user preference
- * or if an experience's version hash does not match up.
+ * Determines whether the consent banner should be shown to the user based on various conditions.
+ *
+ * The banner will NOT be shown if:
+ * - Banner is explicitly disabled via fidesDisableBanner option
+ * - No valid privacy experience exists
+ * - Experience is modal-only or headless component type
+ * - No privacy notices exist in the experience
+ * - Consent was previously set via override
+ * - Modal is set to open via fides_default_show_modal option
+ *
+ * The banner WILL be shown if:
+ * - No prior consent exists
+ * - For TCF experiences, when version_hash doesn't match saved hash
+ * - Prior consent was only recorded via the "gpc" method
+ *
+ * @param experience - The privacy experience configuration
+ * @param cookie - The current Fides cookie state
+ * @param savedConsent - Previously saved notice consent preferences
+ * @param options - Optional FidesJS initialization options
+ * @returns boolean indicating whether banner should be shown
  */
-export const shouldResurfaceConsent = (
-  experience: PrivacyExperience,
-  cookie: FidesCookie,
-  savedConsent: NoticeConsent
+export const shouldResurfaceBanner = (
+  experience:
+    | PrivacyExperience
+    | PrivacyExperienceMinimal
+    | EmptyExperience
+    | undefined,
+  cookie: FidesCookie | undefined,
+  savedConsent: NoticeConsent,
+  options: FidesInitOptions,
 ): boolean => {
-  if (experience.experience_config?.component === ComponentType.TCF_OVERLAY) {
-    if (experience.meta?.version_hash) {
-      return experience.meta.version_hash !== cookie.tcf_version_hash;
+  // Never resurface banner if it is disabled
+  if (options?.fidesDisableBanner) {
+    return false;
+  }
+  // Never surface banner if there's no experience
+  if (!isPrivacyExperience(experience)) {
+    return false;
+  }
+
+  const shouldResurfaceBasedOnConfiguration = Boolean(
+    cookie?.fides_meta.consentMethod &&
+    experience.experience_config?.resurface_behavior?.includes(
+      cookie.fides_meta.consentMethod,
+    ),
+  );
+
+  // Never surface banner if modal is set to show immediately
+  if (options.fidesModalDisplay === "immediate") {
+    return false;
+  }
+  // Never surface TCF banner if there are no vendors
+  if (
+    experience.experience_config?.component === ComponentType.TCF_OVERLAY &&
+    experience.vendor_count === 0
+  ) {
+    return false;
+  }
+  // Always resurface banner for TCF unless consent was set by override
+  // or the saved version_hash matches
+  // or if the banner is configured to resurface
+  if (
+    experience.experience_config?.component === ComponentType.TCF_OVERLAY &&
+    !!cookie
+  ) {
+    if (!!options && isConsentOverride(options)) {
+      return false;
     }
-    // Ensure we always resurface consent for TCF if for some reason experience does not have version_hash
+    if (experience.meta?.version_hash) {
+      return (
+        experience.meta.version_hash !== cookie.tcf_version_hash ||
+        shouldResurfaceBasedOnConfiguration
+      );
+    }
     return true;
   }
-  // Do not surface consent for null or empty notices
+  // Never surface banner for modal-only or headless experiences
   if (
-    experience?.privacy_notices == null ||
-    experience.privacy_notices.length === 0
+    experience.experience_config?.component === ComponentType.MODAL ||
+    experience.experience_config?.component === ComponentType.HEADLESS
   ) {
+    return false;
+  }
+  // Do not surface banner for null or empty notices
+  if (!(experience as PrivacyExperience)?.privacy_notices?.length) {
     return false;
   }
   // Always resurface if there is no prior consent
   if (!savedConsent) {
     return true;
   }
+  // Never surface banner if consent was set by override
+  if (!!options && isConsentOverride(options)) {
+    return false;
+  }
+  // resurface in the special case where the saved consent is "gpc"
+  if (cookie?.fides_meta.consentMethod === ConsentMethod.GPC) {
+    return true;
+  }
+
+  // Resurface if configured for this consent method
+  if (shouldResurfaceBasedOnConfiguration) {
+    return true;
+  }
   // Lastly, if we do have a prior consent state, resurface if we find *any*
   // notices that don't have prior consent in that state
-  // TODO (PROD-1792): we should *also* resurface in the special case where the
-  // saved consent is only recorded with a consentMethod of "dismiss"
-  return Boolean(
-    !experience.privacy_notices?.every((notice) =>
-      noticeHasConsentInCookie(notice, savedConsent)
-    )
+  const hasConsentInCookie = (
+    experience as PrivacyExperience
+  ).privacy_notices?.every((notice) =>
+    noticeHasConsentInCookie(notice, savedConsent),
   );
+  return !hasConsentInCookie;
 };
 
 /**
@@ -280,8 +350,8 @@ export const shouldResurfaceConsent = (
  * ```
  */
 export const getWindowObjFromPath = (
-  path: string[]
-): FidesOptions | undefined => {
+  path: string[],
+): FidesWindowOverrides | undefined => {
   // Implicitly start from the global "window" object
   if (path[0] === "window") {
     path.shift();
@@ -327,8 +397,310 @@ export const getGpcStatusFromNotice = ({
 };
 
 export const defaultShowModal = () => {
-  debugLog(
-    window.Fides.options.debug,
-    "The current experience does not support displaying a modal."
+  fidesDebugger("The current experience does not support displaying a modal.");
+};
+
+export const createConsentPreferencesToSave = (
+  privacyNoticeList: PrivacyNoticeItem[],
+  enabledPrivacyNoticeKeys: string[],
+): SaveConsentPreference[] =>
+  privacyNoticeList.map((item) => {
+    const userPreference = transformConsentToFidesUserPreference(
+      enabledPrivacyNoticeKeys.includes(item.notice.notice_key),
+      item.notice.consent_mechanism,
+    );
+    return new SaveConsentPreference(
+      item.notice,
+      userPreference,
+      item.bestTranslation?.privacy_notice_history_id,
+    );
+  });
+
+/**
+ * Encodes consent data into a base64 string for the Notice Consent slot
+ * @param consentData Object mapping notice keys to boolean consent values
+ * @returns Base64 encoded string representation of the consent data
+ */
+export const encodeNoticeConsentString = (consentData: {
+  [noticeKey: string]: boolean | 0 | 1;
+}): string => {
+  try {
+    const jsonString = JSON.stringify(consentData);
+    return btoa(jsonString.replace(/\s/g, ""));
+  } catch (error) {
+    throw new Error("Failed to encode Notice Consent string:", {
+      cause: error,
+    });
+  }
+};
+
+/**
+ * Decodes a base64 Notice Consent string back into consent data
+ * @param base64String The base64 encoded Notice Consent string
+ * @returns Decoded consent data object or null if decoding fails
+ */
+export const decodeNoticeConsentString = (
+  base64String: string,
+): {
+  [noticeKey: string]: boolean;
+} => {
+  if (!base64String) {
+    return {};
+  }
+
+  try {
+    const jsonString = atob(base64String);
+    const parsedData = JSON.parse(jsonString);
+
+    // Convert any numeric values (1 or 0) to boolean
+    return Object.fromEntries(
+      Object.entries(parsedData).map(([key, value]) => [
+        key,
+        value === 0 || value === 1 ? !!value : Boolean(value),
+      ]),
+    );
+  } catch (error) {
+    throw new Error("Failed to decode Notice Consent string:", {
+      cause: error,
+    });
+  }
+};
+
+interface HandleNonApplicableNoticesOptions {
+  consent: NoticeConsent;
+  nonApplicableNotices: string[];
+  flagType: ConsentFlagType;
+  mode?: ConsentNonApplicableFlagMode;
+}
+
+/**
+ * Handles non-applicable notices in the consent object based on the flag type and mode
+ * @param consent - The consent values to modify
+ * @param nonApplicableNotices - List of notice keys that are not applicable
+ * @param flagType - The target format for normalization
+ * @param mode - Whether to include or omit non-applicable notices
+ */
+const handleNonApplicableNotices = ({
+  consent,
+  nonApplicableNotices,
+  flagType,
+  mode = ConsentNonApplicableFlagMode.OMIT,
+}: HandleNonApplicableNoticesOptions): NoticeConsent => {
+  if (!nonApplicableNotices?.length) {
+    return consent;
+  }
+
+  const result = { ...consent };
+
+  if (mode === ConsentNonApplicableFlagMode.INCLUDE) {
+    // Add non-applicable notices with appropriate values
+    nonApplicableNotices.forEach((key) => {
+      result[key] =
+        flagType === ConsentFlagType.CONSENT_MECHANISM
+          ? UserConsentPreference.NOT_APPLICABLE
+          : true;
+    });
+  } else {
+    // Remove non-applicable notices
+    nonApplicableNotices.forEach((key) => {
+      delete result[key];
+    });
+  }
+
+  return result;
+};
+
+type NoticeConsentMechanismMap = {
+  [key: string]: ConsentMechanism;
+};
+
+interface BaseNormalizeConsentValuesOptions {
+  consent: NoticeConsent;
+}
+
+interface BooleanConsentOptions extends BaseNormalizeConsentValuesOptions {
+  flagType?: ConsentFlagType.BOOLEAN;
+  consentMechanisms?: NoticeConsentMechanismMap;
+}
+
+interface ConsentMechanismOptions extends BaseNormalizeConsentValuesOptions {
+  flagType: ConsentFlagType.CONSENT_MECHANISM;
+  consentMechanisms: NoticeConsentMechanismMap;
+}
+
+type NormalizeConsentValuesOptions =
+  | BooleanConsentOptions
+  | ConsentMechanismOptions;
+
+/**
+ * Normalizes consent values between boolean and consent mechanism formats.
+ * For boolean format: converts consent mechanism strings to booleans
+ * For consent mechanism format: converts booleans to consent mechanism strings
+ * @param consent - The consent values to normalize
+ * @param flagType - The target format for normalization
+ * @param consentMechanisms - Required when converting booleans to consent mechanisms
+ */
+const normalizeConsentValues = ({
+  consent,
+  flagType = ConsentFlagType.BOOLEAN,
+  consentMechanisms,
+}: NormalizeConsentValuesOptions): NoticeConsent => {
+  const normalizedConsentValues: NoticeConsent = {};
+
+  // For boolean case, we need to transform any consent mechanism strings to booleans
+  if (flagType !== ConsentFlagType.CONSENT_MECHANISM) {
+    return Object.fromEntries(
+      Object.entries(consent).map(([key, value]) => [
+        key,
+        processExternalConsentValue(value),
+      ]),
+    );
+  }
+
+  // For consent mechanism case, we need the consent mechanisms to transform booleans
+  const hasBooleanValues = Object.values(consent).some(
+    (value) => typeof value === "boolean",
   );
+  if (hasBooleanValues && !consentMechanisms) {
+    throw new Error(
+      "Cannot transform boolean consent values to consent mechanisms without consent mechanisms map",
+    );
+  }
+
+  // If no boolean values, return as is
+  if (!hasBooleanValues) {
+    return { ...consent };
+  }
+
+  Object.keys(consent).forEach((key) => {
+    const value = consent[key];
+    if (typeof value === "string") {
+      normalizedConsentValues[key] = value;
+    } else {
+      const consentMechanism = (consentMechanisms as NoticeConsentMechanismMap)[
+        key
+      ];
+      normalizedConsentValues[key] = transformConsentToFidesUserPreference(
+        value,
+        consentMechanism,
+      );
+    }
+  });
+
+  return normalizedConsentValues;
+};
+
+export const applyOverridesToConsent = (
+  fidesConsent: NoticeConsent,
+  nonApplicablePrivacyNotices: string[] | undefined,
+  privacyNotices: PrivacyNoticeWithPreference[] | undefined = [],
+  flagTypeOverride?: ConsentFlagType,
+  nonApplicableFlagModeOverride?: ConsentNonApplicableFlagMode,
+  cookieNonApplicableNoticeKeys?: string[],
+): NoticeConsent => {
+  const consent = { ...fidesConsent };
+  // Get options from either the provided options or the Fides config, with
+  // provided options taking precedence
+  const overrideOptions = window.Fides?.options;
+  const nonApplicableFlagMode =
+    nonApplicableFlagModeOverride ??
+    overrideOptions?.fidesConsentNonApplicableFlagMode ??
+    ConsentNonApplicableFlagMode.OMIT;
+  const flagType =
+    flagTypeOverride ??
+    overrideOptions?.fidesConsentFlagType ??
+    ConsentFlagType.BOOLEAN;
+
+  const consentValues: NoticeConsent = {};
+
+  // Handle non-applicable privacy notices based on mode
+  Object.assign(
+    consentValues,
+    handleNonApplicableNotices({
+      consent: {},
+      nonApplicableNotices: nonApplicablePrivacyNotices ?? [],
+      flagType,
+      mode: nonApplicableFlagMode,
+    }),
+  );
+
+  // Then override with actual consent values
+  const consentMechanisms = privacyNotices.reduce(
+    (acc, notice) => ({
+      ...acc,
+      [notice.notice_key]: notice.consent_mechanism,
+    }),
+    {},
+  );
+
+  // Filter out consent values for notices that were non-applicable when saved
+  const filteredConsent: NoticeConsent = {};
+  Object.entries(consent).forEach(([key, value]) => {
+    if (
+      cookieNonApplicableNoticeKeys?.includes(key) &&
+      !nonApplicablePrivacyNotices?.includes(key)
+    ) {
+      return;
+    }
+    filteredConsent[key] = value;
+  });
+
+  Object.assign(
+    consentValues,
+    normalizeConsentValues({
+      consent: filteredConsent,
+      consentMechanisms,
+      flagType,
+    }),
+  );
+
+  return consentValues;
+};
+
+export const isValidAcString = (acString: string) => {
+  const acVersion = acString.split("~")[0];
+  return Boolean(
+    acVersion &&
+    ["1", "2"].includes(acVersion) &&
+    acString?.match(
+      acVersion === "1" ? /\d~[0-9.]*$/ : /\d~[0-9.]*~dv.[0-9.]*$/,
+    ),
+  );
+};
+
+/**
+ * Creates a Proxy wrapper for consent objects that provides default values for unknown properties.
+ *
+ * The Proxy handles:
+ * - Returns appropriate default values for unknown consent properties
+ * - Handles the special "essential" case when no privacy notices exist
+ * - Returns ConsentMechanism values when flagType is CONSENT_MECHANISM, boolean otherwise
+ *
+ * @param consentObject - The base consent object to wrap
+ * @param options - Fides initialization options containing flag type configuration
+ * @param hasPrivacyNotices - Whether privacy notices exist in the experience
+ * @returns Proxied consent object with default value handling
+ */
+export const createConsentProxy = (
+  consentObject: NoticeConsent,
+  options: Pick<FidesInitOptions, "fidesConsentFlagType">,
+  hasPrivacyNotices: boolean,
+): NoticeConsent => {
+  return new Proxy(consentObject, {
+    get(target, prop) {
+      if (target[prop.toString()] === undefined) {
+        // This consent property is unknown, so we want to return a default value
+        const flagTypeConsentMechanism =
+          options.fidesConsentFlagType === ConsentFlagType.CONSENT_MECHANISM;
+        // handle essential
+        if (!hasPrivacyNotices && prop.toString() === "essential") {
+          return flagTypeConsentMechanism ? ConsentMechanism.NOTICE_ONLY : true;
+        }
+        // handle any other unknown consent values.
+        // (eg. `Fides.consent.some_unknown_consent_value` should return falsy)
+        return flagTypeConsentMechanism ? ConsentMechanism.OPT_OUT : false;
+      }
+      return target[prop.toString()];
+    },
+  });
 };

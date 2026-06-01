@@ -1,14 +1,14 @@
 import {
-  Accordion,
-  AccordionButton,
-  AccordionIcon,
-  AccordionItem,
-  AccordionPanel,
-  Box,
-  BoxProps,
-  Text,
+  ChakraAccordion as Accordion,
+  ChakraAccordionButton as AccordionButton,
+  ChakraAccordionIcon as AccordionIcon,
+  ChakraAccordionItem as AccordionItem,
+  ChakraAccordionPanel as AccordionPanel,
+  ChakraBox as Box,
+  ChakraBoxProps as BoxProps,
+  ChakraText as Text,
 } from "fidesui";
-import { Fragment, useState } from "react";
+import { Fragment, ReactNode, useState } from "react";
 
 import { TreeNode } from "./types";
 
@@ -89,7 +89,7 @@ const AccordionTree = ({
         <AccordionPanel p={0}>
           {node.children.map((childNode) => (
             <Fragment key={childNode.value}>
-              {createTree(childNode, level + 1)}
+              {createTree(childNode, level + 1) as ReactNode}
             </Fragment>
           ))}
         </AccordionPanel>

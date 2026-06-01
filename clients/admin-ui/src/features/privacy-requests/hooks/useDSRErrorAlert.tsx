@@ -1,7 +1,6 @@
-import { Box, Text } from "fidesui";
+import { ChakraBox as Box, ChakraText as Text, useNotification } from "fidesui";
 import { useEffect, useState } from "react";
 
-import { useAlert } from "~/features/common/hooks";
 import { PrivacyRequestStatus } from "~/types/api";
 
 import {
@@ -21,7 +20,7 @@ type Requests = {
 };
 
 export const useDSRErrorAlert = () => {
-  const { errorAlert } = useAlert();
+  const notification = useNotification();
   const [hasAlert, setHasAlert] = useState(false);
   const [requests, setRequests] = useState<Requests>({
     count: 0,
@@ -32,7 +31,7 @@ export const useDSRErrorAlert = () => {
   const DEFAULT_POLLING_INTERVAL = 15000;
   const STATUS = PrivacyRequestStatus.ERROR;
 
-  const { data: notification } = useGetNotificationQuery();
+  const { data: notificationData } = useGetNotificationQuery();
   const { data } = useGetAllPrivacyRequestsQuery(
     {
       status: [STATUS],
@@ -40,18 +39,18 @@ export const useDSRErrorAlert = () => {
     {
       pollingInterval: DEFAULT_POLLING_INTERVAL,
       skip,
-    }
+    },
   );
 
   useEffect(() => {
-    setSkip(!(notification && notification.notify_after_failures > 0));
-  }, [notification]);
+    setSkip(!(notificationData && notificationData.notify_after_failures > 0));
+  }, [notificationData]);
 
   useEffect(() => {
     const total = data?.total || 0;
 
     if (
-      total >= (notification?.notify_after_failures || 0) &&
+      total >= (notificationData?.notify_after_failures || 0) &&
       total > requests.total
     ) {
       setRequests({ count: total - requests.total, total });
@@ -59,28 +58,36 @@ export const useDSRErrorAlert = () => {
     } else {
       setHasAlert(false);
     }
-  }, [data?.total, notification?.notify_after_failures, requests.total]);
+  }, [data?.total, notificationData?.notify_after_failures, requests.total]);
 
   const processing = () => {
     if (!hasAlert) {
       return;
     }
-    errorAlert(
-      <Box>
-        DSR automation has failed for{" "}
-        <Text as="span" fontWeight="semibold">
-          {requests.count}
-        </Text>{" "}
-        privacy request(s). Please review the event log for further details.
-      </Box>,
-      undefined,
-      {
-        containerStyle: { maxWidth: "max-content" },
-        duration: null,
-        id: TOAST_ID,
-      }
-    );
+    notification.error({
+      message: "DSR Error",
+      description: (
+        <Box>
+          DSR automation has failed for{" "}
+          <Text as="span" fontWeight="semibold">
+            {requests.count}
+          </Text>{" "}
+          privacy request(s). Please review the event log for further details.
+        </Box>
+      ),
+      duration: 0,
+      key: TOAST_ID,
+    });
   };
+
+  useEffect(
+    () =>
+      // Cleanup: close notification on unmount
+      () => {
+        notification.destroy(TOAST_ID);
+      },
+    [notification],
+  );
 
   return { processing };
 };

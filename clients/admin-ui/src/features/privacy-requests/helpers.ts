@@ -1,0 +1,107 @@
+import { PrivacyRequestResponse, PrivacyRequestStatus } from "~/types/api";
+
+/**
+ * Enum for bulk actions that can be performed on privacy requests
+ */
+export enum BulkActionType {
+  APPROVE = "approve",
+  DENY = "deny",
+  DELETE = "delete",
+  FINALIZE = "finalize",
+}
+
+/**
+ * Maps each privacy request status to its available bulk actions
+ * Using readonly mapping for type safety and performance
+ */
+const AVAILABLE_ACTIONS_BY_STATUS: Record<
+  PrivacyRequestStatus,
+  readonly BulkActionType[]
+> = {
+  [PrivacyRequestStatus.PENDING]: [
+    BulkActionType.APPROVE,
+    BulkActionType.DENY,
+    BulkActionType.DELETE,
+  ],
+  [PrivacyRequestStatus.DUPLICATE]: [
+    BulkActionType.APPROVE,
+    BulkActionType.DENY,
+    BulkActionType.DELETE,
+  ],
+  [PrivacyRequestStatus.IDENTITY_UNVERIFIED]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.REQUIRES_INPUT]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.APPROVED]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.DENIED]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.IN_PROCESSING]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.COMPLETE]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.PAUSED]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.AWAITING_EMAIL_SEND]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.REQUIRES_MANUAL_FINALIZATION]: [
+    BulkActionType.FINALIZE,
+    BulkActionType.DELETE,
+  ],
+  [PrivacyRequestStatus.CANCELED]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.ERROR]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.PENDING_EXTERNAL]: [BulkActionType.DELETE],
+  [PrivacyRequestStatus.AWAITING_PRE_APPROVAL]: [
+    BulkActionType.APPROVE,
+    BulkActionType.DENY,
+    BulkActionType.DELETE,
+  ],
+  [PrivacyRequestStatus.PRE_APPROVAL_NOT_ELIGIBLE]: [
+    BulkActionType.APPROVE,
+    BulkActionType.DENY,
+    BulkActionType.DELETE,
+  ],
+  [PrivacyRequestStatus.AWAITING_ACCESS_REVIEW]: [BulkActionType.DELETE],
+} as const;
+
+/**
+ * Determines which bulk actions are available for a given privacy request
+ * based on its current status
+ */
+export const getAvailableActionsForRequest = (
+  request: PrivacyRequestResponse,
+): readonly BulkActionType[] => {
+  return AVAILABLE_ACTIONS_BY_STATUS[request.status];
+};
+
+/**
+ * Checks if a bulk action is supported by at least one of the selected requests
+ */
+export const isActionSupportedByRequests = (
+  action: BulkActionType,
+  requests: PrivacyRequestResponse[],
+): boolean => {
+  return requests.some((request) =>
+    getAvailableActionsForRequest(request).includes(action),
+  );
+};
+
+/**
+ * Button visibility configuration for privacy request actions
+ */
+export interface ButtonVisibility {
+  approve: boolean;
+  deny: boolean;
+  finalize: boolean;
+  delete: boolean;
+}
+
+/**
+ * Determines which action buttons should be visible for a given privacy request status
+ */
+export const getButtonVisibility = (
+  status: PrivacyRequestStatus,
+): ButtonVisibility => {
+  return {
+    approve:
+      status === PrivacyRequestStatus.PENDING ||
+      status === PrivacyRequestStatus.DUPLICATE,
+    deny:
+      status === PrivacyRequestStatus.PENDING ||
+      status === PrivacyRequestStatus.DUPLICATE,
+    finalize: status === PrivacyRequestStatus.REQUIRES_MANUAL_FINALIZATION,
+    delete: true,
+  };
+};

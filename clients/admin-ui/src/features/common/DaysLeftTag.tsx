@@ -1,4 +1,4 @@
-import { Tag } from "fidesui";
+import { CUSTOM_TAG_COLOR, Tag } from "fidesui";
 import React from "react";
 
 import { PrivacyRequestStatus } from "~/types/api/models/PrivacyRequestStatus";
@@ -17,40 +17,33 @@ const DaysLeftTag = ({ daysLeft, includeText, status }: DaysLeftTagProps) => {
     status === PrivacyRequestStatus.DENIED ||
     status === PrivacyRequestStatus.IDENTITY_UNVERIFIED
   ) {
-    return null;
+    return <span>-</span>;
   }
 
-  let backgroundColor = "";
+  let color: CUSTOM_TAG_COLOR | undefined;
 
   switch (true) {
     case daysLeft >= 10:
-      backgroundColor = "green.500";
+      color = CUSTOM_TAG_COLOR.SUCCESS;
       break;
 
     case daysLeft < 10 && daysLeft > 4:
-      backgroundColor = "orange.500";
+      color = CUSTOM_TAG_COLOR.WARNING;
       break;
 
     case daysLeft < 5:
-      backgroundColor = "red.400";
+      color = CUSTOM_TAG_COLOR.ERROR;
       break;
 
     default:
       break;
   }
 
-  const text = includeText ? `${daysLeft} days left` : daysLeft;
+  const text = includeText
+    ? `${Math.abs(daysLeft)} days ${daysLeft < 0 ? "overdue" : "left"}`
+    : daysLeft;
 
-  return (
-    <Tag
-      backgroundColor={backgroundColor}
-      color="white"
-      fontWeight="medium"
-      fontSize="sm"
-    >
-      {text}
-    </Tag>
-  );
+  return <Tag color={color}>{text}</Tag>;
 };
 
 export default DaysLeftTag;

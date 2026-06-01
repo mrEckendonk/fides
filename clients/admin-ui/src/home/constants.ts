@@ -4,7 +4,7 @@ import {
   DATAMAP_ROUTE,
   PRIVACY_REQUESTS_ROUTE,
   SYSTEM_ROUTE,
-} from "~/features/common/nav/v2/routes";
+} from "~/features/common/nav/routes";
 import { ScopeRegistryEnum } from "~/types/api";
 
 import { ModuleCardConfig } from "./types";
@@ -22,7 +22,7 @@ export enum ModuleCardKeys {
 
 export const MODULE_CARD_ITEMS: ModuleCardConfig[] = [
   {
-    color: "blue",
+    color: "var(--fidesui-brand-sandstone)",
     description:
       "Explore the systems and data flow across your organization and create custom reports.",
     href: `${DATAMAP_ROUTE}`,
@@ -35,8 +35,8 @@ export const MODULE_CARD_ITEMS: ModuleCardConfig[] = [
     scopes: [ScopeRegistryEnum.DATAMAP_READ],
   },
   {
-    color: "orange",
-    description: "Add third party applications and databases to your data map",
+    color: "var(--fidesui-brand-olive)",
+    description: "Add third party applications and databases to your data map.",
     href: `${ADD_SYSTEMS_ROUTE}`,
     key: ModuleCardKeys.ADD_SYSTEMS,
     name: "Add systems",
@@ -45,9 +45,9 @@ export const MODULE_CARD_ITEMS: ModuleCardConfig[] = [
     scopes: [ScopeRegistryEnum.SYSTEM_CREATE],
   },
   {
-    color: "purple",
+    color: "var(--fidesui-brand-terracotta)",
     description:
-      "Review system information for all systems in your organization",
+      "Review system information for all systems in your organization.",
     href: `${SYSTEM_ROUTE}`,
     key: ModuleCardKeys.VIEW_SYSTEMS,
     name: "View systems",
@@ -57,7 +57,7 @@ export const MODULE_CARD_ITEMS: ModuleCardConfig[] = [
     requiresSystems: true,
   },
   {
-    color: "pink",
+    color: "var(--fidesui-brand-minos)",
     description:
       "Review, approve and process privacy requests across your systems on behalf of your users.",
     href: `${PRIVACY_REQUESTS_ROUTE}`,
@@ -69,9 +69,9 @@ export const MODULE_CARD_ITEMS: ModuleCardConfig[] = [
     requiresConnections: true,
   },
   {
-    color: "green",
+    color: "var(--fidesui-brand-nectar)",
     description:
-      "Manage privacy notices and experiences for all domains in your organization",
+      "Manage privacy notices and experiences for all domains in your organization.",
     href: `${CONFIGURE_CONSENT_ROUTE}`,
     key: ModuleCardKeys.CONFIGURE_CONSENT,
     name: "Manage consent",

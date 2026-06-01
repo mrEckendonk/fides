@@ -1,6 +1,11 @@
-import { Heading, Spinner, Stack, Text } from "fidesui";
-import NextLink from "next/link";
+import {
+  ChakraHeading as Heading,
+  ChakraStack as Stack,
+  ChakraText as Text,
+  Spin,
+} from "fidesui";
 
+import { RouterLink } from "~/features/common/nav/RouterLink";
 import { usePrivacyDeclarationData } from "~/features/system/privacy-declarations/hooks";
 import PrivacyDeclarationFormTab from "~/features/system/system-form-declaration-tab/PrivacyDeclarationFormTab";
 import { SystemResponse } from "~/types/api";
@@ -16,13 +21,13 @@ const PrivacyDeclarationStep = ({ system }: Props) => {
   });
 
   const allEnabledDataCategories = dataProps.allDataCategories.filter(
-    (category) => category.active
+    (category) => category.active,
   );
 
   const allEnabledDataUses = dataProps.allDataUses.filter((use) => use.active);
 
   const allEnabledDataSubjects = dataProps.allDataSubjects.filter(
-    (subject) => subject.active
+    (subject) => subject.active,
   );
 
   const filteredDataProps = {
@@ -30,7 +35,6 @@ const PrivacyDeclarationStep = ({ system }: Props) => {
     allDataCategories: allEnabledDataCategories,
     allDataUses: allEnabledDataUses,
     allDataSubject: allEnabledDataSubjects,
-    cookies: system.cookies,
   };
 
   return (
@@ -44,20 +48,14 @@ const PrivacyDeclarationStep = ({ system }: Props) => {
         of personal information are collected for this purpose and for which
         categories of data subjects. To update the available categories and
         uses, please visit{" "}
-        <NextLink href="/taxonomy" passHref>
-          <Text as="a" color="complimentary.600">
-            Manage taxonomy
-          </Text>
-        </NextLink>
-        .
+        <RouterLink href="/taxonomy">Manage taxonomy</RouterLink>.
       </Text>
       {isLoading ? (
-        <Spinner />
+        <Spin />
       ) : (
         <PrivacyDeclarationFormTab
           system={system}
           includeCustomFields
-          includeCookies
           {...filteredDataProps}
         />
       )}

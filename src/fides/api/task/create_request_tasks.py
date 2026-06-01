@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 import networkx
 from loguru import logger
 from networkx import NetworkXNoCycle
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Query, Session, defer
 
 from fides.api.common_exceptions import TraversalError
 from fides.api.graph.config import (
@@ -15,18 +15,68 @@ from fides.api.graph.config import (
     FieldAddress,
 )
 from fides.api.graph.graph import DatasetGraph
-from fides.api.graph.traversal import ARTIFICIAL_NODES, Traversal, TraversalNode
+from fides.api.graph.traversal import (
+    ARTIFICIAL_NODES,
+    Traversal,
+    TraversalNode,
+    log_traversal_error_and_update_privacy_request,
+)
 from fides.api.models.connectionconfig import ConnectionConfig
 from fides.api.models.policy import Policy
 from fides.api.models.privacy_request import (
     COMPLETED_EXECUTION_LOG_STATUSES,
-    ExecutionLogStatus,
     PrivacyRequest,
     RequestTask,
+    TraversalDetails,
 )
+from fides.api.models.sql_models import System  # type: ignore[attr-defined]
+from fides.api.models.worker_task import ExecutionLogStatus
 from fides.api.schemas.policy import ActionType
-from fides.api.task.deprecated_graph_task import format_data_use_map_for_caching
 from fides.api.task.execute_request_tasks import log_task_queued, queue_request_task
+from fides.api.task.manual.manual_task_address import ManualTaskAddress
+from fides.api.task.manual.manual_task_utils import (
+    get_connection_configs_with_manual_tasks,
+)
+from fides.api.util.lock import redis_lock
+from fides.api.util.logger_context_utils import log_context
+
+
+def format_data_use_map_for_caching(
+    connection_key_mapping: Dict[CollectionAddress, str],
+    connection_configs: List[ConnectionConfig],
+) -> Dict[str, Set[str]]:
+    """
+    Create a map of `Collection`s mapped to their associated `DataUse`s
+    to be stored in the cache. This is done before request execution, so that we
+    maintain the _original_ state of the graph as it's used for request execution.
+    The graph is subject to change "from underneath" the request execution runtime,
+    but we want to avoid picking up those changes in our data use map.
+
+    `DataUse`s are associated with a `Collection` by means of the `System`
+    that's linked to a `Collection`'s `Connection` definition.
+
+    Example:
+    {
+       <collection1>: {"data_use_1", "data_use_2"},
+       <collection2>: {"data_use_1"},
+    }
+    """
+    resp: Dict[str, Set[str]] = {}
+    connection_config_mapping: Dict[str, ConnectionConfig] = {
+        connection_config.key: connection_config
+        for connection_config in connection_configs
+    }
+    for collection_addr, connection_key in connection_key_mapping.items():
+        connection_config = connection_config_mapping.get(connection_key, None)
+        if not connection_config or not connection_config.system:
+            resp[collection_addr.value] = set()
+            continue
+        data_uses: Set[str] = System.get_data_uses(
+            [connection_config.system], include_parents=False
+        )
+        resp[collection_addr.value] = data_uses
+
+    return resp
 
 
 def _add_edge_if_no_nodes(
@@ -78,6 +128,14 @@ def build_access_networkx_digraph(
         # Connect the end nodes, those that have no downstream dependencies, to the terminator node
         networkx_graph.add_edge(node, TERMINATOR_ADDRESS)
 
+    manual_nodes = [
+        addr
+        for addr in traversal_nodes.keys()
+        if ManualTaskAddress.is_manual_task_address(addr)
+    ]
+    for manual_node in manual_nodes:
+        networkx_graph.add_edge(ROOT_COLLECTION_ADDRESS, manual_node)
+
     _add_edge_if_no_nodes(traversal_nodes, networkx_graph)
     return networkx_graph
 
@@ -122,6 +180,22 @@ def build_erasure_networkx_digraph(
     networkx_graph = networkx.DiGraph()
     networkx_graph.add_nodes_from(traversal_nodes.keys())
     networkx_graph.add_nodes_from(ARTIFICIAL_NODES)
+
+    # Validate that all erase_after references point to collections that
+    # exist in the traversal or end_nodes. Dangling references (e.g. from a
+    # deleted integration) would silently create phantom nodes in the graph
+    # via networkx.add_edge, leading to a KeyError during task creation.
+    valid_nodes = set(traversal_nodes.keys()) | set(end_nodes) | set(ARTIFICIAL_NODES)
+    for node_name, traversal_node in traversal_nodes.items():
+        for ref in traversal_node.node.collection.erase_after:
+            if ref not in valid_nodes:
+                raise TraversalError(
+                    f"Erasure cannot proceed: collection '{node_name}' has an "
+                    f"'Erase After' dependency on '{ref}', which no longer "
+                    f"exists in the dataset graph. Update the 'Erase After' "
+                    f"setting on this collection in the dataset configuration "
+                    f"to remove the stale reference."
+                )
 
     for node_name, traversal_node in traversal_nodes.items():
         # Add an edge from the root node to the current node, unless explicit erasure
@@ -171,15 +245,50 @@ def build_consent_networkx_digraph(
     return networkx_graph
 
 
+def compute_all_descendants(
+    graph: networkx.DiGraph,
+) -> Dict[CollectionAddress, Set[CollectionAddress]]:
+    """
+    Compute descendants for ALL nodes in O(N+E) using reverse topological order.
+
+    This is much more efficient than calling networkx.descendants() for each node,
+    which would be O(N * (N+E)) = O(N²) for a graph with N nodes.
+
+    By processing in reverse topological order (leaves first), we can compute
+    each node's descendants as the union of its children's descendants plus
+    its direct children.
+
+    Returns a Dict mapping each node (CollectionAddress) in the graph to the
+    set of all nodes that are reachable from it (i.e. its transitive successors).
+    This is used to populate the ``all_descendant_tasks`` field on each
+    RequestTask so that any node can quickly determine every downstream task
+    that must complete before the overall request is finished.
+    """
+    all_descendants: Dict[CollectionAddress, Set[CollectionAddress]] = {
+        node: set() for node in graph.nodes
+    }
+
+    # Process nodes in reverse topological order (leaves first)
+    for node in reversed(list(networkx.topological_sort(graph))):
+        # This node's descendants = union of (each child + child's descendants)
+        for child in graph.successors(node):
+            all_descendants[node].add(child)
+            all_descendants[node].update(all_descendants[child])
+
+    return all_descendants
+
+
 def base_task_data(
     graph: networkx.DiGraph,
     dataset_graph: DatasetGraph,
     privacy_request: PrivacyRequest,
     node: CollectionAddress,
     traversal_nodes: Dict[CollectionAddress, TraversalNode],
+    all_descendants: Dict[CollectionAddress, Set[CollectionAddress]],
 ) -> Dict:
     """Build a dictionary of common RequestTask attributes that are shared for building
     access, consent, and erasure tasks"""
+
     collection_representation: Optional[Dict] = None
     traversal_details = {}
 
@@ -188,11 +297,24 @@ def base_task_data(
         # when executing the node, so we don't have to recalculate incoming
         # and outgoing edges.
         collection_representation = json.loads(
-            dataset_graph.nodes[node].collection.json()
+            # Serialize with duck typing so we get the nested sub fields as well
+            dataset_graph.nodes[node].collection.model_dump_json(serialize_as_any=True)
         )
+
         # Saves traversal details based on data dependencies like incoming edges
         # and input keys, also useful for building the Execution Node
-        traversal_details = traversal_nodes[node].format_traversal_details_for_save()
+        if node in traversal_nodes:
+            traversal_details = traversal_nodes[
+                node
+            ].format_traversal_details_for_save()
+        else:
+            # If node is not in traversal_nodes, then it is a node added for
+            # custom request field processing. We manually build the traversal details,
+            # with no incoming or outgoing edges and no input keys.
+            graph_node = dataset_graph.nodes[node]
+            traversal_details = TraversalDetails.create_empty_traversal(
+                graph_node.dataset.connection_key
+            ).model_dump(mode="json")
 
     return {
         "privacy_request_id": privacy_request.id,
@@ -203,7 +325,7 @@ def base_task_data(
             [downstream.value for downstream in graph.successors(node)]
         ),
         "all_descendant_tasks": sorted(
-            [descend.value for descend in list(networkx.descendants(graph, node))]
+            [descend.value for descend in all_descendants.get(node, set())]
         ),
         "collection_address": node.value,
         "dataset_name": node.dataset,
@@ -237,6 +359,9 @@ def persist_new_access_request_tasks(
         traversal_nodes, end_nodes, traversal
     )
 
+    # Pre-compute all descendants in O(N+E) instead of O(N²)
+    all_descendants = compute_all_descendants(graph)
+
     for node in list(networkx.topological_sort(graph)):
         if privacy_request.get_existing_request_task(
             session, action_type=ActionType.access, collection_address=node
@@ -247,7 +372,12 @@ def persist_new_access_request_tasks(
             session,
             data={
                 **base_task_data(
-                    graph, dataset_graph, privacy_request, node, traversal_nodes
+                    graph,
+                    dataset_graph,
+                    privacy_request,
+                    node,
+                    traversal_nodes,
+                    all_descendants,
                 ),
                 "access_data": (
                     [traversal.seed_data] if node == ROOT_COLLECTION_ADDRESS else []
@@ -281,6 +411,9 @@ def persist_initial_erasure_request_tasks(
     )
     graph: networkx.DiGraph = build_erasure_networkx_digraph(traversal_nodes, end_nodes)
 
+    # Pre-compute all descendants in O(N+E) instead of O(N²)
+    all_descendants = compute_all_descendants(graph)
+
     for node in list(networkx.topological_sort(graph)):
         if privacy_request.get_existing_request_task(
             session, action_type=ActionType.erasure, collection_address=node
@@ -291,7 +424,12 @@ def persist_initial_erasure_request_tasks(
             session,
             data={
                 **base_task_data(
-                    graph, dataset_graph, privacy_request, node, traversal_nodes
+                    graph,
+                    dataset_graph,
+                    privacy_request,
+                    node,
+                    traversal_nodes,
+                    all_descendants,
                 ),
                 "action_type": ActionType.erasure,
             },
@@ -343,7 +481,11 @@ def update_erasure_tasks_with_access_data(
         privacy_request.id,
     )
 
-    for request_task in privacy_request.erasure_tasks:
+    # Defer large columns except _data_for_erasures which we're setting
+    erasure_tasks_query = RequestTask.query_with_deferred_data(
+        privacy_request.erasure_tasks, defer_erasure_data=False
+    )
+    for request_task in erasure_tasks_query:
         # I pull access data saved in the format suitable for erasures
         # off of the access nodes to be saved onto the erasure nodes.
         retrieved_task_data = _get_data_for_erasures(
@@ -369,6 +511,9 @@ def persist_new_consent_request_tasks(
     """
     graph: networkx.DiGraph = build_consent_networkx_digraph(traversal_nodes)
 
+    # Pre-compute all descendants in O(N+E) instead of O(N²)
+    all_descendants = compute_all_descendants(graph)
+
     for node in list(networkx.topological_sort(graph)):
         if privacy_request.get_existing_request_task(
             session, action_type=ActionType.consent, collection_address=node
@@ -378,7 +523,12 @@ def persist_new_consent_request_tasks(
             session,
             data={
                 **base_task_data(
-                    graph, dataset_graph, privacy_request, node, traversal_nodes
+                    graph,
+                    dataset_graph,
+                    privacy_request,
+                    node,
+                    traversal_nodes,
+                    all_descendants,
                 ),
                 # Consent nodes take in identity data from their upstream root node
                 "access_data": ([identity] if node == ROOT_COLLECTION_ADDRESS else []),
@@ -402,6 +552,7 @@ def collect_tasks_fn(
         data[tn.address] = tn
 
 
+@log_context
 def run_access_request(
     privacy_request: PrivacyRequest,
     policy: Policy,
@@ -428,41 +579,78 @@ def run_access_request(
             session, privacy_request, ActionType.access
         )
     else:
-        logger.info("Building access graph for {}", privacy_request.id)
-        traversal: Traversal = Traversal(graph, identity)
+        try:
+            traversal: Traversal = Traversal(graph, identity, policy=policy)
 
-        # Traversal.traverse populates traversal_nodes in place, adding parents and children to each traversal_node.
-        traversal_nodes: Dict[CollectionAddress, TraversalNode] = {}
-        end_nodes: List[CollectionAddress] = traversal.traverse(
-            traversal_nodes, collect_tasks_fn
-        )
-        # Save Access Request Tasks to the database
-        ready_tasks = persist_new_access_request_tasks(
-            session, privacy_request, traversal, traversal_nodes, end_nodes, graph
-        )
-
-        if (
-            policy.get_rules_for_action(action_type=ActionType.erasure)
-            and not privacy_request.erasure_tasks.count()
-        ):
-            # If applicable, go ahead and save Erasure Request Tasks to the Database.
-            # These erasure tasks aren't ready to run until the access graph is completed
-            # in full, but this makes sure the nodes in the graphs match.
-            erasure_end_nodes: List[CollectionAddress] = list(graph.nodes.keys())
-            persist_initial_erasure_request_tasks(
-                session, privacy_request, traversal_nodes, erasure_end_nodes, graph
+            # Traversal.traverse populates traversal_nodes in place, adding parents and children to each traversal_node.
+            traversal_nodes: Dict[CollectionAddress, TraversalNode] = {}
+            end_nodes: List[CollectionAddress] = traversal.traverse(
+                traversal_nodes, collect_tasks_fn
             )
 
-        # cache a map of collections -> data uses for the output package of access requests
-        privacy_request.cache_data_use_map(
-            format_data_use_map_for_caching(
-                {
-                    coll_address: tn.node.dataset.connection_key
-                    for (coll_address, tn) in traversal_nodes.items()
-                },
-                connection_configs,
+            # Snapshot manual task field instances for this privacy request
+            privacy_request.create_manual_task_instances(
+                session, get_connection_configs_with_manual_tasks(session)
             )
-        )
+
+            # Save Access Request Tasks to the database
+            ready_tasks = persist_new_access_request_tasks(
+                session, privacy_request, traversal, traversal_nodes, end_nodes, graph
+            )
+
+            if (
+                policy.get_rules_for_action(action_type=ActionType.erasure)
+                and not privacy_request.erasure_tasks.count()
+            ):
+                # If applicable, go ahead and save Erasure Request Tasks to the Database.
+                # These erasure tasks aren't ready to run until the access graph is completed
+                # in full, but this makes sure the nodes in the graphs match.
+                erasure_end_nodes: List[CollectionAddress] = list(graph.nodes.keys())
+                persist_initial_erasure_request_tasks(
+                    session, privacy_request, traversal_nodes, erasure_end_nodes, graph
+                )
+
+            # cache a map of collections -> data uses for the output package of access requests
+            privacy_request.cache_data_use_map(
+                format_data_use_map_for_caching(
+                    {
+                        coll_address: tn.node.dataset.connection_key
+                        for (coll_address, tn) in traversal_nodes.items()
+                    },
+                    connection_configs,
+                )
+            )
+
+            # Add execution logs for skipped nodes
+            if traversal.skipped_nodes:
+                logger.warning(
+                    "Some nodes were skipped, the identities provided were not sufficient to reach them"
+                )
+                for node_address, skip_message in traversal.skipped_nodes.items():
+                    logger.debug(skip_message)
+                    privacy_request.add_skipped_execution_log(
+                        session,
+                        connection_key=None,
+                        dataset_name="Dataset traversal",
+                        collection_name=node_address.replace(":", "."),
+                        message=skip_message,
+                        action_type=ActionType.access,
+                    )
+            # Or log success if all collections are reachable
+            else:
+                privacy_request.add_success_execution_log(
+                    session,
+                    connection_key=None,
+                    dataset_name="Dataset traversal",
+                    collection_name=None,
+                    message=f"Traversal successful for privacy request: {privacy_request.id}",
+                    action_type=ActionType.access,
+                )
+        except TraversalError as err:
+            log_traversal_error_and_update_privacy_request(
+                privacy_request, session, err
+            )
+            raise err
 
     for task in ready_tasks:
         log_task_queued(task, "main runner")
@@ -471,17 +659,77 @@ def run_access_request(
     return ready_tasks
 
 
+@log_context
 def run_erasure_request(  # pylint: disable = too-many-arguments
     privacy_request: PrivacyRequest,
     session: Session,
     privacy_request_proceed: bool = True,
+    graph: Optional[DatasetGraph] = None,
+    identity: Optional[Dict[str, Any]] = None,
 ) -> List[RequestTask]:
     """
     DSR 3.0: Update erasure Request Tasks that were built in the "run_access_request" step with data
     collected to build masking requests and queue the root task for processing.
 
     If we are reprocessing a Privacy Request, instead queue tasks whose upstream nodes are complete.
+
+    If erasure tasks are missing (e.g., task creation failed on a previous run), recreate them
+    from the current graph before proceeding.
     """
+    # Ensure erasure tasks exist when they should. Access tasks are created
+    # alongside erasure tasks in run_access_request, so if access tasks exist
+    # but erasure tasks are missing or incomplete, task creation failed
+    # partway through. persist_initial_erasure_request_tasks is idempotent
+    # (skips nodes that already have tasks), so this is safe for both the
+    # zero-task and partial-task cases.
+    #
+    # Use the privacy request's own policy (not the passed-in policy) to
+    # check if erasure rules exist, since the access step used that same
+    # policy to decide whether to create erasure tasks originally.
+    access_count = privacy_request.access_tasks.count()
+    erasure_count = privacy_request.erasure_tasks.count()
+    pr_policy = privacy_request.policy
+    if (
+        access_count > 0
+        and erasure_count < access_count
+        and pr_policy
+        and pr_policy.get_rules_for_action(action_type=ActionType.erasure)
+        and graph
+        and identity
+    ):
+        lock_key = f"erasure_task_recreation:{privacy_request.id}"
+        with redis_lock(lock_key, timeout=60) as lock:
+            if lock is None:
+                logger.info(
+                    "Another process is already recreating erasure tasks for "
+                    "privacy request {}, skipping.",
+                    privacy_request.id,
+                )
+            else:
+                # Re-check inside the lock in case another process already created them
+                erasure_count = privacy_request.erasure_tasks.count()
+                if erasure_count < access_count:
+                    logger.warning(
+                        "Privacy request {} has {} access tasks but only {} erasure tasks. "
+                        "Creating missing erasure tasks.",
+                        privacy_request.id,
+                        access_count,
+                        erasure_count,
+                    )
+                    traversal = Traversal(graph, identity, policy=pr_policy)
+                    traversal_nodes: Dict[CollectionAddress, TraversalNode] = {}
+                    traversal.traverse(traversal_nodes, collect_tasks_fn)
+                    erasure_end_nodes: List[CollectionAddress] = list(
+                        graph.nodes.keys()
+                    )
+                    persist_initial_erasure_request_tasks(
+                        session,
+                        privacy_request,
+                        traversal_nodes,
+                        erasure_end_nodes,
+                        graph,
+                    )
+
     update_erasure_tasks_with_access_data(session, privacy_request)
     ready_tasks: List[RequestTask] = (
         get_existing_ready_tasks(session, privacy_request, ActionType.erasure) or []
@@ -493,6 +741,7 @@ def run_erasure_request(  # pylint: disable = too-many-arguments
     return ready_tasks
 
 
+@log_context
 def run_consent_request(  # pylint: disable = too-many-arguments
     privacy_request: PrivacyRequest,
     graph: DatasetGraph,
@@ -513,11 +762,12 @@ def run_consent_request(  # pylint: disable = too-many-arguments
     """
 
     if privacy_request.consent_tasks.count():
+        logger.info("Consent processing: reprocessing existing tasks")
         ready_tasks: List[RequestTask] = get_existing_ready_tasks(
             session, privacy_request, ActionType.consent
         )
     else:
-        logger.info("Building consent graph for {}", privacy_request.id)
+        logger.info("Consent processing: building consent graph")
         traversal_nodes: Dict[CollectionAddress, TraversalNode] = {}
         # Unlike erasure and access graphs, we don't call traversal.traverse, but build a simpler
         # graph that just has one node per dataset
@@ -525,13 +775,26 @@ def run_consent_request(  # pylint: disable = too-many-arguments
             traversal_node = TraversalNode(node)
             traversal_nodes[col_address] = traversal_node
 
+        # Snapshot manual task field instances for this privacy request
+        privacy_request.create_manual_task_instances(
+            session, get_connection_configs_with_manual_tasks(session)
+        )
+
         ready_tasks = persist_new_consent_request_tasks(
             session, privacy_request, traversal_nodes, identity, graph
+        )
+        logger.info(
+            "Consent processing: persisted {} consent task(s)",
+            len(ready_tasks),
         )
 
     for task in ready_tasks:
         log_task_queued(task, "main runner")
         queue_request_task(task, privacy_request_proceed)
+    logger.info(
+        "Consent processing: queued {} task(s) for execution",
+        len(ready_tasks),
+    )
     return ready_tasks
 
 
@@ -543,11 +806,13 @@ def get_existing_ready_tasks(
     of creating new ones
     """
     ready: List[RequestTask] = []
-    request_tasks: Query = privacy_request.get_tasks_by_action(action_type)
-    if request_tasks.count():
-        incomplete_tasks: Query = request_tasks.filter(
+    request_task_count: int = privacy_request.get_tasks_by_action(action_type).count()
+    if request_task_count > 0:
+        # Defer loading large JSON columns to prevent OOM when reprocessing DSRs with many tasks
+        base_query = privacy_request.get_tasks_by_action(action_type).filter(
             RequestTask.status.notin_(COMPLETED_EXECUTION_LOG_STATUSES)
         )
+        incomplete_tasks: Query = RequestTask.query_with_deferred_data(base_query)
 
         for task in incomplete_tasks:
             # Checks if both upstream tasks are complete and the task is not currently in-flight (if using workers)
@@ -560,10 +825,9 @@ def get_existing_ready_tasks(
 
         if ready:
             logger.info(
-                "Found existing {} task(s) ready to reprocess: {}. Privacy Request: {}",
+                "Found existing {} task(s) ready to reprocess: {}.",
                 action_type.value,
                 [t.collection_address for t in ready],
-                privacy_request.id,
             )
         return ready
     return ready

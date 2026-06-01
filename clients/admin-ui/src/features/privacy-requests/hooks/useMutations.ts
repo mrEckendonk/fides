@@ -1,13 +1,17 @@
 import {
   useApproveRequestMutation,
   useDenyRequestMutation,
+  usePostPrivacyRequestFinalizeMutation,
+  useSoftDeleteRequestMutation,
 } from "~/features/privacy-requests/privacy-requests.slice";
-import { PrivacyRequestEntity } from "~/features/privacy-requests/types";
+import { PrivacyRequestResponse } from "~/types/api";
+
+import { PrivacyRequestEntity } from "../types";
 
 export const useMutations = ({
   subjectRequest,
 }: {
-  subjectRequest: PrivacyRequestEntity;
+  subjectRequest: PrivacyRequestResponse | PrivacyRequestEntity;
 }) => {
   // The `fixedCacheKey` options allows multiple components to reference the same mutation state for
   // a subject request.
@@ -17,13 +21,27 @@ export const useMutations = ({
   const [denyRequest, denyRequestResult] = useDenyRequestMutation({
     fixedCacheKey: subjectRequest.id,
   });
+  const [softDeleteRequest, softDeleteRequestResult] =
+    useSoftDeleteRequestMutation({
+      fixedCacheKey: subjectRequest.id,
+    });
+  const [finalizeRequest, finalizeRequestResult] =
+    usePostPrivacyRequestFinalizeMutation({
+      fixedCacheKey: subjectRequest.id,
+    });
 
-  const handleApproveRequest = () => approveRequest(subjectRequest);
+  const handleApproveRequest = () => approveRequest({ id: subjectRequest.id });
   const handleDenyRequest = (reason: string) =>
     denyRequest({ id: subjectRequest.id, reason });
+  const handleDeleteRequest = () =>
+    softDeleteRequest({ id: subjectRequest.id });
+  const handleFinalizeRequest = () =>
+    finalizeRequest({ privacyRequestId: subjectRequest.id });
 
   const isLoading =
-    denyRequestResult.isLoading || approveRequestResult.isLoading;
+    denyRequestResult.isLoading ||
+    approveRequestResult.isLoading ||
+    finalizeRequestResult.isLoading;
 
   return {
     approveRequest,
@@ -32,6 +50,10 @@ export const useMutations = ({
     denyRequestResult,
     handleApproveRequest,
     handleDenyRequest,
+    handleDeleteRequest,
+    handleFinalizeRequest,
+    softDeleteRequestResult,
+    finalizeRequestResult,
     isLoading,
   };
 };

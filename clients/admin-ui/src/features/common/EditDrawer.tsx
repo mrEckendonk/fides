@@ -1,20 +1,9 @@
-import {
-  Box,
-  Button,
-  CloseSolidIcon,
-  Drawer,
-  DrawerBody,
-  DrawerContent,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerOverlay,
-  IconButton,
-  Text,
-  TrashCanSolidIcon,
-} from "fidesui";
-import { ReactNode } from "react";
+import { Button, Drawer, Flex, Icons } from "fidesui";
+import type { ReactNode } from "react";
 
 interface Props {
+  title?: ReactNode;
+  /** @deprecated Use `title` prop instead */
   header?: ReactNode;
   description?: string;
   isOpen: boolean;
@@ -23,29 +12,15 @@ interface Props {
   footer?: ReactNode;
 }
 
-export const EditDrawerHeader = ({
-  title,
-  onDelete,
-}: {
-  title: string;
-  onDelete?: () => void;
-}) => (
-  <DrawerHeader py={2} display="flex" alignItems="center">
-    <Text mr="2">{title}</Text>
-    {onDelete ? (
-      <IconButton
-        aria-label="delete"
-        icon={<TrashCanSolidIcon />}
-        size="xs"
-        onClick={onDelete}
-        data-testid="delete-btn"
-      />
-    ) : null}
-  </DrawerHeader>
-);
+/**
+ * @deprecated Use `title` prop directly instead of wrapping in EditDrawerHeader.
+ */
+export const EditDrawerHeader = ({ title }: { title: string }): ReactNode =>
+  title;
 
 export const EditDrawerFooter = ({
-  onClose,
+  onDelete,
+  onEditYaml,
   formId,
   isSaving,
 }: {
@@ -55,25 +30,41 @@ export const EditDrawerFooter = ({
    */
   formId?: string;
   isSaving?: boolean;
-} & Pick<Props, "onClose">) => (
-  <DrawerFooter justifyContent="flex-start">
-    <Button onClick={onClose} mr={2} size="sm" variant="outline">
-      Cancel
-    </Button>
-    <Button
-      type="submit"
-      colorScheme="primary"
-      size="sm"
-      data-testid="save-btn"
-      form={formId}
-      isLoading={isSaving}
-    >
-      Save
-    </Button>
-  </DrawerFooter>
+  onDelete?: () => void;
+  onEditYaml?: () => void;
+}) => (
+  <Flex justify="space-between" align="center">
+    {onDelete ? (
+      <Button
+        aria-label="delete"
+        icon={<Icons.TrashCan />}
+        onClick={onDelete}
+        data-testid="delete-btn"
+      />
+    ) : (
+      <span />
+    )}
+    <div className="flex gap-2">
+      {onEditYaml && (
+        <Button onClick={onEditYaml} data-testid="edit-yaml-btn">
+          Edit YAML
+        </Button>
+      )}
+      <Button
+        htmlType="submit"
+        type="primary"
+        data-testid="save-btn"
+        form={formId}
+        loading={isSaving}
+      >
+        Save
+      </Button>
+    </div>
+  </Flex>
 );
 
 const EditDrawer = ({
+  title,
   header,
   description,
   isOpen,
@@ -81,29 +72,20 @@ const EditDrawer = ({
   children,
   footer,
 }: Props) => (
-  <Drawer placement="right" isOpen={isOpen} onClose={onClose} size="lg">
-    <DrawerOverlay />
-    <DrawerContent data-testid="edit-drawer-content" py={2}>
-      <Box display="flex" justifyContent="flex-end" mr={2}>
-        <Button
-          variant="ghost"
-          onClick={onClose}
-          data-testid="close-drawer-btn"
-        >
-          <CloseSolidIcon width="17px" />
-        </Button>
-      </Box>
-      {header}
-      <DrawerBody>
-        {description ? (
-          <Text fontSize="sm" mb={4}>
-            {description}
-          </Text>
-        ) : null}
-        {children}
-      </DrawerBody>
-      {footer}
-    </DrawerContent>
+  <Drawer
+    open={isOpen}
+    onClose={onClose}
+    title={title ?? header}
+    footer={footer}
+    maskClosable={false}
+    destroyOnHidden
+  >
+    <section data-testid="edit-drawer-content">
+      {description ? (
+        <p className="mb-4 text-sm text-gray-600">{description}</p>
+      ) : null}
+      {children}
+    </section>
   </Drawer>
 );
 

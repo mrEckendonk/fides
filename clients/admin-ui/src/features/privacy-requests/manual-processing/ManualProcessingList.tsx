@@ -1,22 +1,20 @@
-import { useAlert, useAPIHelper } from "common/hooks";
 import { useGetAllEnabledAccessManualHooksQuery } from "datastore-connections/datastore-connection.slice";
 import {
-  Box,
   Button,
-  Center,
-  Divider,
-  Heading,
-  Spinner,
-  Table,
-  TableContainer,
-  Tbody,
-  Td,
-  Text,
-  Tfoot,
-  Th,
-  Thead,
-  Tr,
-  VStack,
+  ChakraBox as Box,
+  ChakraCenter as Center,
+  ChakraTable as Table,
+  ChakraTableContainer as TableContainer,
+  ChakraTbody as Tbody,
+  ChakraTd as Td,
+  ChakraText as Text,
+  ChakraTfoot as Tfoot,
+  ChakraTh as Th,
+  ChakraThead as Thead,
+  ChakraTr as Tr,
+  ChakraVStack as VStack,
+  Spin,
+  useMessage,
 } from "fidesui";
 import {
   privacyRequestApi,
@@ -31,15 +29,22 @@ import {
 import React, { useEffect, useState } from "react";
 
 import { useAppDispatch } from "~/app/hooks";
+import { useAPIHelper } from "~/features/common/hooks";
 import { getActionTypes } from "~/features/common/RequestType";
 import { ActionType } from "~/types/api";
 
 import ManualAccessProcessingDetail from "./ManualAccessProcessingDetail";
 import ManualErasureProcessingDetail from "./ManualErasureProcessingDetail";
-import { ManualInputData } from "./types";
+import {
+  ManualInputData,
+  ManualInputDataFieldMap,
+  ManualProcessingDetailProps,
+} from "./types";
 
 type ActionConfig = {
-  ProcessingDetailComponent: React.FC<any>;
+  ProcessingDetailComponent: (
+    props: ManualProcessingDetailProps,
+  ) => JSX.Element;
   uploadMutation: (params: any) => any;
   getUploadedWebhookDataEndpoint: any;
 };
@@ -47,7 +52,7 @@ type ActionConfig = {
 const getActionConfig = (
   actionType: ActionType[],
   uploadManualAccessMutation: any,
-  uploadManualErasureMutation: any
+  uploadManualErasureMutation: any,
 ): ActionConfig | null => {
   if (actionType.includes(ActionType.ACCESS)) {
     return {
@@ -70,13 +75,15 @@ const getActionConfig = (
 
 type ManualProcessingListProps = {
   subjectRequest: PrivacyRequestEntity;
+  onComplete: () => void;
 };
 
-const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
+const ManualProcessingList = ({
   subjectRequest,
-}) => {
+  onComplete,
+}: ManualProcessingListProps) => {
   const dispatch = useAppDispatch();
-  const { errorAlert, successAlert } = useAlert();
+  const message = useMessage();
   const { handleError } = useAPIHelper();
   const [dataList, setDataList] = useState([] as unknown as ManualInputData[]);
   const [isCompleteDSRLoading, setIsCompleteDSRLoading] = useState(false);
@@ -101,14 +108,17 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
   } = getActionConfig(
     actionTypes,
     uploadManualWebhookAccessData,
-    uploadManualWebhookErasureData
+    uploadManualWebhookErasureData,
   ) as ActionConfig;
 
   const handleCompleteDSRClick = async () => {
     try {
       setIsCompleteDSRLoading(true);
       await resumePrivacyRequestFromRequiresInput(subjectRequest.id).unwrap();
-      successAlert(`Manual request has been received. Request now processing.`);
+      message.success(
+        `Manual request has been received. Request now processing.`,
+      );
+      onComplete();
     } catch (error) {
       handleError(error);
     } finally {
@@ -122,10 +132,9 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
       await uploadMutation(params).unwrap();
       const response = {
         connection_key: params.connection_key,
-        fields: {},
+        fields: {} as ManualInputDataFieldMap,
       };
       Object.entries(params.body).forEach(([key, value]) => {
-        // @ts-ignore
         response.fields[key] = value || "";
       });
       // Update the manual input data state
@@ -136,7 +145,7 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
         return item;
       });
       setDataList(newState);
-      successAlert(`Manual input successfully saved!`);
+      message.success(`Manual input successfully saved!`);
     } catch (error) {
       handleError(error);
     } finally {
@@ -157,9 +166,9 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
             getUploadedWebhookDataEndpoint.initiate({
               connection_key: k,
               privacy_request_id: subjectRequest.id,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       );
       Promise.allSettled(promises).then((results) => {
         const list: ManualInputData[] = [];
@@ -176,15 +185,14 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
               privacy_request_id: result.value.originalArgs.privacy_request_id,
             } as ManualInputData;
             Object.entries(result.value.data.fields).forEach(([key, value]) => {
-              // @ts-ignore
               item.fields[key] = value || "";
             });
             list.push(item);
           } else {
-            errorAlert(
+            message.error(
               `An error occurred while loading manual input data for ${
                 data![index].connection_config.name
-              }`
+              }`,
             );
           }
         });
@@ -201,7 +209,7 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
     data,
     dataList.length,
     dispatch,
-    errorAlert,
+    message,
     isSuccess,
     subjectRequest.id,
     getUploadedWebhookDataEndpoint,
@@ -217,23 +225,13 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
   return (
     <VStack align="stretch" spacing={8}>
       <Box>
-        <Heading color="gray.900" fontSize="lg" fontWeight="semibold" mb={4}>
-          Manual Processing
-        </Heading>
-        <Divider />
-      </Box>
-      <Box>
         <Text color="gray.700" fontSize="sm">
           The following table details the integrations that require manual input
           from you.
         </Text>
       </Box>
       <Box>
-        {(isFetching || isLoading) && (
-          <Center>
-            <Spinner />
-          </Center>
-        )}
+        {(isFetching || isLoading) && <Spin />}
         {isSuccess && data ? (
           <TableContainer>
             <Table size="sm" variant="unstyled">
@@ -263,7 +261,7 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
                               dataList.find(
                                 (i) =>
                                   i.connection_key ===
-                                  item.connection_config.key
+                                  item.connection_config.key,
                               ) as ManualInputData
                             }
                             isSubmitting={isSubmitting}
@@ -291,16 +289,10 @@ const ManualProcessingList: React.FC<ManualProcessingListProps> = ({
                   <Tr>
                     <Th pl="0px">
                       <Button
-                        color="white"
-                        bg="primary.800"
-                        fontSize="xs"
-                        h="24px"
-                        isLoading={isCompleteDSRLoading}
-                        loadingText="Completing DSR"
+                        type="primary"
+                        loading={isCompleteDSRLoading}
                         onClick={handleCompleteDSRClick}
-                        w="127px"
-                        _hover={{ bg: "primary.400" }}
-                        _active={{ bg: "primary.500" }}
+                        className="mt-2"
                       >
                         Complete DSR
                       </Button>

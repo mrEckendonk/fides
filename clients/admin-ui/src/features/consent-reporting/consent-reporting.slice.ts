@@ -1,38 +1,41 @@
+import { Dayjs } from "dayjs";
+
 import { baseApi } from "~/features/common/api.slice";
+import {
+  ConditionalTotalPage_ConsentReportingSchema_,
+  PreferencesSavedExtended,
+} from "~/types/api";
+import { DateRangeParams, PaginationQueryParams } from "~/types/query-params";
 
-type DateRange = {
-  startDate?: string;
-  endDate?: string;
-};
+const startOfDayIso = (date?: Dayjs | null) =>
+  date?.startOf("day")?.utc()?.toISOString();
 
-export function convertDateRangeToSearchParams({
-  startDate,
-  endDate,
-}: DateRange) {
-  let startDateISO;
-  if (startDate) {
-    startDateISO = new Date(startDate);
-    startDateISO.setUTCHours(0, 0, 0);
-  }
-
-  let endDateISO;
-  if (endDate) {
-    endDateISO = new Date(endDate);
-    endDateISO.setUTCHours(0, 0, 0);
-  }
-
-  return {
-    ...(startDateISO ? { created_gt: startDateISO.toISOString() } : {}),
-    ...(endDateISO ? { created_lt: endDateISO.toISOString() } : {}),
-  };
-}
+const endOfDayIso = (date?: Dayjs | null) =>
+  date?.endOf("day")?.utc()?.toISOString();
 
 export const consentReportingApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
-    downloadReport: build.query<any, DateRange>({
+    getCurrentPrivacyPreferences: build.query<
+      PreferencesSavedExtended,
+      { search: string }
+    >({
+      query: ({ search }) => ({
+        url: "current-privacy-preferences",
+        params: {
+          email: search,
+          phone_number: search,
+          fides_user_device_id: search,
+          external_id: search,
+        },
+      }),
+      providesTags: ["Current Privacy Preferences"],
+    }),
+
+    downloadReport: build.query<any, DateRangeParams>({
       query: ({ startDate, endDate }) => {
         const params = {
-          ...convertDateRangeToSearchParams({ startDate, endDate }),
+          created_gt: startOfDayIso(startDate),
+          created_lt: endOfDayIso(endDate),
           download_csv: "true",
         };
         return {
@@ -41,9 +44,31 @@ export const consentReportingApi = baseApi.injectEndpoints({
           responseHandler: "content-type",
         };
       },
+      providesTags: ["Consent Reporting Export"],
+    }),
+    getAllHistoricalPrivacyPreferences: build.query<
+      ConditionalTotalPage_ConsentReportingSchema_,
+      PaginationQueryParams & DateRangeParams & { includeTotal?: boolean }
+    >({
+      query: ({ page, size, startDate, endDate, includeTotal = true }) => {
+        return {
+          url: "historical-privacy-preferences",
+          params: {
+            page,
+            size,
+            request_timestamp_gt: startOfDayIso(startDate),
+            request_timestamp_lt: endOfDayIso(endDate),
+            include_total: includeTotal,
+          },
+        };
+      },
       providesTags: ["Consent Reporting"],
     }),
   }),
 });
 
-export const { useLazyDownloadReportQuery } = consentReportingApi;
+export const {
+  useLazyDownloadReportQuery,
+  useGetAllHistoricalPrivacyPreferencesQuery,
+  useLazyGetCurrentPrivacyPreferencesQuery,
+} = consentReportingApi;

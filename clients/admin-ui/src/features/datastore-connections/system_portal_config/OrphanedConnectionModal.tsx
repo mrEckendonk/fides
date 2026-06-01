@@ -1,24 +1,21 @@
-import { useAlert, useAPIHelper } from "common/hooks";
-import ConnectionTypeLogo from "datastore-connections/ConnectionTypeLogo";
+import ConnectionTypeLogo, {
+  connectionLogoFromConfiguration,
+} from "datastore-connections/ConnectionTypeLogo";
 import { ConnectionConfigFormValues } from "datastore-connections/system_portal_config/types";
 import {
-  Box,
   Button,
-  Flex,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraStack as Stack,
+  ChakraText as Text,
   Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
-  Stack,
-  Text,
-  useDisclosure,
+  useChakraDisclosure as useDisclosure,
+  useMessage,
 } from "fidesui";
 import React, { useMemo, useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
+import { useAPIHelper } from "~/features/common/hooks";
 import {
   selectConnectionTypeFilters,
   useGetAllConnectionTypesQuery,
@@ -37,15 +34,16 @@ type DataConnectionProps = {
   systemFidesKey: string;
 };
 
-const OrphanedConnectionModal: React.FC<DataConnectionProps> = ({
+const OrphanedConnectionModal = ({
   connectionConfigs,
   systemFidesKey,
-}) => {
+}: DataConnectionProps) => {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedConnectionConfig, setSelectedConnectionConfig] =
     useState<ConnectionConfigurationResponse | null>(null);
 
-  const { successAlert } = useAlert();
+  const message = useMessage();
+  const { handleError } = useAPIHelper();
 
   const [patchDatastoreConnection, { isLoading }] =
     usePatchSystemConnectionConfigsMutation();
@@ -54,7 +52,6 @@ const OrphanedConnectionModal: React.FC<DataConnectionProps> = ({
   const { data } = useGetAllConnectionTypesQuery(filters);
 
   const connectionOptions = useMemo(() => data?.items || [], [data]);
-  const { handleError } = useAPIHelper();
   const closeIfComplete = () => {
     if (isLoading) {
       return;
@@ -83,7 +80,7 @@ const OrphanedConnectionModal: React.FC<DataConnectionProps> = ({
           (ct) =>
             (selectedConnectionConfig?.saas_config &&
               ct.identifier === selectedConnectionConfig?.saas_config.type) ||
-            ct.identifier === selectedConnectionConfig?.connection_type
+            ct.identifier === selectedConnectionConfig?.connection_type,
         ) as ConnectionSystemTypeMap;
 
         const response = await patchConnectionConfig(
@@ -91,11 +88,11 @@ const OrphanedConnectionModal: React.FC<DataConnectionProps> = ({
           connectionOption,
           systemFidesKey,
           selectedConnectionConfig,
-          patchDatastoreConnection
+          patchDatastoreConnection,
         );
 
         if (response.succeeded[0]) {
-          successAlert(`Integration successfully linked!`);
+          message.success(`Integration successfully linked!`);
         }
 
         setSelectedConnectionConfig(null);
@@ -108,98 +105,75 @@ const OrphanedConnectionModal: React.FC<DataConnectionProps> = ({
 
   return (
     <>
-      <Button
-        loadingText="Deleting"
-        onClick={onOpen}
-        size="sm"
-        variant="outline"
-      >
-        Link integration
-      </Button>
+      <Button onClick={onOpen}>Link integration</Button>
 
-      <Modal isCentered isOpen={isOpen} size="lg" onClose={closeIfComplete}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Unlinked Integrations</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
-            <Stack direction="column" spacing="15px">
-              <Text
-                color="gray.600"
-                fontSize="sm"
-                fontWeight="sm"
-                lineHeight="20px"
-              >
-                These are all the integrations that are not linked to a system.
-                Please select an integration to link to a system.
-              </Text>
-              <Box maxHeight="350px" height="100%" overflowY="auto">
-                {connectionConfigs.map((connectionConfig) => (
-                  <Flex
-                    flexDirection="row"
-                    key={connectionConfig.key}
-                    alignItems="center"
-                    _hover={{
-                      bg: "gray.100",
-                      color: "gray.600",
-                    }}
-                    bg={
-                      selectedConnectionConfig?.key === connectionConfig.key
-                        ? "gray.100"
-                        : "unset"
-                    }
-                    color={
-                      selectedConnectionConfig?.key === connectionConfig.key
-                        ? "gray.600"
-                        : "unset"
-                    }
-                    cursor="pointer"
-                    onClick={() => {
-                      setSelectedConnectionConfig(connectionConfig);
-                    }}
-                  >
-                    <ConnectionTypeLogo data={connectionConfig} />
-                    <Text>{connectionConfig.name}</Text>
-                  </Flex>
-                ))}
-              </Box>
-            </Stack>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button
-              onClick={closeIfComplete}
-              marginRight="10px"
-              size="sm"
-              variant="outline"
-              bg="white"
-              width="50%"
-            >
+      <Modal
+        centered
+        destroyOnHidden
+        open={isOpen}
+        onCancel={closeIfComplete}
+        title="Unlinked Integrations"
+        footer={
+          <div className="flex gap-4">
+            <Button onClick={closeIfComplete} className="w-1/2">
               Cancel
             </Button>
             <Button
               onClick={handleLinkingConnection}
-              isLoading={isLoading}
-              isDisabled={!selectedConnectionConfig || isLoading}
-              mr={3}
-              size="sm"
-              variant="solid"
-              bg="primary.800"
-              color="white"
-              width="50%"
-              _loading={{
-                opacity: 1,
-                div: { opacity: 0.4 },
-              }}
-              _hover={{
-                bg: "gray.100",
-                color: "gray.600",
-              }}
+              loading={isLoading}
+              disabled={!selectedConnectionConfig || isLoading}
+              className="w-1/2"
             >
               Link integration
             </Button>
-          </ModalFooter>
-        </ModalContent>
+          </div>
+        }
+      >
+        <Stack direction="column" spacing="15px">
+          <Text
+            color="gray.600"
+            fontSize="sm"
+            fontWeight="sm"
+            lineHeight="20px"
+          >
+            These are all the integrations that are not linked to a system.
+            Please select an integration to link to a system.
+          </Text>
+          <Box maxHeight="350px" height="100%" overflowY="auto">
+            {connectionConfigs.map((connectionConfig) => (
+              <Flex
+                flexDirection="row"
+                key={connectionConfig.key}
+                alignItems="center"
+                _hover={{
+                  bg: "gray.100",
+                  color: "gray.600",
+                }}
+                bg={
+                  selectedConnectionConfig?.key === connectionConfig.key
+                    ? "gray.100"
+                    : "unset"
+                }
+                color={
+                  selectedConnectionConfig?.key === connectionConfig.key
+                    ? "gray.600"
+                    : "unset"
+                }
+                cursor="pointer"
+                onClick={() => {
+                  setSelectedConnectionConfig(connectionConfig);
+                }}
+                className="mb-2"
+              >
+                <ConnectionTypeLogo
+                  data={connectionLogoFromConfiguration(connectionConfig)}
+                  className="mr-2"
+                />
+                <Text>{connectionConfig.name}</Text>
+              </Flex>
+            ))}
+          </Box>
+        </Stack>
       </Modal>
     </>
   );

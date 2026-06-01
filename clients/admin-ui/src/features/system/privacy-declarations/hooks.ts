@@ -38,10 +38,11 @@ export const usePrivacyDeclarationData = ({
   const { isLoading: isLoadingDatasets } = useGetAllFilteredDatasetsQuery(
     {
       onlyUnlinkedDatasets: false,
+      minimal: true,
     },
     {
       skip: !includeDatasets,
-    }
+    },
   );
 
   const allDataCategories = useAppSelector(selectDataCategories);

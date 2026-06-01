@@ -1,36 +1,35 @@
 from __future__ import annotations
 
-from typing import Optional
+from datetime import datetime
+from typing import Dict, Optional, Type, Union
 
 from loguru import logger
 from pydantic import ValidationError
-from sqlalchemy import Column, Enum, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Session
-from sqlalchemy_utils.types.encrypted.encrypted_type import (
-    AesGcmEngine,
-    StringEncryptedType,
-)
 
 from fides.api.common_exceptions import MessageDispatchException
 from fides.api.db.base_class import Base, JSONTypeOverride
+from fides.api.db.encryption_utils import encrypted_type
 from fides.api.schemas.messaging.messaging import (
     EMAIL_MESSAGING_SERVICES,
     SMS_MESSAGING_SERVICES,
-    SUPPORTED_MESSAGING_SERVICE_SECRETS,
+    MessagingConnectionTestStatus,
     MessagingMethod,
+    MessagingServiceType,
+)
+from fides.api.schemas.messaging.shared_schemas import (
+    SUPPORTED_MESSAGING_SERVICE_SECRETS,
+    MessagingServiceSecretsAWS_SES,
     MessagingServiceSecretsMailchimpTransactional,
     MessagingServiceSecretsMailgun,
     MessagingServiceSecretsTwilioEmail,
     MessagingServiceSecretsTwilioSMS,
-    MessagingServiceType,
-)
-from fides.api.schemas.messaging.messaging_secrets_docs_only import (
-    possible_messaging_secrets,
+    PossibleMessagingSecrets,
 )
 from fides.api.util.logger import Pii
-from fides.config import CONFIG
 from fides.config.config_proxy import ConfigProxy
 
 
@@ -47,31 +46,34 @@ def get_messaging_method(
 
 def get_schema_for_secrets(
     service_type: MessagingServiceType,
-    secrets: possible_messaging_secrets,
+    secrets: PossibleMessagingSecrets,
 ) -> SUPPORTED_MESSAGING_SERVICE_SECRETS:
     """
     Returns the secrets that pertain to `service_type` represented as a Pydantic schema
     for validation purposes.
     """
+    messaging_secret_schema_type = Union[
+        Type[MessagingServiceSecretsMailgun],
+        Type[MessagingServiceSecretsTwilioSMS],
+        Type[MessagingServiceSecretsTwilioEmail],
+        Type[MessagingServiceSecretsMailchimpTransactional],
+        Type[MessagingServiceSecretsAWS_SES],
+    ]
     try:
-        schema = {
+        schema_mapping: Dict[MessagingServiceType, messaging_secret_schema_type] = {
             MessagingServiceType.mailgun: MessagingServiceSecretsMailgun,
             MessagingServiceType.twilio_text: MessagingServiceSecretsTwilioSMS,
             MessagingServiceType.twilio_email: MessagingServiceSecretsTwilioEmail,
             MessagingServiceType.mailchimp_transactional: MessagingServiceSecretsMailchimpTransactional,
-        }[service_type]
+            MessagingServiceType.aws_ses: MessagingServiceSecretsAWS_SES,
+        }
+        schema: messaging_secret_schema_type = schema_mapping[service_type]
     except KeyError:
         raise ValueError(
             f"`service_type` {service_type} has no supported `secrets` validation."
         )
 
-    try:
-        return schema.parse_obj(secrets)  # type: ignore
-    except ValidationError as exc:
-        # Pydantic requires validators raise either a ValueError, TypeError, or AssertionError
-        # so this exception is cast into a `ValueError`.
-        errors = [f"{err['msg']} {str(err['loc'])}" for err in exc.errors()]
-        raise ValueError(errors)
+    return schema.model_validate(secrets)
 
 
 class MessagingConfig(Base):
@@ -83,15 +85,10 @@ class MessagingConfig(Base):
         Enum(MessagingServiceType), index=True, unique=True, nullable=False
     )
     details = Column(MutableDict.as_mutable(JSONB), nullable=True)
+    last_test_timestamp = Column(DateTime(timezone=True))
+    last_test_succeeded = Column(Boolean)
     secrets = Column(
-        MutableDict.as_mutable(
-            StringEncryptedType(
-                JSONTypeOverride,
-                CONFIG.security.app_encryption_key,
-                AesGcmEngine,
-                "pkcs5",
-            )
-        ),
+        MutableDict.as_mutable(encrypted_type(type_in=JSONTypeOverride)),
         nullable=True,
     )  # Type bytea in the db
 
@@ -132,7 +129,7 @@ class MessagingConfig(Base):
         self,
         *,
         db: Session,
-        messaging_secrets: possible_messaging_secrets,
+        messaging_secrets: PossibleMessagingSecrets,
     ) -> None:
         """Creates or updates secrets associated with a config id"""
 
@@ -181,6 +178,18 @@ class MessagingConfig(Base):
                 f"Unknown notification_service_type {active_default_messaging_type} configured"
             )
 
+    def update_test_status(
+        self, test_status: MessagingConnectionTestStatus, db: Session
+    ) -> None:
+        """
+        Updates last_test_timestamp and last_test_succeeded after an attempt to send a test message.
+        """
+        self.last_test_timestamp = datetime.now()
+        self.last_test_succeeded = (
+            test_status == MessagingConnectionTestStatus.succeeded
+        )
+        self.save(db)
+
 
 def default_messaging_config_name(service_type: str) -> str:
     """
@@ -188,7 +197,7 @@ def default_messaging_config_name(service_type: str) -> str:
 
     Returns a name to be used in a default messaging config for the given type.
     """
-    return f"Default Messaging Config [{service_type}]"
+    return MessagingServiceType(service_type).human_readable
 
 
 def default_messaging_config_key(service_type: str) -> str:
@@ -197,4 +206,8 @@ def default_messaging_config_key(service_type: str) -> str:
 
     Returns a key to be used in a default messaging config for the given type.
     """
-    return f"default_messaging_config_{service_type.lower()}"
+    # Historically, when a key was not supplied, the service type string itself
+    # was used as the key (e.g. "mailgun").  Reverting to that behaviour keeps
+    # backward-compatibility with existing tests and API consumers that may rely
+    # on this convention.
+    return service_type.lower()

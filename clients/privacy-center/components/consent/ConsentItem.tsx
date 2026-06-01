@@ -1,24 +1,25 @@
-import React from "react";
-import {
-  Box,
-  Flex,
-  HStack,
-  Link,
-  Spacer,
-  Stack,
-  Text,
-  ExternalLinkIcon,
-} from "fidesui";
-
 import { GpcStatus } from "fides-js";
+import {
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraHStack as HStack,
+  ChakraLink as Link,
+  ChakraSpacer as Spacer,
+  ChakraStack as Stack,
+  ChakraText as Text,
+  Icons,
+} from "fidesui";
+import React from "react";
+
 import { GpcBadge, GpcInfo } from "~/features/consent/GpcMessages";
+
 import Toggle from "./Toggle";
 
 export type ConsentItemProps = {
   id: string;
   name: string;
   description: string;
-  highlight?: boolean;
+  highlight?: boolean | null;
   url?: string;
   value: boolean;
   gpcStatus: GpcStatus;
@@ -38,7 +39,8 @@ const ConsentItem = ({
   disabled,
 }: ConsentItemProps) => (
   <Box
-    backgroundColor={highlight ? "gray.100" : undefined}
+    className="pc-consent__toggle"
+    backgroundColor={highlight ? "gray.75" : undefined}
     borderRadius="md"
     data-testid={`consent-item-${id}`}
     paddingY={3}
@@ -47,7 +49,7 @@ const ConsentItem = ({
   >
     <Stack>
       <Flex direction="row">
-        <Text fontSize="lg" fontWeight="bold" color="gray.600" mb="4px">
+        <Text fontSize="lg" fontWeight="bold" color="gray.800" mb="4px">
           {name}
         </Text>
         <Spacer />
@@ -58,7 +60,7 @@ const ConsentItem = ({
 
       <HStack spacing={10} justifyContent="space-between">
         <Stack>
-          <Text fontSize="sm" fontWeight="medium" color="gray.600" mb="2px">
+          <Text fontSize="sm" fontWeight="medium" color="gray.800" mb="2px">
             {description}
           </Text>
           {url ? (
@@ -71,7 +73,9 @@ const ConsentItem = ({
                 >
                   Find out more about this consent
                 </Text>
-                <ExternalLinkIcon mx="2px" color="complimentary.500" />
+                <Box as="span" color="complimentary.500" mx="2px">
+                  <Icons.Launch size={14} />
+                </Box>
               </HStack>
             </Link>
           ) : null}
@@ -79,6 +83,7 @@ const ConsentItem = ({
 
         <Box>
           <Toggle
+            label={name}
             name={id}
             id={id}
             disabled={disabled}

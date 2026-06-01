@@ -1,32 +1,30 @@
 import { debounce } from "common/utils";
 import {
-  ArrowDownLineIcon,
-  Box,
   Button,
-  ButtonProps,
-  Flex,
-  Input,
-  InputGroup,
-  InputLeftElement,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  SearchLineIcon,
-  Text,
+  ChakraBox as Box,
+  ChakraFlex as Flex,
+  ChakraInput as Input,
+  ChakraInputGroup as InputGroup,
+  ChakraInputLeftElement as InputLeftElement,
+  ChakraText as Text,
+  Icons,
+  Popover,
   Tooltip,
 } from "fidesui";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAppSelector } from "~/app/hooks";
 import {
   selectConnectionTypeFilters,
   useGetAllConnectionTypesQuery,
 } from "~/features/connection-type";
-import ConnectionTypeLogo from "~/features/datastore-connections/ConnectionTypeLogo";
+import ConnectionTypeLogo, {
+  connectionLogoFromSystemType,
+} from "~/features/datastore-connections/ConnectionTypeLogo";
 import {
   ConnectionConfigurationResponse,
   ConnectionSystemTypeMap,
+  ConnectionType,
 } from "~/types/api";
 
 type ItemOption = {
@@ -69,18 +67,19 @@ type SelectDropdownProps = {
    * Disable the control
    */
   disabled?: boolean;
-  /**
-   * Menu button props
-   */
-  menuButtonProps?: ButtonProps;
 };
 
 type UseConnectionListDropDown = {
-  connectionConfig?: ConnectionConfigurationResponse;
+  connectionConfig?: ConnectionConfigurationResponse | null;
+  /**
+   * Connection type identifiers to hide from the dropdown
+   */
+  hiddenTypes?: ConnectionType[];
 };
 
 export const useConnectionListDropDown = ({
   connectionConfig,
+  hiddenTypes = [],
 }: UseConnectionListDropDown) => {
   const filters = useAppSelector(selectConnectionTypeFilters);
   const { data } = useGetAllConnectionTypesQuery(filters);
@@ -91,10 +90,13 @@ export const useConnectionListDropDown = ({
 
   const sortedItems = useMemo(
     () =>
-      [...connectionOptions].sort((a, b) =>
-        a.human_readable > b.human_readable ? 1 : -1
-      ),
-    [connectionOptions]
+      [...connectionOptions]
+        .filter(
+          (option) =>
+            !hiddenTypes.includes(option.identifier as ConnectionType),
+        )
+        .sort((a, b) => (a.human_readable > b.human_readable ? 1 : -1)),
+    [connectionOptions, hiddenTypes],
   );
 
   const dropDownOptions = useMemo(() => {
@@ -102,7 +104,7 @@ export const useConnectionListDropDown = ({
     sortedItems?.map((i) =>
       options.set(i.human_readable, {
         value: i,
-      })
+      }),
     );
     return options;
   }, [sortedItems]);
@@ -114,9 +116,9 @@ export const useConnectionListDropDown = ({
         (ct) =>
           ct.identifier === connectionConfig?.connection_type ||
           (connectionConfig?.saas_config &&
-            ct.identifier === connectionConfig?.saas_config.type)
+            ct.identifier === connectionConfig?.saas_config.type),
       )?.type || "ethyca",
-    [connectionConfig, connectionOptions]
+    [connectionConfig, connectionOptions],
   );
 
   useMemo(() => {
@@ -124,25 +126,38 @@ export const useConnectionListDropDown = ({
       (ct) =>
         (connectionConfig?.saas_config &&
           ct.identifier === connectionConfig?.saas_config.type) ||
-        ct.identifier === connectionConfig?.connection_type
+        ct.identifier === connectionConfig?.connection_type,
     );
     if (initialSelectedValue) {
       setSelectedValue(initialSelectedValue);
     }
   }, [connectionConfig, connectionOptions]);
 
+  // Sync selectedValue with latest connectionOptions when data refreshes
+  // This ensures the selected value is updated after operations like deleting a custom template
+  useEffect(() => {
+    if (selectedValue && connectionOptions.length > 0) {
+      const updatedValue = connectionOptions.find(
+        (ct) => ct.identifier === selectedValue.identifier,
+      );
+      // Only update if we found a match and it's a different object reference
+      if (updatedValue && updatedValue !== selectedValue) {
+        setSelectedValue(updatedValue);
+      }
+    }
+  }, [connectionOptions, selectedValue]);
+
   return { dropDownOptions, selectedValue, setSelectedValue, systemType };
 };
 
-const ConnectionListDropdown: React.FC<SelectDropdownProps> = ({
+const ConnectionListDropdown = ({
   disabled,
   hasClear = true,
   label,
   list,
-  menuButtonProps,
   onChange,
   selectedValue,
-}) => {
+}: SelectDropdownProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Hooks
@@ -158,12 +173,9 @@ const ConnectionListDropdown: React.FC<SelectDropdownProps> = ({
     setSearchTerm("");
     handleClose();
   };
-  const handleOpen = () => {
-    setIsOpen(true);
-  };
 
   const selectedText = [...list].find(
-    ([, option]) => option.value.identifier === selectedValue?.identifier
+    ([, option]) => option.value.identifier === selectedValue?.identifier,
   )?.[0];
 
   const handleSearchChange = useCallback(
@@ -173,132 +185,148 @@ const ConnectionListDropdown: React.FC<SelectDropdownProps> = ({
         setTimeout(() => inputRef.current?.focus(), 0);
       }
     },
-    []
+    [],
   );
 
   const debounceHandleSearchChange = useMemo(
     () => debounce(handleSearchChange, 100),
-    [handleSearchChange]
+    [handleSearchChange],
   );
 
   const filteredListItems = useMemo(
     () =>
       [...list].filter((l) =>
-        l[0].toLowerCase().includes(searchTerm.toLowerCase())
+        l[0].toLowerCase().includes(searchTerm.toLowerCase()),
       ),
-    [list, searchTerm]
+    [list, searchTerm],
+  );
+
+  const handleItemClick = (value: ConnectionSystemTypeMap) => {
+    onChange(value);
+    handleClose();
+  };
+
+  const content = (
+    <Box
+      lineHeight="1rem"
+      p="0"
+      maxHeight="400px"
+      overflow="hidden"
+      data-testid="select-dropdown-list"
+      width="272px"
+    >
+      <Box px="8px" mt={2}>
+        <InputGroup size="sm">
+          <InputLeftElement pointerEvents="none">
+            <Icons.Search color="var(--fidesui-neutral-500)" />
+          </InputLeftElement>
+          <Input
+            data-testid="input-search-integrations"
+            ref={inputRef}
+            autoComplete="off"
+            borderRadius="md"
+            name="search"
+            onChange={debounceHandleSearchChange}
+            placeholder="Search integrations"
+            size="sm"
+            type="search"
+          />
+        </InputGroup>
+      </Box>
+      {hasClear && (
+        <Flex borderBottom="1px" borderColor="gray.200" cursor="auto" p="8px">
+          <Button onClick={handleClear} size="small">
+            Clear
+          </Button>
+        </Flex>
+      )}
+      <Box overflowY="auto" maxHeight="272px">
+        {filteredListItems.map(([key, option]) => (
+          <Tooltip
+            title={option.toolTip}
+            key={key}
+            placement="rightTop"
+            mouseEnterDelay={0.5}
+          >
+            <Flex
+              alignItems="center"
+              cursor={option.isDisabled ? "not-allowed" : "pointer"}
+              opacity={option.isDisabled ? 0.4 : 1}
+              onClick={
+                option.isDisabled
+                  ? undefined
+                  : () => handleItemClick(option.value)
+              }
+              paddingTop="10px"
+              paddingRight="8.5px"
+              paddingBottom="10px"
+              paddingLeft="8.5px"
+              _hover={{ bg: option.isDisabled ? undefined : "gray.100" }}
+              color={
+                selectedValue === option.value ? "complimentary.500" : undefined
+              }
+              data-testid={`dropdown-item-${option.value.identifier}`}
+            >
+              <ConnectionTypeLogo
+                data={connectionLogoFromSystemType(option.value)}
+              />
+              <Text
+                ml={2}
+                fontSize="0.75rem"
+                noOfLines={1}
+                wordBreak="break-all"
+              >
+                {key}
+              </Text>
+              {option.value.custom && (
+                <Tooltip title="Custom integration" placement="top">
+                  <Box as="span" ml={2} display="inline-flex" cursor="pointer">
+                    <Icons.SettingsCheck size={16} />
+                  </Box>
+                </Tooltip>
+              )}
+            </Flex>
+          </Tooltip>
+        ))}
+      </Box>
+    </Box>
   );
 
   return (
-    <Menu
-      isLazy
-      onClose={handleClose}
-      onOpen={handleOpen}
-      strategy="fixed"
-      matchWidth
+    <Popover
+      content={content}
+      trigger="click"
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      afterOpenChange={(visible) => {
+        if (visible) {
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }
+      }}
+      styles={{ content: { padding: 0 } }}
     >
-      <MenuButton
+      <Button
         aria-label={selectedText ?? label}
-        as={Button}
-        color={selectedText ? "complimentary.500" : undefined}
         disabled={disabled}
-        fontWeight="normal"
-        rightIcon={<ArrowDownLineIcon />}
-        size="sm"
-        variant="outline"
-        _active={{
-          bg: "none",
-        }}
-        _hover={{
-          bg: "none",
-        }}
-        {...menuButtonProps}
+        icon={<Icons.ChevronDown />}
+        iconPlacement="end"
         data-testid="select-dropdown-btn"
-        width="272px"
-        textAlign="left"
+        className="w-[272px]"
       >
-        <Text isTruncated>{selectedText ?? label}</Text>
-      </MenuButton>
-      {isOpen ? (
-        <MenuList
-          id="MENU_LIST"
-          lineHeight="1rem"
-          p="0"
-          maxHeight="400px"
-          overflow="hidden"
-          data-testid="select-dropdown-list"
-          width="272px"
-        >
-          <Box px="8px" mt={2}>
-            <InputGroup size="sm">
-              <InputLeftElement pointerEvents="none">
-                <SearchLineIcon color="gray.300" h="17px" w="17px" />
-              </InputLeftElement>
-              <Input
-                data-testid="input-search-integrations"
-                ref={inputRef}
-                autoComplete="off"
-                autoFocus
-                borderRadius="md"
-                name="search"
-                onChange={debounceHandleSearchChange}
-                placeholder="Search integrations"
-                size="sm"
-                type="search"
-              />
-            </InputGroup>
-          </Box>
-          {hasClear && (
-            <Flex
-              borderBottom="1px"
-              borderColor="gray.200"
-              cursor="auto"
-              p="8px"
-            >
-              <Button onClick={handleClear} size="xs" variant="outline">
-                Clear
-              </Button>
-            </Flex>
+        <Flex alignItems="center" gap={1}>
+          <Text noOfLines={1} style={{ wordBreak: "break-all" }}>
+            {selectedText ?? label}
+          </Text>
+          {selectedValue?.custom && (
+            <Tooltip title="Custom integration" placement="top">
+              <Box as="span" display="inline-flex">
+                <Icons.SettingsCheck size={16} />
+              </Box>
+            </Tooltip>
           )}
-          {/* MenuItems are not rendered unless Menu is open */}
-          <Box overflowY="auto" maxHeight="272px">
-            {filteredListItems.map(([key, option]) => (
-              <Tooltip
-                aria-label={option.toolTip}
-                hasArrow
-                label={option.toolTip}
-                key={key}
-                placement="auto-start"
-                openDelay={500}
-                shouldWrapChildren
-              >
-                <MenuItem
-                  color={
-                    selectedValue === option.value
-                      ? "complimentary.500"
-                      : undefined
-                  }
-                  isDisabled={option.isDisabled}
-                  onClick={() => onChange(option.value)}
-                  paddingTop="10px"
-                  paddingRight="8.5px"
-                  paddingBottom="10px"
-                  paddingLeft="8.5px"
-                  _focus={{
-                    bg: "gray.100",
-                  }}
-                >
-                  <ConnectionTypeLogo data={option.value} />
-                  <Text ml={2} fontSize="0.75rem" isTruncated>
-                    {key}
-                  </Text>
-                </MenuItem>
-              </Tooltip>
-            ))}
-          </Box>
-        </MenuList>
-      ) : null}
-    </Menu>
+        </Flex>
+      </Button>
+    </Popover>
   );
 };
 

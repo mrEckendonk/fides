@@ -1,0 +1,122 @@
+name: Backend Static Code Checks
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches:
+      - "main"
+      - "release-**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  IMAGE: ethyca/fides:local
+  DEFAULT_PYTHON_VERSION: "3.13.11"
+  # Docker auth with read-only permissions.
+  DOCKER_USER: ${{ secrets.DOCKER_USER }}
+  DOCKER_RO_TOKEN: ${{ secrets.DOCKER_RO_TOKEN }}
+
+jobs:
+  Check-Backend-Changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has_backend_changes: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check for backend file changes
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          list-files: shell
+          filters: |
+            backend:
+              - '**/*.py'
+              - '**/*.pxl'
+              - 'pyproject.toml'
+              - 'noxfile.py'
+              - '.github/workflows/static_checks.yml'
+
+      - name: Log changed files
+        if: steps.filter.outputs.backend == 'true'
+        run: echo "${{ steps.filter.outputs.backend_files }}"
+
+  ###################
+  ## Static Checks ##
+  ###################
+  Static-Checks:
+    needs: Check-Backend-Changes
+    # Skip on merge_group — these checks already passed on the PR
+    if: needs.Check-Backend-Changes.outputs.has_backend_changes == 'true' && github.event_name != 'merge_group'
+    strategy:
+      # We want to run all static checks even if some fail, so we set fail-fast to false
+      fail-fast: false
+      matrix:
+        session_name:
+          [
+            '"ruff(check)"',
+            "mypy",
+            "check_install",
+            '"pytest(nox)"',
+          ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install dependencies and nox
+        run: |
+          uv venv
+          uv pip install setuptools==80.10.2 wheel
+          uv sync
+
+      - name: Cache Nox virtual environment
+        uses: actions/cache@v5
+        with:
+          path: .nox/
+          key: ${{ runner.os }}-uv-nox-${{ github.job }}-${{ matrix.session_name }}-${{ hashFiles('noxfile.py') }}-${{ hashFiles('noxfiles/**.py') }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-nox-${{ github.job }}-${{ matrix.session_name }}
+
+      - name: Run Static Check
+        run: uv run nox -s ${{ matrix.session_name }}
+
+
+
+  # Summary job for branch protection
+  Static-Checks-Summary:
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - Static-Checks
+    steps:
+      - name: Check job results
+        run: |
+          echo "Static-Checks: ${{ needs.Static-Checks.result }}"
+
+          if [ "${{ needs.Static-Checks.result }}" == "cancelled" ]; then
+            echo "❌ Static checks were cancelled"
+            exit 1
+          fi
+
+          if [ "${{ needs.Static-Checks.result }}" == "failure" ]; then
+            echo "❌ Some static checks failed"
+            exit 1
+          fi
+
+          echo "✅ Static checks completed"

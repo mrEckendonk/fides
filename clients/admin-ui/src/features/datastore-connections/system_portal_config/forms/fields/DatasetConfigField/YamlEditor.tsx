@@ -1,35 +1,42 @@
-import { useAlert } from "common/hooks/useAlert";
-import { Button, Flex, ModalFooter, SimpleGrid, Text, VStack } from "fidesui";
+import {
+  Button,
+  ChakraFlex as Flex,
+  ChakraText as Text,
+  ChakraVStack as VStack,
+  useMessage,
+} from "fidesui";
 import yaml, { YAMLException } from "js-yaml";
-import React, { useRef, useState } from "react";
+import React, { Fragment, useRef, useState } from "react";
 
 import { Editor, isYamlException } from "~/features/common/yaml/helpers";
 import YamlError from "~/features/common/yaml/YamlError";
-import { useGetAllDatasetsQuery } from "~/features/dataset";
+import { useGetAllFilteredDatasetsQuery } from "~/features/dataset";
 import { Dataset } from "~/types/api";
 
 type YamlEditorFormProps = {
   data: Dataset[];
   isSubmitting: boolean;
   onChange: (value: Dataset) => void;
+  onSubmit?: () => void;
   isLoading?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
 };
 
-const YamlEditor: React.FC<YamlEditorFormProps> = ({
+const YamlEditor = ({
   data = [],
   isSubmitting = false,
   onCancel,
+  onSubmit,
   disabled,
   isLoading,
   onChange,
-}) => {
+}: YamlEditorFormProps) => {
   const monacoRef = useRef(null);
-  const { errorAlert } = useAlert();
+  const message = useMessage();
   const yamlData = data.length > 0 ? yaml.dump(data) : undefined;
   const [yamlError, setYamlError] = useState(
-    undefined as unknown as YAMLException
+    undefined as unknown as YAMLException,
   );
   const [isTouched, setIsTouched] = useState(false);
   const [isEmptyState, setIsEmptyState] = useState(!yamlData);
@@ -37,7 +44,9 @@ const YamlEditor: React.FC<YamlEditorFormProps> = ({
   We need to get all the datasets, including saas datasets, so that we can verify that
   the fides_key is not already in use.
    */
-  const { data: allDatasets } = useGetAllDatasetsQuery();
+  const { data: allDatasets } = useGetAllFilteredDatasetsQuery({
+    minimal: true,
+  });
   const [overWrittenKeys, setOverWrittenKeys] = useState<string[]>([]);
 
   const validate = (value: string) => {
@@ -64,15 +73,25 @@ const YamlEditor: React.FC<YamlEditorFormProps> = ({
       setIsTouched(true);
       validate(value as string);
       setIsEmptyState(!value || value.trim() === "");
-      onChange(yaml.load(value || "", { json: true }) as Dataset);
+      const yamlDoc = yaml.load(value || "", { json: true });
+      if (Array.isArray(yamlDoc)) {
+        onChange(yamlDoc[0] as Dataset);
+      } else {
+        onChange(yamlDoc as Dataset);
+      }
       checkForOverWrittenKeys();
     } catch (error) {
       if (isYamlException(error)) {
         setYamlError(error);
       } else {
-        errorAlert("Could not parse the supplied YAML");
+        message.error("Could not parse the supplied YAML");
       }
     }
+  };
+
+  const handleSubmit = () => {
+    onSubmit?.();
+    onCancel?.();
   };
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -80,6 +99,9 @@ const YamlEditor: React.FC<YamlEditorFormProps> = ({
     monacoRef.current = editor;
     (monacoRef.current as any).focus();
   };
+
+  const submitDisabled =
+    disabled || isEmptyState || !isTouched || !!yamlError || isSubmitting;
 
   return (
     <Flex gap="97px">
@@ -107,42 +129,36 @@ const YamlEditor: React.FC<YamlEditorFormProps> = ({
             {overWrittenKeys.map((key, i) => {
               const isLast = i === overWrittenKeys.length - 1;
               return (
-                <>
+                <Fragment key={key}>
                   <Text color="complimentary.500" as="span" fontWeight="bold">
                     {key}
                   </Text>
                   {isLast ? "." : ", "}
-                </>
+                </Fragment>
               );
             })}
           </Text>
         ) : null}
-        <ModalFooter>
-          <SimpleGrid columns={2} width="100%">
-            {onCancel ? (
-              <Button
-                variant="outline"
-                mr={3}
-                onClick={onCancel}
-                data-testid="cancel-btn"
-                isDisabled={isLoading}
-              >
-                Cancel
-              </Button>
-            ) : null}
+        <div className="flex w-full justify-end gap-4">
+          {onCancel && (
             <Button
-              colorScheme="primary"
               onClick={onCancel}
-              data-testid="continue-btn"
-              isDisabled={
-                disabled || isEmptyState || !!yamlError || isSubmitting
-              }
-              isLoading={isSubmitting || isLoading}
+              data-testid="cancel-btn"
+              disabled={isLoading}
             >
-              Confirm
+              Cancel
             </Button>
-          </SimpleGrid>
-        </ModalFooter>
+          )}
+          <Button
+            type="primary"
+            onClick={handleSubmit}
+            data-testid="continue-btn"
+            disabled={submitDisabled}
+            loading={isSubmitting || isLoading}
+          >
+            Confirm
+          </Button>
+        </div>
       </VStack>
       {isTouched && (isEmptyState || yamlError) && (
         <YamlError isEmptyState={isEmptyState} yamlError={yamlError} />

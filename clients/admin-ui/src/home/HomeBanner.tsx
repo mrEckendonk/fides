@@ -1,40 +1,34 @@
-import { Flex, Text } from "fidesui";
+import { Flex, Text, Title, useThemeMode } from "fidesui";
 import * as React from "react";
 
 import { useFeatures } from "~/features/common/features";
 
-const HomeBanner: React.FC = () => {
+const HomeBanner = () => {
   const { systemsCount } = useFeatures();
+  const { resolvedMode } = useThemeMode();
+
+  // Read the background color directly from the theme config so it always
+  // matches the applied theme regardless of how Ant resolves CSS variables.
+  // Once we're using ant Layout globally, we won't need to hard-code the colors.
+  const bgColor =
+    resolvedMode === "dark"
+      ? "var(--fidesui-brand-bg-minos)"
+      : "var(--fidesui-brand-corinth)";
+
   const hasSystems = systemsCount > 0;
-  const bannerHeight = "300px";
-  const bannerTextWidth = "600px";
 
   return (
-    <Flex
-      position="relative"
-      height={bannerHeight}
-      background="linear-gradient(180deg, #FFFFFF 0%, #F8F8FF 100%);"
-      overflow="hidden"
-    >
-      <Flex
-        flexDir="column"
-        position="absolute"
-        height={bannerHeight}
-        width={bannerTextWidth}
-        maxWidth="100%"
-        padding="10"
-      >
+    <Flex style={{ background: bgColor }}>
+      <Flex vertical className="max-w-[600px] p-10 pb-16">
         {hasSystems && (
           <>
-            <Text fontSize="3xl" fontWeight="semibold">
-              Welcome back!
-            </Text>
-            <Text marginTop="1" fontSize="lg" fontWeight="semibold">
+            <Title level={1}>Welcome back!</Title>
+            <Text strong size="lg" className="mt-1 block">
               {`${systemsCount} system${
                 systemsCount > 1 ? "s" : ""
               } currently under management`}
             </Text>
-            <Text marginTop="1" fontSize="sm">
+            <Text className="mt-1 block">
               {`Fides is currently managing privacy for ${systemsCount} system${
                 systemsCount > 1 ? "s" : ""
               }. From here you can continue adding and managing systems, process privacy requests or generate reports for your privacy compliance requirements.`}
@@ -43,13 +37,11 @@ const HomeBanner: React.FC = () => {
         )}
         {!hasSystems && (
           <>
-            <Text fontSize="3xl" fontWeight="semibold">
-              Welcome to Fides!
-            </Text>
-            <Text marginTop="1" fontSize="lg" fontWeight="semibold">
+            <Title level={1}>Welcome to Fides!</Title>
+            <Text strong size="lg" className="mt-1 block">
               Start your privacy engineering journey today
             </Text>
-            <Text marginTop="1" fontSize="sm">
+            <Text className="mt-1 block">
               Step one in setting up your privacy engineering platform is adding
               the systems you need to manage. Use the links below to add and
               configure systems within Fides for data mapping and privacy
@@ -58,18 +50,6 @@ const HomeBanner: React.FC = () => {
           </>
         )}
       </Flex>
-      {/* Render the background image, using a min-width here to ensure there is
-      enough left margin to avoid colliding with the banner text above */}
-      <Flex
-        flexShrink={0}
-        width="100%"
-        minWidth="1120px"
-        height={bannerHeight}
-        backgroundImage="url('/images/config_splash.svg')"
-        backgroundSize="contain"
-        backgroundRepeat="no-repeat"
-        backgroundPosition="right"
-      />
     </Flex>
   );
 };

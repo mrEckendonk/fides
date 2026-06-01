@@ -1,19 +1,13 @@
 import { Header } from "@tanstack/react-table";
 import {
-  Box,
   Button,
-  Divider,
-  Heading,
+  ChakraBox as Box,
+  ChakraHeading as Heading,
   Modal,
-  ModalBody,
-  ModalCloseButton,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  ModalOverlay,
 } from "fidesui";
 import React, { ReactNode, useContext, useMemo } from "react";
 
+import { MODAL_SIZE } from "~/features/common/modals/modal-sizes";
 import { DatamapRow } from "~/features/datamap";
 import {
   DATA_CATEGORY_COLUMN_ID,
@@ -42,17 +36,14 @@ interface FilterModalProps {
   onClose: () => void;
 }
 
-const FilterModal: React.FC<FilterModalProps> = ({ isOpen, onClose }) => {
+const FilterModal = ({ isOpen, onClose }: FilterModalProps) => {
   const { tableInstance } = useContext(DatamapTableContext);
 
-  const headerGroups = useMemo(
-    () => tableInstance?.getHeaderGroups() || [],
-    [tableInstance]
-  );
+  const headerGroups = tableInstance?.getHeaderGroups();
 
   const renderHeaderFilter = (
     headers: Header<DatamapRow, unknown>[],
-    columnId: string
+    columnId: string,
   ): ReactNode =>
     headers
       .filter((header) => header.id === columnId)
@@ -62,12 +53,12 @@ const FilterModal: React.FC<FilterModalProps> = ({ isOpen, onClose }) => {
 
   const anyFiltersActive = (
     headers: Header<DatamapRow, unknown>[],
-    columnIds: string[]
+    columnIds: string[],
   ): boolean => headers.some((column) => columnIds.indexOf(column.id) > -1);
 
   const headers = useMemo(
     () => headerGroups?.[0].headers || [],
-    [headerGroups]
+    [headerGroups],
   );
 
   const resetFilters = () => {
@@ -75,53 +66,39 @@ const FilterModal: React.FC<FilterModalProps> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} isCentered size="2xl">
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>Filters</ModalHeader>
-        <ModalCloseButton />
-        <Divider />
-        <ModalBody maxH="85vh" padding="0px" overflowX="auto">
-          {anyFiltersActive(headers, [
+    <Modal
+      open={isOpen}
+      onCancel={onClose}
+      centered
+      destroyOnHidden
+      title="Filters"
+      width={MODAL_SIZE.lg}
+      footer={
+        <Box display="flex" justifyContent="flex-end" gap={3}>
+          <Button onClick={resetFilters}>Reset Filters</Button>
+          <Button onClick={onClose} type="primary">
+            Done
+          </Button>
+        </Box>
+      }
+    >
+      {anyFiltersActive(headers, [
+        SYSTEM_PRIVACY_DECLARATION_DATA_USE_NAME,
+        DATA_CATEGORY_COLUMN_ID,
+        SYSTEM_PRIVACY_DECLARATION_DATA_SUBJECTS_NAME,
+      ]) ? (
+        <FilterSection heading="Privacy attributes">
+          {renderHeaderFilter(
+            headers,
             SYSTEM_PRIVACY_DECLARATION_DATA_USE_NAME,
-            DATA_CATEGORY_COLUMN_ID,
+          )}
+          {renderHeaderFilter(headers, DATA_CATEGORY_COLUMN_ID)}
+          {renderHeaderFilter(
+            headers,
             SYSTEM_PRIVACY_DECLARATION_DATA_SUBJECTS_NAME,
-          ]) ? (
-            <FilterSection heading="Privacy attributes">
-              {renderHeaderFilter(
-                headers,
-                SYSTEM_PRIVACY_DECLARATION_DATA_USE_NAME
-              )}
-              {renderHeaderFilter(headers, DATA_CATEGORY_COLUMN_ID)}
-              {renderHeaderFilter(
-                headers,
-                SYSTEM_PRIVACY_DECLARATION_DATA_SUBJECTS_NAME
-              )}
-            </FilterSection>
-          ) : null}
-        </ModalBody>
-        <ModalFooter>
-          <Box display="flex" justifyContent="space-between" width="100%">
-            <Button
-              variant="outline"
-              size="sm"
-              mr={3}
-              onClick={resetFilters}
-              flexGrow={1}
-            >
-              Reset Filters
-            </Button>
-            <Button
-              colorScheme="primary"
-              size="sm"
-              onClick={onClose}
-              flexGrow={1}
-            >
-              Done
-            </Button>
-          </Box>
-        </ModalFooter>
-      </ModalContent>
+          )}
+        </FilterSection>
+      ) : null}
     </Modal>
   );
 };

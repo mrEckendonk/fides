@@ -1,10 +1,24 @@
-import type { Fides, FidesOptions } from "../docs";
+import type {
+  Fides,
+  FidesEventType,
+  FidesExperienceConfig,
+  FidesOptions,
+} from "../docs";
+import type { aep } from "../integrations/aep";
+import { blueconic } from "../integrations/blueconic";
+import type { gcm } from "../integrations/gcm";
+import type { gtm } from "../integrations/gtm";
+import type { matomo } from "../integrations/matomo";
+import type { meta } from "../integrations/meta";
+import type { shopify } from "../integrations/shopify";
+import type { FidesEventDetail } from "./events";
 import type { GPPFieldMapping, GPPSettings } from "./gpp/types";
 import type {
   GVLJson,
-  GVLTranslations,
   TCFFeatureRecord,
   TCFFeatureSave,
+  TcfOtherConsent,
+  TcfPublisherRestriction,
   TCFPurposeConsentRecord,
   TCFPurposeLegitimateInterestsRecord,
   TCFPurposeSave,
@@ -17,12 +31,14 @@ import type {
   TCFVendorRelationships,
   TCFVendorSave,
 } from "./tcf/types";
-import { TcfOtherConsent } from "./tcf/types";
-import type { gtm } from "../integrations/gtm";
-import type { meta } from "../integrations/meta";
-import type { shopify } from "../integrations/shopify";
 
 export type EmptyExperience = Record<PropertyKey, never>;
+
+export interface AttributionOptions {
+  anchorText: string;
+  destinationUrl: string;
+  nofollow: boolean;
+}
 
 export interface FidesConfig {
   // Set the consent defaults from a "legacy" Privacy Center config.json.
@@ -30,9 +46,15 @@ export interface FidesConfig {
   // Set the "experience" to be used for this Fides.js instance -- overrides the "legacy" config.
   // If defined or is empty, Fides.js will not fetch experience config.
   // If undefined, Fides.js will attempt to fetch its own experience config.
-  experience?: PrivacyExperience | EmptyExperience;
+  experience?:
+    | PrivacyExperience
+    | PrivacyExperienceMinimal
+    | EmptyExperience
+    | undefined;
   // Set the geolocation for this Fides.js instance. If *not* set, Fides.js will fetch its own geolocation.
   geolocation?: UserGeolocation;
+  // Set the property id for this Fides.js instance. If *not* set, property id will not be saved in the consent preferences or notices served.
+  propertyId?: string;
   // Global options for this Fides.js instance
   options: FidesInitOptions;
 }
@@ -64,7 +86,7 @@ export interface FidesInitOptions {
 
   // ID of the DOM element that should trigger the consent modal (default: "fides-modal-link")
   // If set to empty string "", fides.js will not attempt to bind the modal link to the click handler
-  modalLinkId: string | null;
+  modalLinkId: string;
 
   // URL for the Privacy Center, used to customize consent preferences. Required.
   privacyCenterUrl: string;
@@ -72,17 +94,14 @@ export interface FidesInitOptions {
   // URL for the Fides API, used to fetch and save consent preferences. Required.
   fidesApiUrl: string;
 
-  // URL for Server-side Fides API, used to fetch geolocation and consent preference. Optional.
-  serverSideFidesApiUrl: string;
-
   // Whether we should show the TCF modal
   tcfEnabled: boolean;
 
   // Whether to include the GPP extension
   gppEnabled: boolean;
 
-  // Whether we should "embed" the fides.js overlay UI (ie. “Layer 2”) into a web page instead of as a pop-up
-  // overlay, and never render the banner (ie. “Layer 1”).
+  // Whether we should "embed" the fides.js overlay UI (ie. "Layer 2") into a web page instead of as a pop-up
+  // overlay, and never render the banner (ie. "Layer 1").
   fidesEmbed: boolean;
 
   // Whether we should disable saving consent preferences to the Fides API.
@@ -127,6 +146,81 @@ export interface FidesInitOptions {
 
   // Shows fides.js overlay UI on load deleting the fides_consent cookie as if no preferences have been saved
   fidesClearCookie: boolean;
+
+  // Whether to render the brand link in the footer of the modal
+  showFidesBrandLink: boolean;
+
+  // Attribution link options for SEO
+  attribution?: AttributionOptions;
+
+  // Whether to reject all consent preferences by default
+  fidesConsentOverride: ConsentMethod.ACCEPT | ConsentMethod.REJECT | null;
+
+  // If defined, maps OT cookie consent to Fides cookie consent
+  otFidesMapping?: string | null;
+
+  // If defined, maps Transcend cookie consent to Fides cookie consent
+  transcendFidesMapping?: string | null;
+
+  // List of notice_keys to disable their respective Toggle elements in the CMP Overlay
+  fidesDisabledNotices: string[] | null;
+
+  // ATT authorization status from Apple's ATTrackingManager. When "denied" or "restricted",
+  // notices where att_exempt is false are disabled (locked to opt_out).
+  // Intended for use by mobile SDKs after the user denies Apple's App Tracking Transparency prompt.
+  fidesAttStatus?: FidesAttStatus;
+
+  // List of system names to exclude from notice asset disclosure (e.g., cookies) in responses
+  fidesDisabledSystems?: string[] | null;
+
+  // Determines how non-applicable privacy notices are handled (omit or include)
+  fidesConsentNonApplicableFlagMode: ConsentNonApplicableFlagMode | null;
+
+  // The type of value to use for consent (boolean or consent_mechanism)
+  fidesConsentFlagType: ConsentFlagType | null;
+
+  /**
+   * Controls when the deprecated FidesInitialized event should be dispatched.
+   * "multiple" = fires alongside both FidesReady and FidesConsentLoaded events
+   * "once" = fires alongside FidesReady only
+   * "disable" = never fires
+   * Defaults to "once".
+   */
+  fidesInitializedEventMode: "multiple" | "once" | "disable";
+
+  /**
+   * A URL-like route that determines which view is shown by default when the consent modal is opened.
+   * Currently only affects TCF.
+   *
+   * - "/tcf/purposes" ("purposes" tab will be shown if not set)
+   * - "/tcf/features"
+   * - "/tcf/vendors"
+   *
+   * Defaults to `undefined`.
+   */
+  fidesModalDefaultView?: FidesModalDefaultView;
+
+  /**
+   * Whether to show the modal immediately on page load.
+   *
+   * - "immediate" = skips banner and shows the modal immediately on page load
+   * - "default" = shows the modal when the "manage preferences" link is clicked (default behavior)
+   *
+   */
+  fidesModalDisplay?: "immediate" | "default";
+
+  // Controls handling of unsupported repeated script loading
+  fidesUnsupportedRepeatedScriptLoading?:
+    | "enabled_acknowledge_not_supported"
+    | "disabled";
+
+  fidesCookieSuffix?: string | null;
+
+  // Cookie compression method to reduce cookie size
+  fidesCookieCompression: "gzip" | "none";
+
+  // Custom user ID provided by customer to identify the user across their systems
+  fidesExternalId: string | null;
 }
 
 /**
@@ -136,37 +230,122 @@ export interface FidesInitOptions {
  * ensure that the documented interface isn't overly specific in areas we may
  * need to change.
  */
-export interface FidesGlobal extends Fides {
+export interface FidesGlobal extends Omit<
+  Fides,
+  "gtm" | "consent" | "updateConsent"
+> {
   cookie?: FidesCookie;
   config?: FidesConfig;
   consent: NoticeConsent;
-  experience?: PrivacyExperience | EmptyExperience;
+  encodeNoticeConsentString: (
+    noticeConsent: Record<string, boolean | 0 | 1>,
+  ) => string;
+  decodeNoticeConsentString: (base64String: string) => {
+    [noticeKey: string]: boolean;
+  };
+  experience:
+    | PrivacyExperience
+    | PrivacyExperienceMinimal
+    | EmptyExperience
+    | undefined;
   fides_meta: FidesJSMeta;
   fides_string?: string | undefined;
   geolocation?: UserGeolocation;
+  locale: string;
   identity: FidesJSIdentity;
   initialized: boolean;
   options: FidesInitOptions;
-  saved_consent: NoticeConsent;
+  saved_consent: NoticeValues;
   tcf_consent: TcfOtherConsent;
+  version: string;
+  aep: typeof aep;
+  blueconic: typeof blueconic;
+  gcm: typeof gcm;
   gtm: typeof gtm;
+  matomo: typeof matomo;
   init: (config?: FidesConfig) => Promise<void>;
   meta: typeof meta;
+  onFidesEvent: (
+    type: FidesEventType,
+    callback: (evt: FidesEventDetail) => void,
+  ) => () => void;
   reinitialize: () => Promise<void>;
   shopify: typeof shopify;
   shouldShowExperience: () => boolean;
+  setIdentity: (identity: SetIdentityOptions) => Promise<void>;
   showModal: () => void;
+  updateConsent: (options: {
+    consent?: NoticeConsent;
+    fidesString?: string;
+    validation?: UpdateConsentValidation;
+  }) => Promise<void>;
 }
 
 /**
- * Store the user's consent preferences as notice_key -> boolean pairs, e.g.
+ * Options for Fides.setIdentity(). Only external_id is supported today.
+ */
+export interface SetIdentityOptions {
+  /** Custom user ID to set on the consent cookie; included in API calls. */
+  external_id?: string;
+}
+
+/**
+ * Store the OneTrust to Fides consent mappings from ot_group_id -> array of fides notice keys, e.g.
+ * {
+ *     C0001: ["essential"],
+ *     C0002: ["analytics_opt_out"],
+ *     C0004: ["advertising", "marketing"],
+ *   }
+ */
+export interface OtToFidesConsentMapping {
+  [key: string]: string[];
+}
+
+/**
+ * Store the Transcend to Fides consent mappings from transcend_purpose -> array of fides notice keys, e.g.
+ * {
+ *     Analytics: ["analytics_opt_out"],
+ *     SaleOfInfo: ["data_sales"],
+ *     Advertising: ["advertising", "marketing"],
+ *   }
+ */
+export interface TranscendToFidesConsentMapping {
+  [key: string]: string[];
+}
+
+/**
+ * Store the user's consent preferences as well as implicit consent preferences if applicable
+ * as notice_key -> boolean pairs or notice_key -> consent_mechanism pairs, depending on
+ * the value of `Fides.options.fidesConsentFlagType` and `Fides.options.fidesConsentNonApplicableFlagMode`.
+ * NOTE: When sending consent preferences externally (browser cookie, window events, Fides.consent, etc.),
+ * use this `NoticeConsent` Type. For accepting preferences (updateConsent, etc.) and for internal tracking
+ * and processing, use the `NoticeValues` Type.
+ * eg.
+ * {
+ *   "data_sales": false,
+ *   "analytics": true,
+ *   ...
+ * }
+ * or
+ * {
+ *   "data_sales": "opt_out",
+ *   "analytics": "not_applicable",
+ *   ...
+ * }
+ */
+export type NoticeConsent = Record<string, boolean | UserConsentPreference>;
+
+/**
+ * Store the user's explicit consent preferences as notice_key -> boolean pairs,
+ * regardless of the value of `Fides.options.fidesConsentFlagType` and
+ * `Fides.options.fidesConsentNonApplicableFlagMode`.
  * {
  *   "data_sales": false,
  *   "analytics": true,
  *   ...
  * }
  */
-export type NoticeConsent = Record<string, boolean>;
+export type NoticeValues = Record<string, boolean>;
 
 /**
  * Store the user's identity values, e.g.
@@ -196,12 +375,11 @@ export interface FidesCookie {
   fides_string?: string;
   tcf_consent: TcfOtherConsent;
   tcf_version_hash?: ExperienceMeta["version_hash"];
+  non_applicable_notice_keys?: string[];
 }
 
 export type GetPreferencesFnResp = {
-  // Overrides the value for Fides.consent for the user’s notice-based preferences (e.g. { data_sales: false })
-  consent?: NoticeConsent;
-  // Overrides the value for Fides.fides_string for the user’s TCF+AC preferences (e.g. 1a2a3a.AAABA,1~123.121)
+  // Overrides the value for Fides.fides_string for the user's consent preferences
   fides_string?: string;
   // An explicit version hash for provided fides_string when calculating whether consent should be re-triggered
   version_hash?: string;
@@ -220,7 +398,7 @@ export type FidesApiOptions = {
     consentMethod: ConsentMethod,
     consent: NoticeConsent,
     fides_string: string | undefined,
-    experience: PrivacyExperience
+    experience: PrivacyExperience | PrivacyExperienceMinimal,
   ) => Promise<void>;
   /**
    * Intake a custom function that is used to override users' saved preferences.
@@ -234,17 +412,17 @@ export type FidesApiOptions = {
    * @param {string} userLocationString - user location
    * @param {string} fidesUserDeviceId - (deprecated) We no longer support handling user preferences on the experience using fidesUserDeviceId
    */
-  getPrivacyExperienceFn?: (
+  getPrivacyExperienceFn?: <T>(
     userLocationString: string,
-    fidesUserDeviceId?: string | null
-  ) => Promise<PrivacyExperience | EmptyExperience>;
+    fidesUserDeviceId?: string | null,
+  ) => Promise<T | EmptyExperience>;
   /**
    * Intake a custom function that is used to save notices served for reporting purposes.
    *
    * @param {object} request - consent served records to save
    */
   patchNoticesServedFn?: (
-    request: RecordConsentServedRequest
+    request: RecordConsentServedRequest,
   ) => Promise<RecordsServedResponse | null>;
 };
 
@@ -258,7 +436,7 @@ export class SaveConsentPreference {
   constructor(
     notice: PrivacyNotice,
     consentPreference: UserConsentPreference,
-    noticeHistoryId?: string
+    noticeHistoryId?: string,
   ) {
     this.notice = notice;
     this.consentPreference = consentPreference;
@@ -324,6 +502,10 @@ export type TCMobileData = {
    * Binary String: The '0' or '1' at position n – where n's indexing begins at 0 – indicates the opt-in status for special feature ID n+1; false and true respectively. eg. '1' at index 0 is opt-in true for special feature ID 1
    */
   IABTCF_SpecialFeaturesOptIns?: string;
+  /**
+   * Binary String: The '0' or '1' at position n – where n's indexing begins at 0 – indicates the status of disclosure in CMP for Vendor ID n+1; false and true respectively. eg. '1' at index 0 is vendor disclosed true for vendor ID 1
+   */
+  IABTCF_DisclosedVendors?: string;
   IABTCF_PublisherConsent?: string;
   IABTCF_PublisherLegitimateInterests?: string;
   IABTCF_PublisherCustomPurposesConsents?: string;
@@ -401,6 +583,8 @@ export type PrivacyExperience = {
   tcf_system_consents?: Array<TCFVendorConsentRecord>;
   tcf_system_legitimate_interests?: Array<TCFVendorLegitimateInterestsRecord>;
   tcf_system_relationships?: Array<TCFVendorRelationships>;
+  tcf_publisher_country_code?: string;
+  tcf_publisher_restrictions?: Array<TcfPublisherRestriction>;
 
   /**
    * @deprecated For backwards compatibility purposes, whether the Experience should show a banner.
@@ -415,26 +599,82 @@ export type PrivacyExperience = {
    */
   experience_config?: ExperienceConfig; // NOTE: uses our client-side ExperienceConfig type
   gvl?: GVLJson; // NOTE: uses our client-side GVLJson type
-  gvl_translations?: GVLTranslations;
   meta?: ExperienceMeta;
+  available_locales?: string[];
+  vendor_count?: number;
+  minimal_tcf?: boolean;
+  non_applicable_privacy_notices?: Array<PrivacyNotice["notice_key"]>;
+  /**
+   * If valid experience and property_id is provided, the experience will be
+   * associated with the property
+   */
+  property_id?: string;
 };
+
+interface ExperienceConfigTranslationMinimal extends Partial<ExperienceConfigTranslation> {
+  language: string;
+  privacy_experience_config_history_id: string;
+}
+
+export interface ExperienceConfigMinimal extends Pick<
+  ExperienceConfig,
+  | "id"
+  | "component"
+  | "auto_detect_language"
+  | "dismissable"
+  | "auto_subdomain_cookie_deletion"
+  | "cookie_deletion_based_on_host_domain"
+  | "layer1_button_options"
+  | "reject_all_mechanism"
+> {
+  translations: ExperienceConfigTranslationMinimal[];
+}
+
+export interface PrivacyExperienceMinimal extends Pick<
+  PrivacyExperience,
+  | "id"
+  | "property_id"
+  | "privacy_notices"
+  | "available_locales"
+  | "gpp_settings"
+  | "vendor_count"
+  | "minimal_tcf"
+  | "gvl"
+  | "tcf_publisher_country_code"
+  | "non_applicable_privacy_notices"
+  | "tcf_publisher_restrictions"
+> {
+  experience_config: ExperienceConfigMinimal;
+  vendor_count?: number;
+  meta?: Pick<ExperienceMeta, "version_hash">;
+  tcf_purpose_names?: string[];
+  tcf_special_feature_names?: string[];
+  tcf_purpose_consent_ids?: number[];
+  tcf_purpose_legitimate_interest_ids?: number[];
+  tcf_special_purpose_ids?: number[];
+  tcf_feature_ids?: number[];
+  tcf_special_feature_ids?: number[];
+  tcf_vendor_consent_ids?: string[];
+  tcf_vendor_legitimate_interest_ids?: string[];
+  tcf_system_consent_ids?: string[];
+  tcf_system_legitimate_interest_ids?: string[];
+}
 
 /**
  * Expected API response for an ExperienceConfig
  *
- * NOTE: This type is slightly-edited version of the autogenerated
- * "ExperienceConfigResponseNoNotices" type, to either tighten or relax the
- * types in FidesJS as needed by the client-code, so these types should be
- * updated with care!
+ * Note: we extend the documented `ExperienceConfiguration` interface here to provide
+ * some narrower, more specific types to ensure that the documented interface isn't
+ * overly specific in areas we may need to change `ExperienceConfiguration` is
+ * slightly-edited version of the autogenerated `ExperienceConfigResponseNoNotices`
+ * type, to either tighten or relax the types in FidesJS as needed by the client-code,
+ * so those types should be updated with care!
  */
-export type ExperienceConfig = {
-  name?: string;
-  disabled?: boolean;
-  dismissable?: boolean;
-  allow_language_selection?: boolean;
-  auto_detect_language?: boolean;
-  modal_link_label?: string;
-
+export interface ExperienceConfig extends FidesExperienceConfig {
+  component: ComponentType;
+  layer1_button_options?: Layer1ButtonOption;
+  allow_vendor_asset_disclosure?: boolean;
+  asset_disclosure_include_types?: Array<string>;
   /**
    * List of regions that apply to this ExperienceConfig.
    *
@@ -444,11 +684,6 @@ export type ExperienceConfig = {
    * these regions on the client.
    */
   regions?: Array<string>;
-  id: string;
-  created_at: string;
-  updated_at: string;
-  component: ComponentType;
-
   /**
    * List of all available translations for this ExperienceConfig
    *
@@ -457,60 +692,7 @@ export type ExperienceConfig = {
    * This also uses our client-side ExperienceConfigTranslation type.
    */
   translations: Array<ExperienceConfigTranslation>;
-
-  /**
-   * @deprecated see fields on translations instead
-   */
-  language?: string; // NOTE: uses a generic string instead of a language enum, as this changes often
-  /**
-   * @deprecated see fields on translations instead
-   */
-  accept_button_label?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  acknowledge_button_label?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  banner_title?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  is_default?: boolean;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  privacy_policy_link_label?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  privacy_policy_url?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  privacy_preferences_link_label?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  reject_button_label?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  save_button_label?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  title?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  banner_description?: string;
-  /**
-   * @deprecated see fields on translations instead
-   */
-  description?: string;
-};
+}
 
 /**
  * Expected API response for an ExperienceConfigTranslation
@@ -525,6 +707,12 @@ export type ExperienceConfigTranslation = {
   accept_button_label?: string;
   acknowledge_button_label?: string;
   banner_title?: string;
+  // GPC (Global Privacy Control) translatable fields
+  gpc_label?: string;
+  gpc_description?: string;
+  gpc_status_applied_label?: string;
+  gpc_status_overridden_label?: string;
+  gpc_title?: string;
   is_default?: boolean;
   privacy_policy_link_label?: string;
   privacy_policy_url?: string;
@@ -534,6 +722,7 @@ export type ExperienceConfigTranslation = {
   title?: string;
   banner_description?: string;
   description?: string;
+  purpose_header?: string;
   privacy_experience_config_history_id: string;
   modal_link_label?: string;
 };
@@ -542,6 +731,18 @@ export type Cookies = {
   name: string;
   path?: string;
   domain?: string;
+  /**
+   * Optional name of the vendor/system that sets this cookie. Used for grouping in UI.
+   */
+  system_name?: string;
+  /**
+   * The storage duration for this cookie, if available (e.g., "A few seconds", "4 hours").
+   */
+  duration?: string;
+  /**
+   * A human-readable description of what this cookie does.
+   */
+  description?: string;
 };
 
 export enum PrivacyNoticeFramework {
@@ -565,6 +766,7 @@ export type PrivacyNotice = {
   data_uses?: Array<string>;
   enforcement_level?: EnforcementLevel;
   disabled?: boolean;
+  att_exempt?: boolean;
   has_gpc_flag?: boolean;
   framework?: PrivacyNoticeFramework;
   default_preference?: UserConsentPreference;
@@ -607,6 +809,16 @@ export type PrivacyNoticeWithPreference = PrivacyNotice & {
   current_preference?: UserConsentPreference;
 };
 
+/**
+ * Special PrivacyNoticeItem, where we've narrowed the list of
+ * available translations to the singular "best" translation that should be
+ * displayed, and paired that with the source notice itself.
+ */
+export type PrivacyNoticeItem = {
+  notice: PrivacyNoticeWithPreference;
+  bestTranslation: PrivacyNoticeTranslation | null;
+};
+
 export enum EnforcementLevel {
   FRONTEND = "frontend",
   SYSTEM_WIDE = "system_wide",
@@ -619,11 +831,36 @@ export enum ConsentMechanism {
   NOTICE_ONLY = "notice_only",
 }
 
+export enum AssetType {
+  COOKIE = "Cookie",
+  BROWSER_REQUEST = "Browser Request",
+  I_FRAME = "iFrame",
+  JAVASCRIPT_TAG = "Javascript tag",
+  IMAGE = "Image",
+}
+
 export enum UserConsentPreference {
   OPT_IN = "opt_in",
   OPT_OUT = "opt_out",
   ACKNOWLEDGE = "acknowledge",
+  NOT_APPLICABLE = "not_applicable",
   TCF = "tcf",
+}
+
+export enum ConsentNonApplicableFlagMode {
+  OMIT = "omit",
+  INCLUDE = "include",
+}
+
+export enum ConsentFlagType {
+  BOOLEAN = "boolean",
+  CONSENT_MECHANISM = "consent_mechanism",
+}
+
+export enum UpdateConsentValidation {
+  THROW = "throw",
+  WARN = "warn",
+  IGNORE = "ignore",
 }
 
 // NOTE: This (and most enums!) could reasonably be replaced by string union
@@ -634,6 +871,7 @@ export enum ComponentType {
   MODAL = "modal",
   PRIVACY_CENTER = "privacy_center",
   TCF_OVERLAY = "tcf_overlay",
+  HEADLESS = "headless",
 }
 
 export enum BannerEnabled {
@@ -649,21 +887,20 @@ export type UserGeolocation = {
   region?: string; // "NY"
 };
 
+export enum FidesModalDefaultView {
+  PURPOSES = "/tcf/purposes",
+  FEATURES = "/tcf/features",
+  VENDORS = "/tcf/vendors",
+}
+
 /**
  * Re-export the FidesOptions interface from src/docs; mostly for convenience as
  * a lot of code wants to import from this consent-types.ts file!
  */
 export { FidesOptions };
 
-export type OverrideExperienceTranslations = {
-  fides_title: string;
-  fides_description: string;
-  fides_privacy_policy_url: string;
-  fides_override_language: string;
-};
-
 /**
- * Select the subset of FidesInitOptions that can be overriden at runtime using
+ * Select the subset of FidesInitOptions that can be overridden at runtime using
  * one of the customer-provided FidesOptions properties above. There's a 1:1
  * correspondence here, but note that we use snake_case for the runtime options
  * and then convert to camelCase variables for the `Fides.init({ options })`
@@ -680,24 +917,30 @@ export type FidesInitOptionsOverrides = Pick<
   | "fidesLocale"
   | "fidesPrimaryColor"
   | "fidesClearCookie"
+  | "fidesConsentOverride"
+  | "otFidesMapping"
+  | "transcendFidesMapping"
+  | "fidesDisabledNotices"
+  | "fidesAttStatus"
+  | "fidesDisabledSystems"
+  | "fidesConsentNonApplicableFlagMode"
+  | "fidesConsentFlagType"
+  | "fidesInitializedEventMode"
+  | "fidesModalDefaultView"
+  | "fidesModalDisplay"
+  | "fidesUnsupportedRepeatedScriptLoading"
+  | "fidesCookieSuffix"
+  | "fidesCookieCompression"
+  | "fidesExternalId"
 >;
-
-export type FidesExperienceTranslationOverrides = {
-  title: string;
-  description: string;
-  privacy_policy_url: string;
-  override_language: string;
-};
 
 export type FidesOverrides = {
   optionsOverrides: Partial<FidesInitOptionsOverrides>;
   consentPrefsOverrides: GetPreferencesFnResp | null;
-  experienceTranslationOverrides: Partial<FidesExperienceTranslationOverrides>;
 };
 
 export enum OverrideType {
   OPTIONS = "options",
-  EXPERIENCE_TRANSLATION = "language",
 }
 
 export enum ButtonType {
@@ -706,14 +949,39 @@ export enum ButtonType {
   TERTIARY = "tertiary",
 }
 
+export enum Layer1ButtonOption {
+  // defines the buttons to show in the layer 1 banner
+  ACKNOWLEDGE = "acknowledge", // show acknowledge button
+  OPT_IN_OPT_OUT = "opt_in_opt_out", // show opt in and opt out buttons
+  OPT_IN_ONLY = "opt_in_only", // TCF only, hide opt out button
+  GPC_CONDITIONAL = "gpc_conditional", // show acknowledge when GPC is on, opt in/opt out when GPC is off
+}
+
+export enum RejectAllMechanism {
+  // Applies to TCF only
+  REJECT_ALL = "reject_all", // reject all purposes and legitimate interests
+  REJECT_CONSENT_ONLY = "reject_consent_only", // do not reject legitimate interests
+}
+
+// NOTE: updates to this enum should be reflected in the FidesEventDetailsTrigger type and vice versa
+export enum FidesAttStatus {
+  NOT_DETERMINED = "not_determined",
+  RESTRICTED = "restricted",
+  DENIED = "denied",
+  AUTHORIZED = "authorized",
+}
+
 export enum ConsentMethod {
   BUTTON = "button", // deprecated- keeping for backwards-compatibility
   REJECT = "reject",
   ACCEPT = "accept",
+  SCRIPT = "script",
   SAVE = "save",
   DISMISS = "dismiss",
   GPC = "gpc",
-  INDIVIDUAL_NOTICE = "individual_notice",
+  INDIVIDUAL_NOTICE = "individual_notice", // api only
+  ACKNOWLEDGE = "acknowledge",
+  EXTERNAL_PROVIDER = "external_provider",
 }
 
 export type PrivacyPreferencesRequest = {
@@ -731,6 +999,8 @@ export type PrivacyPreferencesRequest = {
   system_consent_preferences?: Array<TCFVendorSave>;
   system_legitimate_interests_preferences?: Array<TCFVendorSave>;
   policy_key?: string;
+  property_id?: string;
+
   /**
    * @deprecated has no effect; use privacy_experience_config_history_id instead!
    */
@@ -739,6 +1009,7 @@ export type PrivacyPreferencesRequest = {
   user_geography?: string;
   method?: ConsentMethod;
   served_notice_history_id?: string;
+  source?: string;
 };
 
 export type ConsentOptionCreate = {
@@ -752,6 +1023,7 @@ export type Identity = {
   ga_client_id?: string;
   ljt_readerID?: string;
   fides_user_device_id?: string;
+  external_id?: string;
 };
 
 export enum RequestOrigin {
@@ -804,6 +1076,7 @@ export type RecordConsentServedRequest = {
   user_geography?: string;
   acknowledge_mode?: boolean;
   serving_component: string; // NOTE: uses a generic string instead of an enum
+  property_id?: string;
 };
 
 /**
@@ -852,4 +1125,21 @@ export type ConsentOption = {
 
 export type LegacyConsentConfig = {
   options: ConsentOption[];
+};
+
+interface FidesValidatorMap<T, K> {
+  overrideName: keyof T;
+  overrideType: "string" | "boolean" | "array";
+  overrideKey: K;
+  validationRegex: RegExp;
+  transform?: (value: string) => any;
+}
+
+export type FidesOverrideValidatorMap = FidesValidatorMap<
+  FidesInitOptionsOverrides,
+  keyof FidesOptions
+>;
+
+export type FidesWindowOverrides = Partial<FidesOptions> & {
+  [key: string]: string | boolean | undefined;
 };

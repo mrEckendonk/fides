@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
 from starlette.status import (
@@ -9,7 +9,7 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
 )
 
-from fides.common.api.scope_registry import SCOPE_REGISTRY as SCOPES
+from fides.common.scope_registry import SCOPE_REGISTRY as SCOPES
 
 
 class FidesopsException(Exception):
@@ -22,7 +22,15 @@ class FidesopsException(Exception):
 
 
 class TraversalError(FidesopsException):
-    """Fidesops error with the names of all nodes that could not be reached."""
+    """Error with the names of all nodes that could not be reached."""
+
+
+class UnreachableNodesError(TraversalError):
+    """Error with the names of all nodes that could not be reached, inherits from TraversalError."""
+
+
+class UnreachableEdgesError(TraversalError):
+    """Error with the names of all edges that could not be reached, inherits from TraversalError."""
 
 
 class ValidationError(FidesopsException):
@@ -143,6 +151,10 @@ class NotSupportedForCollection(BaseException):
     """The given action is not supported for this type of collection"""
 
 
+class TableNotFound(BaseException):
+    """Table or collection does not exist in the database/system"""
+
+
 class PrivacyRequestExit(BaseException):
     """Privacy request exiting processing waiting on subtasks to complete"""
 
@@ -163,8 +175,12 @@ class RequestTaskNotFound(BaseException):
     """Privacy Request Task Not Found"""
 
 
-class AwaitingAsyncTaskCallback(BaseException):
-    """Request Task is Awaiting Processing - Awaiting Async Task Callback"""
+class AwaitingAsyncTask(BaseException):
+    """Request Task is Awaiting Processing - Awaiting Async Task"""
+
+
+class AwaitingAsyncProcessing(BaseException):
+    """Request Task is actively being processed by external system - Fides is polling"""
 
 
 class UpstreamTasksNotReady(BaseException):
@@ -239,16 +255,18 @@ class NotFoundException(HTTPException):
 class ClientUnsuccessfulException(FidesopsException):
     """Exception for when client call fails"""
 
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int, response: Optional[Any] = None):
         super().__init__(message=f"Client call failed with status code '{status_code}'")
+        self.status_code = status_code
+        self.response = response
 
 
 class NoSuchStrategyException(ValueError):
     """Exception for when a masking strategy does not exist"""
 
 
-class FunctionalityNotConfigured(Exception):
-    """Custom exception for when invoked functionality is unavailable due to configuration."""
+class RedisNotConfigured(Exception):
+    """Redis cache is unavailable due to configuration"""
 
 
 class InvalidSaaSRequestOverrideException(ValueError):
@@ -273,6 +291,10 @@ class SSHTunnelConfigNotFoundException(Exception):
 
 class MalisciousUrlException(Exception):
     """Fides has detected a potentially maliscious URL."""
+
+
+class MaskingSecretsExpired(BaseException):
+    """The cached masking secrets have expired for the given privacy request."""
 
 
 class AuthenticationError(HTTPException):
@@ -300,7 +322,7 @@ class ClientWriteFailedError(HTTPException):
 
     def __init__(self) -> None:
         super().__init__(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Failed to create client",
         )
 
@@ -348,13 +370,22 @@ class InvalidScopeError(HTTPException):
         SCOPES.sort()
 
         super().__init__(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "error": "Invalid scope provided",
                 "invalid_scopes": invalid_scopes,
                 "valid_scopes": SCOPES,
             },
         )
+
+
+class PrivacyRequestError(Exception):
+    """Base exception for privacy request operations."""
+
+    def __init__(self, message: str, data: Optional[Dict] = None):
+        self.message = message
+        self.data = data
+        super().__init__(message)
 
 
 class KeyOrNameAlreadyExists(Exception):
@@ -373,3 +404,15 @@ class MissingConfig(Exception):
 
 class MonitorConfigNotFoundException(BaseException):
     """MonitorConfig could not be found"""
+
+
+class MissingNamespaceSchemaException(BaseException):
+    """Attempting to use namespace fides_meta without specifying the schema to validate it."""
+
+
+class ConnectionNotFoundException(BaseException):
+    """ConnectionConfig could not be found"""
+
+
+class DomainValidationError(ValueError):
+    """The request domain is not in the list of allowed values for this connector."""

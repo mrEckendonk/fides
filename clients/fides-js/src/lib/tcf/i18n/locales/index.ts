@@ -1,6 +1,5 @@
 /* eslint-disable object-shorthand */
 import type { Locale, Messages } from "../../../i18n";
-
 /**
  * Statically load all the pre-localized dictionaries from the ./locales directory.
  *
@@ -19,6 +18,7 @@ import el from "./el/messages-tcf.json";
 import en from "./en/messages-tcf.json";
 import es from "./es/messages-tcf.json";
 import esMX from "./es-MX/messages-tcf.json";
+import esUS from "./es-US/messages-tcf.json";
 import et from "./et/messages-tcf.json";
 import eu from "./eu/messages-tcf.json";
 import fi from "./fi/messages-tcf.json";
@@ -48,6 +48,7 @@ import sv from "./sv/messages-tcf.json";
 import tr from "./tr/messages-tcf.json";
 import uk from "./uk/messages-tcf.json";
 import zh from "./zh/messages-tcf.json";
+import zhHant from "./zh-Hant/messages-tcf.json";
 
 export const STATIC_MESSAGES_TCF: Record<Locale, Messages> = {
   ar: ar,
@@ -61,6 +62,7 @@ export const STATIC_MESSAGES_TCF: Record<Locale, Messages> = {
   en: en,
   es: es,
   "es-MX": esMX,
+  "es-US": esUS,
   et: et,
   eu: eu,
   fi: fi,
@@ -90,4 +92,5 @@ export const STATIC_MESSAGES_TCF: Record<Locale, Messages> = {
   tr: tr,
   uk: uk,
   zh: zh,
+  "zh-Hant": zhHant,
 };

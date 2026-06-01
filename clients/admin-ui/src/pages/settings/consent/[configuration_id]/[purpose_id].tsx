@@ -1,0 +1,109 @@
+import {
+  ChakraSkeleton as Skeleton,
+  ChakraText as Text,
+  Flex,
+  Space,
+} from "fidesui";
+import { NextPage } from "next";
+import { useRouter } from "next/router";
+import { useMemo } from "react";
+
+import DocsLink from "~/features/common/DocsLink";
+import ErrorPage from "~/features/common/errors/ErrorPage";
+import FixedLayout from "~/features/common/FixedLayout";
+import { GLOBAL_CONSENT_CONFIG_ROUTE } from "~/features/common/nav/routes";
+import PageHeader from "~/features/common/PageHeader";
+import { useGetPurposesQuery } from "~/features/common/purpose.slice";
+import SettingsBox from "~/features/consent-settings/SettingsBox";
+import { PUBLISHER_RESTRICTIONS_DOCS_URL } from "~/features/consent-settings/tcf/constants";
+import { PurposeRestrictionsTable } from "~/features/consent-settings/tcf/PurposeRestrictionsTable";
+import { useGetTCFConfigurationQuery } from "~/features/consent-settings/tcf/tcf-config.slice";
+
+const ConsentConfigurationPage: NextPage = () => {
+  const router = useRouter();
+  const configurationId = decodeURIComponent(
+    router.query.configuration_id as string,
+  );
+  const purposeId = decodeURIComponent(router.query.purpose_id as string);
+
+  const {
+    data: purposes,
+    isLoading: isPurposesLoading,
+    error: purposesError,
+  } = useGetPurposesQuery();
+  const { data: configuration } = useGetTCFConfigurationQuery(configurationId);
+
+  const purpose = useMemo(() => {
+    return purposes?.purposes[purposeId];
+  }, [purposes, purposeId]);
+
+  if (purposesError) {
+    return (
+      <ErrorPage
+        error={purposesError}
+        defaultMessage="A problem occurred while fetching TCF purposes"
+        actions={[
+          {
+            label: "Return to consent settings",
+            onClick: () => router.push(GLOBAL_CONSENT_CONFIG_ROUTE),
+          },
+        ]}
+      />
+    );
+  }
+
+  return (
+    <FixedLayout title="Consent Configuration">
+      <PageHeader
+        heading="Consent configuration"
+        breadcrumbItems={[
+          { title: "Consent settings", href: GLOBAL_CONSENT_CONFIG_ROUTE },
+          {
+            title: configuration?.name || "Configuration",
+          },
+          {
+            title: `TCF purpose ${purposeId}`,
+          },
+        ]}
+      />
+      <Space orientation="vertical" size="medium">
+        <Space orientation="vertical" size="medium">
+          <SettingsBox
+            title={`TCF purpose ${purposeId}${
+              purpose?.name ? `: ${purpose?.name}` : ""
+            }`}
+          >
+            {isPurposesLoading ? (
+              <Flex vertical className="gap-1.5">
+                <Skeleton height="16px" width="100%" />
+                <Skeleton height="16px" width="100%" />
+                <Skeleton height="16px" width="30%" />
+              </Flex>
+            ) : (
+              !!purpose && <Text fontSize="sm">{purpose?.description}</Text>
+            )}
+          </SettingsBox>
+          <SettingsBox title={configuration?.name || "Configuration"}>
+            <Space orientation="vertical" className="gap-3">
+              <Text fontSize="sm">
+                Add restrictions to control how vendors process data for
+                specific purposes. For each restriction, choose a restriction
+                type. Then, decide whether the restriction applies to all
+                vendors, specific vendors, or only to a limited set of allowed
+                vendors. You can add multiple restrictions&mdash;they&apos;ll
+                appear in the table below.{" "}
+                <DocsLink href={PUBLISHER_RESTRICTIONS_DOCS_URL}>
+                  Learn more about publisher restrictions
+                </DocsLink>{" "}
+                in our docs.
+              </Text>
+            </Space>
+          </SettingsBox>
+        </Space>
+        <PurposeRestrictionsTable />
+      </Space>
+    </FixedLayout>
+  );
+};
+
+export default ConsentConfigurationPage;

@@ -1,19 +1,14 @@
 import io
 from abc import abstractmethod
 from typing import Any, Dict, List, Optional, Type
-from urllib.parse import quote_plus
 
 import paramiko
-import pymysql
 import sshtunnel  # type: ignore
 from aiohttp.client_exceptions import ClientResponseError
-from google.cloud.sql.connector import Connector
-from google.oauth2 import service_account
 from loguru import logger
-from snowflake.sqlalchemy import URL as Snowflake_URL
-from sqlalchemy import Column, text
+from sqlalchemy import Column, inspect, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import (  # type: ignore
-    URL,
     Connection,
     CursorResult,
     Engine,
@@ -21,46 +16,29 @@ from sqlalchemy.engine import (  # type: ignore
     create_engine,
 )
 from sqlalchemy.exc import InternalError, OperationalError
-from sqlalchemy.sql import Executable  # type: ignore
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import TextClause
 
 from fides.api.common_exceptions import (
     ConnectionException,
     SSHTunnelConfigNotFoundException,
+    TableNotFound,
 )
 from fides.api.graph.execution import ExecutionNode
 from fides.api.models.connectionconfig import ConnectionConfig, ConnectionTestStatus
 from fides.api.models.policy import Policy
 from fides.api.models.privacy_request import PrivacyRequest, RequestTask
-from fides.api.schemas.connection_configuration import (
-    ConnectionConfigSecretsSchema,
-    MicrosoftSQLServerSchema,
-    PostgreSQLSchema,
-    RedshiftSchema,
-    SnowflakeSchema,
-)
-from fides.api.schemas.connection_configuration.connection_secrets_bigquery import (
-    BigQuerySchema,
-)
-from fides.api.schemas.connection_configuration.connection_secrets_google_cloud_sql_mysql import (
-    GoogleCloudSQLMySQLSchema,
-)
-from fides.api.schemas.connection_configuration.connection_secrets_mariadb import (
-    MariaDBSchema,
-)
-from fides.api.schemas.connection_configuration.connection_secrets_mysql import (
-    MySQLSchema,
-)
+from fides.api.schemas.application_config import SqlDryRunMode
+from fides.api.schemas.connection_configuration import ConnectionConfigSecretsSchema
 from fides.api.service.connectors.base_connector import BaseConnector
-from fides.api.service.connectors.query_config import (
-    BigQueryQueryConfig,
-    MicrosoftSQLServerQueryConfig,
-    RedshiftQueryConfig,
-    SnowflakeQueryConfig,
-    SQLQueryConfig,
-)
+from fides.api.service.connectors.query_configs.query_config import SQLQueryConfig
 from fides.api.util.collection_util import Row
 from fides.config import get_config
+from fides.config.config_proxy import ConfigProxy
+
+from fides.api.models.sql_models import (  # type: ignore[attr-defined] # isort: skip
+    Dataset as CtlDataset,
+)
 
 CONFIG = get_config()
 
@@ -82,6 +60,24 @@ class SQLConnector(BaseConnector[Engine]):
                 "SQL Connectors must define their secrets schema class"
             )
         self.ssh_server: sshtunnel._ForwardServer = None
+        self._current_namespace_meta: Optional[Dict[str, Any]] = None
+
+    def should_dry_run(self, mode_to_check: SqlDryRunMode) -> bool:
+        """
+        Check if SQL dry run is enabled for the specified mode.
+
+        Args:
+            mode_to_check: The SqlDryRunMode to check for
+
+        Returns:
+            bool: True if the current mode matches the mode to check
+        """
+        from fides.common.session_management import get_autoclose_db_session as get_db
+
+        with get_db() as db:
+            config_proxy = ConfigProxy(db)
+            current_mode = getattr(config_proxy.execution, "sql_dry_run", None)
+            return current_mode == mode_to_check
 
     @staticmethod
     def cursor_result_to_rows(results: CursorResult) -> List[Row]:
@@ -106,9 +102,34 @@ class SQLConnector(BaseConnector[Engine]):
             rows.append({col[0]: row_tuple[count] for count, col in enumerate(columns)})
         return rows
 
+    @staticmethod
+    def get_namespace_meta(
+        db: Optional[Session], dataset: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Util function to return the namespace meta for a given ctl_dataset.
+        """
+        if db is None:
+            return None
+
+        return db.scalar(
+            select(CtlDataset.fides_meta["namespace"].cast(JSONB)).where(
+                CtlDataset.fides_key == dataset
+            )
+        )
+
     @abstractmethod
     def build_uri(self) -> Optional[str]:
         """Build a database specific uri connection string"""
+
+    def client_for_node(self, node: ExecutionNode) -> Engine:
+        """Return the engine appropriate for the given execution node.
+
+        The default implementation returns the shared engine from client().
+        Subclasses (e.g. PostgreSQLConnector) can override this to select a
+        different database based on the dataset's namespace_meta.
+        """
+        return self.client()
 
     def query_config(self, node: ExecutionNode) -> SQLQueryConfig:
         """Query wrapper corresponding to the input execution_node."""
@@ -132,10 +153,35 @@ class SQLConnector(BaseConnector[Engine]):
             )
         except ClientResponseError as e:
             raise ConnectionException(f"Connection error: {e.message}")
-        except Exception:
-            raise ConnectionException("Connection error.")
+        except Exception as exc:
+            raise ConnectionException(f"Connection error: {exc}")
 
         return ConnectionTestStatus.succeeded
+
+    def execute_standalone_retrieval_query(
+        self, node: ExecutionNode, fields: List[str], filters: Dict[str, List[Any]]
+    ) -> List[Row]:
+        if not node.collection.custom_request_fields():
+            logger.error(
+                "Cannot call execute_standalone_retrieval_query on a collection without custom request fields"
+            )
+            return []
+
+        client = self.client_for_node(node)
+        query_config = self.query_config(node)
+        query = query_config.generate_raw_query(fields, filters)
+
+        if query is None:
+            return []
+
+        if self.should_dry_run(SqlDryRunMode.access):
+            logger.warning(f"SQL DRY RUN - Would execute SQL: {query}")
+            return []
+
+        with client.connect() as connection:
+            self.set_schema(connection)
+            results = connection.execute(query)
+            return self.cursor_result_to_rows(results)
 
     def retrieve_data(
         self,
@@ -147,15 +193,39 @@ class SQLConnector(BaseConnector[Engine]):
     ) -> List[Row]:
         """Retrieve sql data"""
         query_config = self.query_config(node)
-        client = self.client()
+        client = self.client_for_node(node)
         stmt: Optional[TextClause] = query_config.generate_query(input_data, policy)
         if stmt is None:
             return []
+
+        if self.should_dry_run(SqlDryRunMode.access):
+            logger.warning(f"SQL DRY RUN - Would execute SQL: {stmt}")
+            return []
+
         logger.info("Starting data retrieval for {}", node.address)
         with client.connect() as connection:
-            self.set_schema(connection)
-            results = connection.execute(stmt)
-            return self.cursor_result_to_rows(results)
+            try:
+                self.set_schema(connection)
+                if (
+                    query_config.partitioning
+                ):  # only BigQuery supports partitioning, for now
+                    return self.partitioned_retrieval(query_config, connection, stmt)
+
+                results = connection.execute(stmt)
+                return self.cursor_result_to_rows(results)
+            except Exception as exc:
+                # Check if table exists using qualified table name
+                qualified_table_name = self.get_qualified_table_name(node)
+                if not self.table_exists(qualified_table_name, engine=client):
+                    # Central decision point - will raise TableNotFound or ConnectionException
+                    self.handle_table_not_found(
+                        node=node,
+                        table_name=qualified_table_name,
+                        operation_context="data retrieval",
+                        original_exception=exc,
+                    )
+                # Table exists or can't check - re-raise original exception
+                raise
 
     def mask_data(
         self,
@@ -164,20 +234,43 @@ class SQLConnector(BaseConnector[Engine]):
         privacy_request: PrivacyRequest,
         request_task: RequestTask,
         rows: List[Row],
+        input_data: Optional[Dict[str, List[Any]]] = None,
     ) -> int:
         """Execute a masking request. Returns the number of records masked"""
         query_config = self.query_config(node)
         update_ct = 0
-        client = self.client()
+        client = self.client_for_node(node)
+
         for row in rows:
             update_stmt: Optional[TextClause] = query_config.generate_update_stmt(
                 row, policy, privacy_request
             )
             if update_stmt is not None:
-                with client.connect() as connection:
-                    self.set_schema(connection)
-                    results: LegacyCursorResult = connection.execute(update_stmt)
-                    update_ct = update_ct + results.rowcount
+                if self.should_dry_run(SqlDryRunMode.erasure):
+                    logger.warning(f"SQL DRY RUN - Would execute SQL: {update_stmt}")
+                else:
+                    with client.connect() as connection:
+                        try:
+                            self.set_schema(connection)
+                            results: LegacyCursorResult = connection.execute(
+                                update_stmt
+                            )
+                            update_ct = update_ct + results.rowcount
+                        except Exception as exc:
+                            # Check if table exists using qualified table name
+                            qualified_table_name = self.get_qualified_table_name(node)
+                            if not self.table_exists(
+                                qualified_table_name, engine=client
+                            ):
+                                # Central decision point - will raise TableNotFound or ConnectionException
+                                self.handle_table_not_found(
+                                    node=node,
+                                    table_name=qualified_table_name,
+                                    operation_context="data erasure",
+                                    original_exception=exc,
+                                )
+                            # Table exists or can't check - re-raise original exception
+                            raise
         return update_ct
 
     def close(self) -> None:
@@ -195,7 +288,12 @@ class SQLConnector(BaseConnector[Engine]):
             uri,
             hide_parameters=self.hide_parameters,
             echo=not self.hide_parameters,
+            connect_args=self.get_connect_args(),
         )
+
+    def get_connect_args(self) -> Dict[str, Any]:
+        """Get connection arguments for the engine"""
+        return {}
 
     def set_schema(self, connection: Connection) -> None:
         """Optionally override to set the schema for a given database that
@@ -224,404 +322,128 @@ class SQLConnector(BaseConnector[Engine]):
             ),
         )
 
+    def partitioned_retrieval(
+        self,
+        query_config: SQLQueryConfig,
+        connection: Connection,
+        stmt: TextClause,
+    ) -> List[Row]:
+        """
+        Retrieve data against a partitioned table using the partitioning spec configured for this node to execute
+        multiple queries against the partitioned table.
 
-class PostgreSQLConnector(SQLConnector):
-    """Connector specific to postgresql"""
-
-    secrets_schema = PostgreSQLSchema
-
-    def build_uri(self) -> str:
-        """Build URI of format postgresql://[user[:password]@][netloc][:port][/dbname]"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        user_password = ""
-        if config.username:
-            user = config.username
-            password = f":{config.password}" if config.password else ""
-            user_password = f"{user}{password}@"
-
-        netloc = config.host
-        port = f":{config.port}" if config.port else ""
-        dbname = f"/{config.dbname}" if config.dbname else ""
-        return f"postgresql://{user_password}{netloc}{port}{dbname}"
-
-    def build_ssh_uri(self, local_address: tuple) -> str:
-        """Build URI of format postgresql://[user[:password]@][ssh_host][:ssh_port][/dbname]"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        user_password = ""
-        if config.username:
-            user = config.username
-            password = f":{config.password}" if config.password else ""
-            user_password = f"{user}{password}@"
-
-        local_host, local_port = local_address
-        netloc = local_host
-        port = f":{local_port}" if local_port else ""
-        dbname = f"/{config.dbname}" if config.dbname else ""
-        return f"postgresql://{user_password}{netloc}{port}{dbname}"
-
-    # Overrides SQLConnector.create_client
-    def create_client(self) -> Engine:
-        """Returns a SQLAlchemy Engine that can be used to interact with a database"""
-        if (
-            self.configuration.secrets
-            and self.configuration.secrets.get("ssh_required", False)
-            and CONFIG.security.bastion_server_ssh_private_key
-        ):
-            config = self.secrets_schema(**self.configuration.secrets or {})
-            self.create_ssh_tunnel(host=config.host, port=config.port)
-            self.ssh_server.start()
-            uri = self.build_ssh_uri(local_address=self.ssh_server.local_bind_address)
-        else:
-            uri = (self.configuration.secrets or {}).get("url") or self.build_uri()
-        return create_engine(
-            uri,
-            hide_parameters=self.hide_parameters,
-            echo=not self.hide_parameters,
+        This is only supported by the BigQueryConnector currently, so the base implementation is overridden there.
+        """
+        raise NotImplementedError(
+            "Partitioned retrieval is only supported for BigQuery currently!"
         )
 
-    def set_schema(self, connection: Connection) -> None:
-        """Sets the schema for a postgres database if applicable"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-        if config.db_schema:
-            logger.info("Setting PostgreSQL search_path before retrieving data")
-            stmt = text("SET search_path to :search_path")
-            stmt = stmt.bindparams(search_path=config.db_schema)
-            connection.execute(stmt)
-
-
-class MySQLConnector(SQLConnector):
-    """Connector specific to MySQL"""
-
-    secrets_schema = MySQLSchema
-
-    def build_uri(self) -> str:
-        """Build URI of format mysql+pymysql://[user[:password]@][netloc][:port][/dbname]"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        user_password = ""
-        if config.username:
-            user = config.username
-            password = f":{config.password}" if config.password else ""
-            user_password = f"{user}{password}@"
-
-        netloc = config.host
-        port = f":{config.port}" if config.port else ""
-        dbname = f"/{config.dbname}" if config.dbname else ""
-        url = f"mysql+pymysql://{user_password}{netloc}{port}{dbname}"
-        return url
-
-    def build_ssh_uri(self, local_address: tuple) -> str:
-        """Build URI of format mysql+pymysql://[user[:password]@][ssh_host][:ssh_port][/dbname]"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        user_password = ""
-        if config.username:
-            user = config.username
-            password = f":{config.password}" if config.password else ""
-            user_password = f"{user}{password}@"
-
-        local_host, local_port = local_address
-        netloc = local_host
-        port = f":{local_port}" if local_port else ""
-        dbname = f"/{config.dbname}" if config.dbname else ""
-        url = f"mysql+pymysql://{user_password}{netloc}{port}{dbname}"
-        return url
-
-    # Overrides SQLConnector.create_client
-    def create_client(self) -> Engine:
-        """Returns a SQLAlchemy Engine that can be used to interact with a database"""
-        if (
-            self.configuration.secrets
-            and self.configuration.secrets.get("ssh_required", False)
-            and CONFIG.security.bastion_server_ssh_private_key
-        ):
-            config = self.secrets_schema(**self.configuration.secrets or {})
-            self.create_ssh_tunnel(host=config.host, port=config.port)
-            self.ssh_server.start()
-            uri = self.build_ssh_uri(local_address=self.ssh_server.local_bind_address)
-        else:
-            uri = (self.configuration.secrets or {}).get("url") or self.build_uri()
-        return create_engine(
-            uri,
-            hide_parameters=self.hide_parameters,
-            echo=not self.hide_parameters,
-        )
-
-    @staticmethod
-    def cursor_result_to_rows(results: LegacyCursorResult) -> List[Row]:
+    def get_qualified_table_name(self, node: ExecutionNode) -> str:
         """
-        Convert SQLAlchemy results to a list of dictionaries
+        Get the fully qualified table name for this database.
+
+        Uses the query_config's parsed namespace_meta (if present) to build
+        a qualified name like ``schema.table`` or ``database.schema.table``.
+        Returns unquoted names because table_exists() uses split(".") +
+        inspector.has_table().
         """
-        return SQLConnector.default_cursor_result_to_rows(results)
+        query_config = self.query_config(node)
+        meta = query_config.namespace_meta
+        if not meta:
+            return node.collection.name
 
+        schema = getattr(meta, "schema", None)
+        if not schema:
+            return node.collection.name
 
-class MariaDBConnector(SQLConnector):
-    """Connector specific to MariaDB"""
+        qualified = f"{schema}.{node.collection.name}"
+        database_name = getattr(meta, "database_name", None)
+        if database_name:
+            return f"{database_name}.{qualified}"
+        return qualified
 
-    secrets_schema = MariaDBSchema
-
-    def build_uri(self) -> str:
-        """Build URI of format mariadb+pymysql://[user[:password]@][netloc][:port][/dbname]"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        user_password = ""
-        if config.username:
-            user = config.username
-            password = f":{config.password}" if config.password else ""
-            user_password = f"{user}{password}@"
-
-        netloc = config.host
-        port = f":{config.port}" if config.port else ""
-        dbname = f"/{config.dbname}" if config.dbname else ""
-        url = f"mariadb+pymysql://{user_password}{netloc}{port}{dbname}"
-        return url
-
-    @staticmethod
-    def cursor_result_to_rows(results: LegacyCursorResult) -> List[Row]:
+    def table_exists(
+        self, qualified_table_name: str, engine: Engine | None = None
+    ) -> bool:
         """
-        Convert SQLAlchemy results to a list of dictionaries
+        Check if table exists using SQLAlchemy introspection.
+
+        This is a generic implementation that should work for most SQL databases.
+        Override: Connectors can implement database-specific table existence checking
         """
-        return SQLConnector.default_cursor_result_to_rows(results)
+        try:
+            client = engine or self.create_client()
+            with client.connect() as connection:
+                inspector = inspect(connection)
 
+                # For simple table names
+                if "." not in qualified_table_name:
+                    return self._check_table_exists(inspector, qualified_table_name)
 
-class RedshiftConnector(SQLConnector):
-    """Connector specific to Amazon Redshift"""
+                # For qualified names like schema.table or database.schema.table
+                parts = qualified_table_name.split(".")
 
-    secrets_schema = RedshiftSchema
+                if len(parts) == 2:
+                    # schema.table format
+                    schema_name, table_name = parts
+                    return self._check_table_exists(inspector, table_name, schema_name)
 
-    def build_ssh_uri(self, local_address: tuple) -> str:
-        """Build SSH URI of format redshift+psycopg2://[user[:password]@][ssh_host][:ssh_port][/dbname]"""
-        local_host, local_port = local_address
+                if len(parts) >= 3:
+                    # database.schema.table format (use schema.table)
+                    schema_name, table_name = parts[-2], parts[-1]
+                    return self._check_table_exists(inspector, table_name, schema_name)
 
-        config = self.secrets_schema(**self.configuration.secrets or {})
+                # Fallback for unexpected format
+                return self._check_table_exists(inspector, qualified_table_name)
 
-        port = f":{local_port}" if local_port else ""
-        database = f"/{config.database}" if config.database else ""
-        url = f"redshift+psycopg2://{config.user}:{config.password}@{local_host}{port}{database}"
-        return url
+        except Exception as exc:
+            # Graceful fallback - if we can't check, assume table exists
+            # to preserve existing behavior for connectors that don't implement this
+            logger.error("Unable to check if table exists, assuming it does: {}", exc)
+            return True
 
-    # Overrides BaseConnector.build_uri
-    def build_uri(self) -> str:
-        """Build URI of format redshift+psycopg2://user:password@[host][:port][/database]"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
+    def _check_table_exists(
+        self, inspector: Any, table_name: str, schema: Optional[str] = None
+    ) -> bool:
+        """Helper method to check table existence and log if not found."""
+        table_exists = inspector.has_table(table_name, schema=schema)
+        if not table_exists:
+            qualified_name = f"{schema}.{table_name}" if schema else table_name
+            logger.error("Table '{}' does not exist", qualified_name)
+        return table_exists
 
-        url_encoded_password = quote_plus(config.password)
-        port = f":{config.port}" if config.port else ""
-        database = f"/{config.database}" if config.database else ""
-        url = f"redshift+psycopg2://{config.user}:{url_encoded_password}@{config.host}{port}{database}"
-        return url
-
-    # Overrides SQLConnector.create_client
-    def create_client(self) -> Engine:
-        """Returns a SQLAlchemy Engine that can be used to interact with a database"""
-        connect_args = {}
-        connect_args["sslmode"] = "prefer"
-        if (
-            self.configuration.secrets
-            and self.configuration.secrets.get("ssh_required", False)
-            and CONFIG.security.bastion_server_ssh_private_key
-        ):
-            config = self.secrets_schema(**self.configuration.secrets or {})
-            self.create_ssh_tunnel(host=config.host, port=config.port)
-            self.ssh_server.start()
-            uri = self.build_ssh_uri(local_address=self.ssh_server.local_bind_address)
-        else:
-            uri = (self.configuration.secrets or {}).get("url") or self.build_uri()
-        return create_engine(
-            uri,
-            hide_parameters=self.hide_parameters,
-            echo=not self.hide_parameters,
-            connect_args=connect_args,
-        )
-
-    def set_schema(self, connection: Connection) -> None:
-        """Sets the search_path for the duration of the session"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-        if config.db_schema:
-            logger.info("Setting Redshift search_path before retrieving data")
-            stmt = text("SET search_path to :search_path")
-            stmt = stmt.bindparams(search_path=config.db_schema)
-            connection.execute(stmt)
-
-    # Overrides SQLConnector.query_config
-    def query_config(self, node: ExecutionNode) -> RedshiftQueryConfig:
-        """Query wrapper corresponding to the input execution node."""
-        return RedshiftQueryConfig(node)
-
-
-class BigQueryConnector(SQLConnector):
-    """Connector specific to Google BigQuery"""
-
-    secrets_schema = BigQuerySchema
-
-    # Overrides BaseConnector.build_uri
-    def build_uri(self) -> str:
-        """Build URI of format"""
-        config = self.secrets_schema(**self.configuration.secrets or {})
-        dataset = f"/{config.dataset}" if config.dataset else ""
-        return f"bigquery://{config.keyfile_creds.project_id}{dataset}"
-
-    # Overrides SQLConnector.create_client
-    def create_client(self) -> Engine:
-        """
-        Returns a SQLAlchemy Engine that can be used to interact with Google BigQuery.
-
-        Overrides to pass in credentials_info
-        """
-        secrets = self.configuration.secrets or {}
-        uri = secrets.get("url") or self.build_uri()
-
-        keyfile_creds = secrets.get("keyfile_creds", {})
-        credentials_info = dict(keyfile_creds) if keyfile_creds else {}
-
-        return create_engine(
-            uri,
-            credentials_info=credentials_info,
-            hide_parameters=self.hide_parameters,
-            echo=not self.hide_parameters,
-        )
-
-    # Overrides SQLConnector.query_config
-    def query_config(self, node: ExecutionNode) -> BigQueryQueryConfig:
-        """Query wrapper corresponding to the input execution_node."""
-        return BigQueryQueryConfig(node)
-
-    def mask_data(
+    def handle_table_not_found(
         self,
         node: ExecutionNode,
-        policy: Policy,
-        privacy_request: PrivacyRequest,
-        request_task: RequestTask,
-        rows: List[Row],
-    ) -> int:
-        """Execute a masking request. Returns the number of records masked"""
-        query_config = self.query_config(node)
-        update_ct = 0
-        client = self.client()
-        for row in rows:
-            update_stmt: Optional[Executable] = query_config.generate_update(
-                row, policy, privacy_request, client
+        table_name: str,
+        operation_context: str,
+        original_exception: Optional[Exception] = None,
+    ) -> None:
+        """
+        Central decision point for table-not-found scenarios.
+
+        Raises TableNotFound (for collection skipping) or ConnectionException (for hard errors).
+        The raised exception will be caught by the @retry decorator in graph_task.py.
+
+        Args:
+            node: The ExecutionNode being processed
+            table_name: Name of the missing table
+            operation_context: Context like "data retrieval" or "data masking"
+            original_exception: The original exception that triggered this check
+        """
+        if node.has_outgoing_dependencies():
+            # Collection has dependencies - cannot skip safely
+            error_msg = (
+                f"Table '{table_name}' did not exist during {operation_context}. "
+                f"Cannot skip collection '{node.address}' because other collections depend on it."
             )
-            if update_stmt is not None:
-                with client.connect() as connection:
-                    results: LegacyCursorResult = connection.execute(update_stmt)
-                    update_ct = update_ct + results.rowcount
-        return update_ct
+            if original_exception:
+                raise ConnectionException(error_msg) from original_exception
+            raise ConnectionException(error_msg)
 
+        # Safe to skip - raise TableNotFound for @retry decorator to catch
+        skip_msg = f"Table '{table_name}' did not exist during {operation_context}."
+        if original_exception:
+            raise TableNotFound(skip_msg) from original_exception
 
-class SnowflakeConnector(SQLConnector):
-    """Connector specific to Snowflake"""
-
-    secrets_schema = SnowflakeSchema
-
-    def build_uri(self) -> str:
-        """Build URI of format 'snowflake://<user_login_name>:<password>@<account_identifier>/<database_name>/
-        <schema_name>?warehouse=<warehouse_name>&role=<role_name>'
-        """
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        kwargs = {}
-
-        if config.account_identifier:
-            kwargs["account"] = config.account_identifier
-        if config.user_login_name:
-            kwargs["user"] = config.user_login_name
-        if config.password:
-            kwargs["password"] = config.password
-        if config.database_name:
-            kwargs["database"] = config.database_name
-        if config.schema_name:
-            kwargs["schema"] = config.schema_name
-        if config.warehouse_name:
-            kwargs["warehouse"] = config.warehouse_name
-        if config.role_name:
-            kwargs["role"] = config.role_name
-
-        url: str = Snowflake_URL(**kwargs)
-        return url
-
-    def query_config(self, node: ExecutionNode) -> SQLQueryConfig:
-        """Query wrapper corresponding to the input execution_node."""
-        return SnowflakeQueryConfig(node)
-
-
-class MicrosoftSQLServerConnector(SQLConnector):
-    """
-    Connector specific to Microsoft SQL Server
-    """
-
-    secrets_schema = MicrosoftSQLServerSchema
-
-    def build_uri(self) -> URL:
-        """
-        Build URI of format
-        mssql+pymssql://[username]:[password]@[host]:[port]/[dbname]
-        Returns URL obj, since SQLAlchemy's create_engine method accepts either a URL obj or a string
-        """
-
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        url = URL.create(
-            "mssql+pymssql",
-            username=config.username,
-            password=config.password,
-            host=config.host,
-            port=config.port,
-            database=config.dbname,
-        )
-
-        return url
-
-    def query_config(self, node: ExecutionNode) -> SQLQueryConfig:
-        """Query wrapper corresponding to the input execution_node."""
-        return MicrosoftSQLServerQueryConfig(node)
-
-    @staticmethod
-    def cursor_result_to_rows(results: LegacyCursorResult) -> List[Row]:
-        """
-        Convert SQLAlchemy results to a list of dictionaries
-        """
-        return SQLConnector.default_cursor_result_to_rows(results)
-
-
-class GoogleCloudSQLMySQLConnector(SQLConnector):
-    """Connector specific to Google Cloud SQL for MySQL"""
-
-    secrets_schema = GoogleCloudSQLMySQLSchema
-
-    # Overrides SQLConnector.create_client
-    def create_client(self) -> Engine:
-        """Returns a SQLAlchemy Engine that can be used to interact with a database"""
-
-        config = self.secrets_schema(**self.configuration.secrets or {})
-
-        credentials = service_account.Credentials.from_service_account_info(
-            dict(config.keyfile_creds)
-        )
-
-        # initialize connector with the loaded credentials
-        connector = Connector(credentials=credentials)
-
-        def getconn() -> pymysql.connections.Connection:
-            conn: pymysql.connections.Connection = connector.connect(
-                config.instance_connection_name,
-                "pymysql",
-                user=config.db_iam_user,
-                db=config.dbname,
-                enable_iam_auth=True,
-            )
-            return conn
-
-        return create_engine("mysql+pymysql://", creator=getconn)
-
-    @staticmethod
-    def cursor_result_to_rows(results: LegacyCursorResult) -> List[Row]:
-        """results to a list of dictionaries"""
-        return SQLConnector.default_cursor_result_to_rows(results)
-
-    def build_uri(self) -> None:
-        """
-        We need to override this method so it is not abstract anymore, and GoogleCloudSQLMySQLConnector is instantiable.
-        """
+        raise TableNotFound(skip_msg)

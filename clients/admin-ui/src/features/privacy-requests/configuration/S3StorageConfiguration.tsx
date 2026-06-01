@@ -1,15 +1,23 @@
-import { Box, Button, Divider, Heading, Stack } from "fidesui";
-import { Form, Formik } from "formik";
+import {
+  Button,
+  Divider,
+  Flex,
+  Form,
+  Input,
+  Select,
+  Typography,
+  useMessage,
+} from "fidesui";
 import { useState } from "react";
 
-import { CustomSelect, CustomTextInput } from "~/features/common/form/inputs";
 import { isErrorResult } from "~/features/common/helpers";
-import { useAlert, useAPIHelper } from "~/features/common/hooks";
+import { useAPIHelper } from "~/features/common/hooks";
 import { storageTypes } from "~/features/privacy-requests/constants";
 import {
   useCreateStorageMutation,
   useCreateStorageSecretsMutation,
 } from "~/features/privacy-requests/privacy-requests.slice";
+import { S3SecretsDetails } from "~/features/privacy-requests/types";
 
 interface SavedStorageDetails {
   storageDetails: {
@@ -27,10 +35,6 @@ interface StorageDetails {
     format: string;
   };
 }
-interface SecretsStorageData {
-  aws_access_key_id: string;
-  aws_secret_access_key: string;
-}
 
 const S3StorageConfiguration = ({ storageDetails }: SavedStorageDetails) => {
   const [authMethod, setAuthMethod] = useState("");
@@ -38,7 +42,10 @@ const S3StorageConfiguration = ({ storageDetails }: SavedStorageDetails) => {
   const [setStorageSecrets] = useCreateStorageSecretsMutation();
 
   const { handleError } = useAPIHelper();
-  const { successAlert } = useAlert();
+  const message = useMessage();
+
+  const [configForm] = Form.useForm();
+  const [secretsForm] = Form.useForm();
 
   const initialValues = {
     type: storageTypes.s3,
@@ -53,7 +60,7 @@ const S3StorageConfiguration = ({ storageDetails }: SavedStorageDetails) => {
   };
 
   const handleSubmitStorageConfiguration = async (
-    newValues: StorageDetails["storageDetails"]
+    newValues: StorageDetails["storageDetails"],
   ) => {
     const result = await saveStorageDetails({
       type: storageTypes.s3,
@@ -68,11 +75,11 @@ const S3StorageConfiguration = ({ storageDetails }: SavedStorageDetails) => {
       handleError(result.error);
     } else {
       setAuthMethod(newValues.auth_method);
-      successAlert(`S3 storage credentials successfully updated.`);
+      message.success(`S3 storage credentials successfully updated.`);
     }
   };
 
-  const handleSubmitStorageSecrets = async (newValues: SecretsStorageData) => {
+  const handleSubmitStorageSecrets = async (newValues: S3SecretsDetails) => {
     const result = await setStorageSecrets({
       details: {
         aws_access_key_id: newValues.aws_access_key_id,
@@ -84,125 +91,112 @@ const S3StorageConfiguration = ({ storageDetails }: SavedStorageDetails) => {
     if (isErrorResult(result)) {
       handleError(result.error);
     } else {
-      successAlert(`S3 storage secrets successfully updated.`);
+      message.success(`S3 storage secrets successfully updated.`);
     }
   };
 
   return (
     <>
-      <Heading fontSize="md" fontWeight="semibold" mt={10}>
+      <Typography.Title level={5} className="mt-10">
         S3 storage configuration
-      </Heading>
-      <Stack>
-        <Formik
-          initialValues={initialValues}
-          onSubmit={handleSubmitStorageConfiguration}
-          enableReinitialize
-        >
-          {({ isSubmitting, handleReset }) => (
-            <Form>
-              <Stack mt={5} spacing={5}>
-                <CustomSelect
-                  name="format"
-                  label="Format"
-                  options={[
-                    { label: "json", value: "json" },
-                    { label: "csv", value: "csv" },
-                  ]}
-                  data-testid="format"
-                  isRequired
-                />
-                <CustomSelect
-                  name="auth_method"
-                  label="Auth method"
-                  options={[
-                    { label: "secret_keys", value: "secret_keys" },
-                    { label: "automatic", value: "automatic" },
-                  ]}
-                  data-testid="auth_method"
-                  isRequired
-                />
-                <CustomTextInput
-                  data-testid="bucket"
-                  name="bucket"
-                  label="Bucket"
-                  isRequired
-                />
-              </Stack>
+      </Typography.Title>
+      <Form
+        form={configForm}
+        initialValues={initialValues}
+        onFinish={handleSubmitStorageConfiguration}
+        key={JSON.stringify(initialValues)}
+        layout="vertical"
+      >
+        <Flex vertical className="mt-5">
+          <Form.Item
+            name="format"
+            label="Format"
+            rules={[{ required: true, message: "Format is required" }]}
+          >
+            <Select
+              aria-label="Format"
+              options={[
+                { label: "json", value: "json" },
+                { label: "csv", value: "csv" },
+              ]}
+              data-testid="format"
+            />
+          </Form.Item>
+          <Form.Item
+            name="auth_method"
+            label="Auth method"
+            rules={[{ required: true, message: "Auth method is required" }]}
+          >
+            <Select
+              aria-label="Auth method"
+              options={[
+                { label: "secret_keys", value: "secret_keys" },
+                { label: "automatic", value: "automatic" },
+              ]}
+              data-testid="auth_method"
+            />
+          </Form.Item>
+          <Form.Item
+            name="bucket"
+            label="Bucket"
+            rules={[{ required: true, message: "Bucket is required" }]}
+          >
+            <Input data-testid="bucket" />
+          </Form.Item>
+        </Flex>
 
+        <Button onClick={() => configForm.resetFields()} className="mr-2 mt-5">
+          Cancel
+        </Button>
+        <Button
+          htmlType="submit"
+          className="mt-5"
+          type="primary"
+          data-testid="save-btn"
+        >
+          Save
+        </Button>
+      </Form>
+      {authMethod === "secret_keys" ? (
+        <>
+          <Divider className="mt-5" />
+          <Typography.Title level={5} className="mt-5">
+            Storage destination
+          </Typography.Title>
+          <Form
+            form={secretsForm}
+            initialValues={initialSecretValues}
+            onFinish={handleSubmitStorageSecrets}
+            layout="vertical"
+          >
+            <Flex vertical className="mt-5">
+              <Form.Item name="aws_access_key_id" label="AWS access key ID">
+                <Input />
+              </Form.Item>
+              <Form.Item
+                name="aws_secret_access_key"
+                label="AWS secret access key"
+              >
+                <Input.Password />
+              </Form.Item>
+            </Flex>
+            <div className="mt-10">
               <Button
-                onClick={() => handleReset()}
-                mt={5}
-                mr={2}
-                size="sm"
-                variant="outline"
+                onClick={() => secretsForm.resetFields()}
+                className="mr-2 mt-5"
               >
                 Cancel
               </Button>
               <Button
-                mt={5}
-                isDisabled={isSubmitting}
-                type="submit"
-                colorScheme="primary"
-                size="sm"
+                htmlType="submit"
+                type="primary"
+                className="mt-5"
                 data-testid="save-btn"
               >
                 Save
               </Button>
-            </Form>
-          )}
-        </Formik>
-      </Stack>
-      {authMethod === "secret_keys" ? (
-        <>
-          <Divider mt={5} />
-          <Heading fontSize="md" fontWeight="semibold" mt={5}>
-            Storage destination
-          </Heading>
-          <Stack>
-            <Formik
-              initialValues={initialSecretValues}
-              onSubmit={handleSubmitStorageSecrets}
-            >
-              {({ isSubmitting, handleReset }) => (
-                <Form>
-                  <Stack mt={5} spacing={5}>
-                    <CustomTextInput
-                      name="aws_access_key_id"
-                      label="AWS access key ID"
-                    />
-
-                    <CustomTextInput
-                      name="aws_secret_access_key"
-                      label="AWS secret access key"
-                      type="password"
-                    />
-                  </Stack>
-                  <Box mt={10}>
-                    <Button
-                      onClick={() => handleReset()}
-                      mt={5}
-                      mr={2}
-                      size="sm"
-                      variant="outline"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      mt={5}
-                      isDisabled={isSubmitting}
-                      type="submit"
-                      colorScheme="primary"
-                      size="sm"
-                      data-testid="save-btn"
-                    >
-                      Save
-                    </Button>
-                  </Box>
-                </Form>
-              )}
-            </Formik>
-          </Stack>
+            </div>
+          </Form>
         </>
       ) : null}
     </>

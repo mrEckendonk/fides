@@ -1,4 +1,10 @@
-import { Cookies, PrivacyDeclaration } from "~/types/api";
+import { PrivacyDeclaration } from "~/types/api";
+
+export interface MinimalCookie {
+  name: string;
+  path?: string | null;
+  domain?: string | null;
+}
 
 export interface MinimalPrivacyDeclaration {
   name: string;
@@ -11,8 +17,8 @@ export interface MinimalPrivacyDeclaration {
    * object because the dictionary could potentially give us more than just the names
    * and we want a place to keep that information.
    */
-  cookieNames: string[];
-  cookies: Cookies[];
+  cookieNames?: string[];
+  cookies?: MinimalCookie[];
 }
 
 export interface FormValues {

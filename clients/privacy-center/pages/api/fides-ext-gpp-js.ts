@@ -4,14 +4,43 @@
  * https://nextjs.org/docs/pages/api-reference/next-config-js/headers#cache-control
  */
 
+import { CacheControl, stringify } from "cache-control-parser";
 import { promises as fsPromises } from "fs";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { CacheControl, stringify } from "cache-control-parser";
 
 import { LOCATION_HEADERS } from "~/common/geolocation";
 
 // one hour, how long the client should cache gpp-ext.js for
 const GPP_JS_MAX_AGE_SECONDS = 60 * 60;
+// how long stale content can be served (24 hours)
+const GPP_JS_SERVE_STALE_SECONDS = 24 * GPP_JS_MAX_AGE_SECONDS;
+
+// File path for the GPP extension bundle
+const FIDES_GPP_JS_PATH = "public/lib/fides-ext-gpp.js";
+
+// In-memory cache for the GPP extension bundle to avoid repeated file I/O
+let cachedGppJs: string = "";
+let gppBundleLoaded: boolean = false;
+
+/**
+ * Load the GPP extension bundle into memory to avoid repeated file I/O.
+ * This is called on the first request and caches the bundle for the lifetime
+ * of the server process.
+ */
+async function loadGppBundle(): Promise<void> {
+  if (gppBundleLoaded) {
+    return;
+  }
+
+  try {
+    const gppJsBuffer = await fsPromises.readFile(FIDES_GPP_JS_PATH);
+    cachedGppJs = gppJsBuffer.toString();
+    gppBundleLoaded = true;
+  } catch (error) {
+    gppBundleLoaded = false;
+    throw new Error(`Failed to load GPP extension bundle: ${error}`);
+  }
+}
 
 /**
  * @swagger
@@ -32,12 +61,12 @@ const GPP_JS_MAX_AGE_SECONDS = 60 * 60;
  */
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse,
 ) {
-  const gppJsFile = "public/lib/fides-ext-gpp.js";
+  // Load bundle into memory cache on first request to avoid file I/O
+  await loadGppBundle();
 
-  const gppJsBuffer = await fsPromises.readFile(gppJsFile);
-  const gppJs: string = gppJsBuffer.toString();
+  const gppJs: string = cachedGppJs;
   if (!gppJs || gppJs === "") {
     throw new Error("Unable to load latest gpp-ext.js script from server!");
   }
@@ -45,6 +74,11 @@ export default async function handler(
   // Instruct any caches to store this response, since these bundles do not change often
   const cacheHeaders: CacheControl = {
     "max-age": GPP_JS_MAX_AGE_SECONDS,
+    // Only set stale serving directives if greater than 0
+    ...(GPP_JS_SERVE_STALE_SECONDS > 0 && {
+      "stale-while-revalidate": GPP_JS_SERVE_STALE_SECONDS,
+      "stale-if-error": GPP_JS_SERVE_STALE_SECONDS,
+    }),
     public: true,
   };
 

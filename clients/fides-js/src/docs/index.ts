@@ -1,6 +1,6 @@
 /**
  * FidesJS is a JavaScript SDK to integrate Fides consent into any website or
- * app! Commonly referred to as a Consent Management Platform (CMP), FidesJS
+ * app! Commonly referred to as a [Consent Management Platform (CMP)](/consent/concepts/fundamentals#consent-management-platform-cmp), FidesJS
  * includes all the UI components (banners, modals, etc.), state management, and
  * utility functions you need to collect consent & enforce data privacy in your
  * application.
@@ -36,8 +36,8 @@
  * engineers integrating FidesJS into their own applications rely on. The TSDoc
  * comments are then used to generate (via `npm run docs:generate`) living
  * developer documentation that is then imported and hosted on Ethyca's
- * docs site here: [FidesJS SDK Documentation](https://ethyca.com/docs/dev-docs/js)
- * 
+ * docs site here: [FidesJS SDK Documentation](https://ethyca.com/docs/privacy-center-fidesjs/fidesjs)
+ *
  * Therefore, all the types in src/docs should be considered part of FidesJS'
  * *official* developer API, so treat them with care!
  *
@@ -50,4 +50,6 @@
 // Export all the types from files in src/docs directory
 export * from "./fides";
 export * from "./fides-event";
+export * from "./fides-experience-config";
 export * from "./fides-options";
+export * from "./privacy-notice-region";
